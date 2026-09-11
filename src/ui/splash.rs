@@ -108,7 +108,7 @@ impl Splash {
 
         let screen = ctx.content_rect();
         let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("splash")));
-        painter.rect_filled(screen, 0.0, theme::BG.gamma_multiply(alpha));
+        painter.rect_filled(screen, 0.0, theme::colors().bg.gamma_multiply(alpha));
 
         let texture = &textures[idx];
         let [w, h] = texture.size().map(|v| v as f32);

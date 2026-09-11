@@ -1,4 +1,5 @@
 mod app;
+mod blur;
 mod config;
 mod gpu;
 mod i18n;
@@ -8,6 +9,7 @@ mod shells;
 mod shortcuts;
 mod ssh;
 mod terminal;
+mod theme;
 mod ui;
 
 use winit::event_loop::{ControlFlow, EventLoop};

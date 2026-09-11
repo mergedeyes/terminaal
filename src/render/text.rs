@@ -9,10 +9,16 @@
 //! short-lived `BorrowedWithFontSystem` wrapper (`buffer.borrow_with(&mut
 //! font_system)`), since the buffer itself doesn't hold a reference to the
 //! font system. Read-only access (`layout_runs`) doesn't need it.
+//!
+//! The console font is the font database's monospace family: everything
+//! here asks for `Family::Monospace`, so choosing another font only means
+//! pointing that family elsewhere ([`TextRendererState::set_family`]).
+
+use std::collections::BTreeSet;
 
 use glyphon::{
-    Attrs, Buffer as TextBuffer, Cache, Family, FontSystem, Metrics, Shaping, SwashCache,
-    TextAtlas, TextRenderer, Viewport, Wrap,
+    Attrs, Buffer as TextBuffer, Cache, Family, FontSystem, Metrics, Shaping, SwashCache, TextAtlas, TextRenderer,
+    Viewport, Wrap, fontdb,
 };
 
 /// Advance width and line height of one monospace cell, in physical pixels.
@@ -20,6 +26,13 @@ use glyphon::{
 pub struct CellMetrics {
     pub width: f32,
     pub height: f32,
+}
+
+/// Installed font families by name, sorted.
+#[derive(Clone, Debug, Default)]
+pub struct FontFamilies {
+    pub all: Vec<String>,
+    pub monospace: Vec<String>,
 }
 
 pub struct TextRendererState {
@@ -30,6 +43,8 @@ pub struct TextRendererState {
     pub renderer: TextRenderer,
     pub cell: CellMetrics,
     pub metrics: Metrics,
+    /// cosmic-text's own monospace family, for when none is chosen.
+    default_family: String,
 }
 
 impl TextRendererState {
@@ -39,6 +54,7 @@ impl TextRendererState {
         format: wgpu::TextureFormat,
         font_size: f32,
         line_height_factor: f32,
+        family: Option<&str>,
     ) -> Self {
         let mut font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
@@ -49,8 +65,13 @@ impl TextRendererState {
 
         let metrics = metrics(font_size, line_height_factor);
         let cell = measure_cell(&mut font_system, metrics);
+        let default_family = font_system.db().family_name(&fontdb::Family::Monospace).to_string();
 
-        Self { font_system, swash_cache, viewport, atlas, renderer, cell, metrics }
+        let mut state = Self { font_system, swash_cache, viewport, atlas, renderer, cell, metrics, default_family };
+        if family.is_some() {
+            state.set_family(family);
+        }
+        state
     }
 
     /// Switch to another font size or line height. Buffers shaped with
@@ -60,9 +81,59 @@ impl TextRendererState {
         self.cell = measure_cell(&mut self.font_system, self.metrics);
     }
 
+    /// Switch the console to font `family`; `None`, or one that isn't
+    /// installed, is cosmic-text's default. Buffers shaped before are stale
+    /// afterwards.
+    pub fn set_family(&mut self, family: Option<&str>) {
+        let family = match family {
+            Some(family) if self.face_id(family).is_some() => family.to_string(),
+            Some(family) => {
+                log::warn!("font {family:?} is not installed, using {}", self.default_family);
+                self.default_family.clone()
+            }
+            None => self.default_family.clone(),
+        };
+        // Also drops cosmic-text's cache of which fonts match which family.
+        self.font_system.db_mut().set_monospace_family(family);
+        self.cell = measure_cell(&mut self.font_system, self.metrics);
+    }
+
+    /// The console font when none is chosen.
+    pub fn default_family(&self) -> &str {
+        &self.default_family
+    }
+
     /// Default text attributes: monospace family at our configured metrics.
     pub fn default_attrs(&self) -> Attrs<'static> {
         Attrs::new().family(Family::Monospace).metrics(self.metrics)
+    }
+
+    /// Every installed font family, and the monospaced ones among them.
+    pub fn families(&self) -> FontFamilies {
+        let (mut all, mut monospace) = (BTreeSet::new(), BTreeSet::new());
+        for face in self.font_system.db().faces() {
+            let Some((name, _)) = face.families.first() else { continue };
+            if name.starts_with('.') {
+                continue;
+            }
+            if face.monospaced {
+                monospace.insert(name.clone());
+            }
+            all.insert(name.clone());
+        }
+        FontFamilies { all: all.into_iter().collect(), monospace: monospace.into_iter().collect() }
+    }
+
+    /// The regular face of `family`: its font file's bytes and the face's
+    /// index in it.
+    pub fn face_data(&self, family: &str) -> Option<(Vec<u8>, u32)> {
+        let id = self.face_id(family)?;
+        self.font_system.db().with_face_data(id, |data, index| (data.to_vec(), index))
+    }
+
+    fn face_id(&self, family: &str) -> Option<fontdb::ID> {
+        let families = [fontdb::Family::Name(family)];
+        self.font_system.db().query(&fontdb::Query { families: &families, ..fontdb::Query::default() })
     }
 }
 

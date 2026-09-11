@@ -114,6 +114,32 @@ settings-page-shortcuts = Tastenkürzel
 settings-font = Schrift
 settings-layout = Fenster
 settings-shell-aliases-hint = Aliase und Funktionen je Shell: Seitenleiste, Bereich „Shells“.
+settings-theme = Theme
+settings-theme-builtin = Eingebautes Theme
+settings-theme-own = Eigenes Theme aus { $path }
+settings-theme-cosmic = Folgt dem COSMIC-Theme des Desktops, auch beim Wechsel zwischen hell und dunkel
+settings-transparency = Transparenz
+settings-opacity = Deckkraft
+settings-percent = { $value } %
+settings-blur = Dahinter unscharf („milchig“)
+settings-blur-unsupported = Unschärfe braucht einen Compositor mit ext-background-effect (etwa COSMIC); unter KDE wirkt sie auch so.
+settings-transparency-unsupported = Grafiktreiber oder Compositor bieten keine durchscheinenden Fenster an.
+settings-transparency-x11 = Unter X11 bleibt das Fenster undurchsichtig; durchscheinend geht es nur unter Wayland.
+settings-themes-folder = Eigene Themes: TOML-Dateien in { $path }, im Format von Alacritty (dessen Themes passen unverändert), optional mit [ui] für die Oberfläche. Nach Änderungen „Erneut laden“.
+settings-themes-reloaded = { $count ->
+    [one] { $count } Theme geladen.
+   *[other] { $count } Themes geladen.
+}
+settings-font-terminal = Konsole
+settings-font-ui = Menüs
+settings-font-default = Standard · { $font }
+settings-font-missing = { $font } (nicht installiert)
+settings-font-note = Die Tab-Leiste nutzt die Konsolenschrift.
+
+## Themes
+
+theme-missing-color = Die Farbe { $key } fehlt.
+theme-bad-color = { $key }: „{ $value }“ ist keine Farbe (#rrggbb).
 
 ## Einstellungen: Tastenkürzel
 

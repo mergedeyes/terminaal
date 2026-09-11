@@ -16,7 +16,7 @@ use egui::{
     TextStyle, Ui, pos2, vec2,
 };
 
-use crate::config::{Config, Setting};
+use crate::config::{Config, FontSlot, Setting};
 use crate::i18n::{Language, t};
 use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
@@ -45,6 +45,12 @@ pub enum SidebarAction {
     OpenSettings,
     /// Bind a shortcut action to these combinations (persisted).
     SetShortcut(Action, Vec<KeyCombo>),
+    /// Switch to the theme of this name and persist that.
+    SetTheme(String),
+    /// Read the themes folder again, and the current theme from it.
+    ReloadThemes,
+    /// Choose a font family -- `None`: the default -- and persist it.
+    SetFont(FontSlot, Option<String>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -161,7 +167,7 @@ impl Sidebar {
         let panel = egui::Panel::left("sidebar")
             .exact_size(config.sidebar_width)
             .resizable(false)
-            .frame(Frame::new().fill(theme::BG))
+            .frame(Frame::new().fill(theme::colors().panel))
             .show(ui, |ui| {
                 header(ui, &mut self.section, header_height, &mut actions);
                 ScrollArea::vertical().id_salt(self.section).auto_shrink([false; 2]).show(ui, |ui| {
@@ -258,14 +264,14 @@ impl Sidebar {
             ui.label(weak(t!("shells-managed-unsupported", shell = &shell.name)));
             return;
         };
-        ui.label(RichText::new(tilde(&path)).monospace().size(11.0).color(theme::TEXT_WEAK))
+        ui.label(RichText::new(tilde(&path)).monospace().size(11.0).color(theme::colors().text_weak))
             .on_hover_text(t!("shells-managed-file-hint"));
         ui.add_space(6.0);
 
         let entries = match &self.entries {
             Ok(entries) => entries.clone(),
             Err(err) => {
-                ui.label(RichText::new(err).color(theme::ERROR));
+                ui.label(RichText::new(err).color(theme::colors().error));
                 if ui.button(t!("common-reload")).clicked() {
                     self.load_entries();
                 }
@@ -303,18 +309,18 @@ impl Sidebar {
         for entry in shown {
             let key = (entry.kind, entry.name.clone());
             let confirming = self.confirm_delete.as_ref() == Some(&key);
-            Frame::new().fill(theme::ROW_BG).corner_radius(CornerRadius::same(4)).inner_margin(Margin::symmetric(8, 6)).show(
+            Frame::new().fill(theme::colors().row).corner_radius(CornerRadius::same(4)).inner_margin(Margin::symmetric(8, 6)).show(
                 ui,
                 |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&entry.name).monospace().strong().color(theme::TEXT));
+                        ui.label(RichText::new(&entry.name).monospace().strong().color(theme::colors().text));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if confirming {
                                 if ui.small_button(t!("common-no")).clicked() {
                                     cancel_delete = true;
                                 }
-                                if ui.small_button(RichText::new(t!("common-delete")).color(theme::ERROR)).clicked() {
+                                if ui.small_button(RichText::new(t!("common-delete")).color(theme::colors().error)).clicked() {
                                     delete = Some(key.clone());
                                 }
                             } else {
@@ -332,7 +338,7 @@ impl Sidebar {
                     if lines.next().is_some() {
                         preview.push_str("  …");
                     }
-                    ui.add(egui::Label::new(RichText::new(preview).monospace().size(12.0).color(theme::TEXT_WEAK)).truncate());
+                    ui.add(egui::Label::new(RichText::new(preview).monospace().size(12.0).color(theme::colors().text_weak)).truncate());
                 },
             );
             ui.add_space(2.0);
@@ -377,7 +383,7 @@ impl Sidebar {
         let Some(editor) = self.editor.as_mut() else { return };
         let mut save = false;
         let mut cancel = false;
-        Frame::group(ui.style()).fill(theme::ROW_BG).inner_margin(Margin::same(10)).show(ui, |ui| {
+        Frame::group(ui.style()).fill(theme::colors().row).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let title = match (editor.kind, editor.original.is_some()) {
                 (EntryKind::Alias, false) => t!("shells-new-alias"),
@@ -431,7 +437,7 @@ impl Sidebar {
             }
 
             if let Some(err) = &editor.error {
-                ui.label(RichText::new(err).color(theme::ERROR));
+                ui.label(RichText::new(err).color(theme::colors().error));
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -505,7 +511,7 @@ fn header(ui: &mut Ui, section: &mut Section, height: f32, actions: &mut Vec<Sid
     const TAB_WIDTH: f32 = 72.0;
     const ICON_TAB_WIDTH: f32 = 40.0;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, theme::BORDER));
+    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, theme::colors().border));
     let keys = t!("sidebar-keys");
     // `None` is the gear: a button for the settings tab, not a section.
     let tabs = [
@@ -533,13 +539,13 @@ fn header(ui: &mut Ui, section: &mut Section, height: f32, actions: &mut Vec<Sid
         let active = tab == Some(*section);
         let painter = ui.painter();
         if response.hovered() && !active {
-            painter.rect_filled(tab_rect.shrink2(vec2(2.0, 6.0)), CornerRadius::same(4), theme::HOVER_BG);
+            painter.rect_filled(tab_rect.shrink2(vec2(2.0, 6.0)), CornerRadius::same(4), theme::colors().hover);
         }
-        let color = if active { theme::TEXT } else { theme::TEXT_WEAK };
+        let color = if active { theme::colors().text } else { theme::colors().text_weak };
         painter.text(tab_rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(14.0), color);
         if active {
             let underline = Rect::from_min_size(pos2(tab_rect.left() + 8.0, rect.bottom() - 2.0), vec2(width - 16.0, 2.0));
-            painter.rect_filled(underline, CornerRadius::same(0), theme::ACCENT);
+            painter.rect_filled(underline, CornerRadius::same(0), theme::colors().accent);
         }
     }
 }

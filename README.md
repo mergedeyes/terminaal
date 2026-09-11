@@ -38,6 +38,13 @@ in a sidebar, and never have secrets written to disk.
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
 - Right-click menu in the terminal: copy, paste, and paste and run
 - A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
+- **Themes** for the console and the interface alike: seven built in, and your
+  own in Alacritty's format (its themes work as they are)
+- On the COSMIC desktop, a **COSMIC theme** that follows the desktop's colors,
+  light/dark switch and accent color included, as they change
+- A **see-through window** with adjustable opacity, frosted (blurred behind) on
+  COSMIC and other compositors with `ext-background-effect`, and on KDE
+- Choose the **console font** and the **menu font** from the installed ones
 - **Configurable keyboard shortcuts** for every action, several per action if you like
 - Optional start-up animation
 
@@ -171,6 +178,11 @@ sidebar_width = 300.0
 splash = true                 # start-up animation
 # shell = "/usr/bin/fish"     # default shell for new tabs (default: $SHELL)
 # language = "en"             # "en" or "de" (default: from your locale)
+# theme = "Dracula"           # color theme, see below (default: "Terminaal")
+# font_family = "Hack"        # console font (default: Noto Sans Mono)
+# ui_font_family = "Inter"    # font of menus and panels (default: built in)
+opacity = 1.0                 # below 1 the window is see-through (0.2–1.0)
+blur = true                   # blur what's behind a see-through window
 
 [shortcuts]                   # only what differs from the defaults
 new_tab = "Ctrl+Alt+N"
@@ -187,6 +199,37 @@ Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
 combinations are modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) plus one key,
 joined by `+`; write `Plus` and `Minus` for those keys.
 
+### Themes
+
+A theme colors the console as well as the sidebar, tab bar and settings.
+Built in are Terminaal, Catppuccin Mocha, Dracula, Gruvbox Dark, Nord,
+Solarized Dark and Solarized Light. On COSMIC there's also **COSMIC**, made
+from the desktop's own theme and following it live. Your own go into
+`~/.config/terminaal/themes/` as `.toml` files, named after the file. The
+format is [Alacritty's](https://alacritty.org/config-alacritty.html#colors),
+so its themes (e.g. from [alacritty-theme](https://github.com/alacritty/alacritty-theme))
+work as they are:
+
+```toml
+[colors.primary]
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+
+[colors.normal]   # black red green yellow blue magenta cyan white, all eight
+black = "#45475a"
+# ...
+
+# Optional: [colors.bright], [colors.dim], [colors.cursor] cursor,
+# [colors.selection] background/text.
+
+[ui]              # optional, all keys too; the rest follows from the colors above
+accent = "#cba6f7"
+# background, row, hover, selected, border, border_strong, text, text_weak,
+# error, success, input, text_selection
+```
+
+After editing a theme file, click **Reload** next to the theme in the settings.
+
 Every option can also be set in the settings tab (**⚙** in the sidebar, or
 <kbd>Ctrl</kbd>+<kbd>,</kbd>; hover a setting's name to see its key). Font,
 padding, tab bar, cursor and scrolling apply right away, the sidebar width once
@@ -200,6 +243,7 @@ Next to it, Terminaal keeps its own files. None of them holds anything secret:
 | --- | --- |
 | `hosts.toml` | Saved SSH hosts, logins and options |
 | `keys.toml` | Named keys: file paths, or the public half of agent keys |
+| `themes/*.toml` | Your own color themes (you write these; Terminaal only reads them) |
 
 ## Translations
 
@@ -218,6 +262,7 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   socket. `ControlMaster` isn't supported either
 - Only Ed25519 keys can be generated. Existing RSA/ECDSA keys work
 - `Match exec` in `~/.ssh/config` is never evaluated, on purpose
+- A see-through window needs Wayland; on X11 it stays opaque
 
 ## Roadmap
 
@@ -225,7 +270,8 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Shell management with per-shell aliases and functions
 - [x] SSH sessions, host manager, keys, per-host options
 - [x] Configurable keyboard shortcuts for every action
-- [ ] Appearance: translucency, COSMIC theme sync, font choice, themes
+- [x] Appearance: themes for console and interface, console and menu font,
+  COSMIC theme sync, see-through and frosted window
 
 ## Development
 

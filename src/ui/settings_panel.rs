@@ -16,17 +16,21 @@ use egui::{
     pos2, vec2,
 };
 
-use crate::config::{self, Config, Setting};
+use crate::config::{self, Config, FontSlot, Setting};
 use crate::i18n::{Language, t};
+use crate::render::text::FontFamilies;
 use crate::shells::InstalledShell;
 use crate::shortcuts::{Action, Group, KeyCombo, Keymap};
+use crate::theme::{Source, Theme, Themes};
 use crate::ui::sidebar::SidebarAction;
 use crate::ui::theme;
-use crate::ui::widgets::{Status, section_title, weak};
+use crate::ui::widgets::{Status, section_title, tilde, weak};
 
 /// Fixed rather than stretching across the whole tab.
 const SLIDER_WIDTH: f32 = 200.0;
 const SECTION_GAP: f32 = 18.0;
+/// Room for a long font name in its dropdown.
+const COMBO_WIDTH: f32 = 260.0;
 
 /// What the pages show, lent by `app.rs` for one pass.
 pub struct SettingsView<'a> {
@@ -37,6 +41,25 @@ pub struct SettingsView<'a> {
     /// The window's current size in logical pixels.
     pub window_size: [f64; 2],
     pub keymap: &'a Keymap,
+    pub themes: &'a Themes,
+    /// The theme in use.
+    pub theme: &'a Theme,
+    /// Installed font families.
+    pub fonts: &'a FontFamilies,
+    /// The console font when none is chosen.
+    pub default_font: &'a str,
+    pub transparency: Transparency,
+}
+
+/// What driver and window system allow for a see-through window.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Transparency {
+    /// The window can be see-through at all.
+    pub supported: bool,
+    /// The compositor blurs behind it (ext-background-effect).
+    pub blur: bool,
+    /// X11: see-through only from the next start.
+    pub x11: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -94,7 +117,7 @@ impl SettingsPanel {
     /// the sidebar) -- the page tabs on top, the page below them, which
     /// scrolls when it doesn't fit.
     pub fn show_tab(&mut self, ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
-        ui.painter().rect_filled(ui.max_rect(), CornerRadius::ZERO, theme::BG);
+        ui.painter().rect_filled(ui.max_rect(), CornerRadius::ZERO, theme::colors().panel);
         Frame::new().inner_margin(Margin { left: 24, right: 24, top: 4, bottom: 0 }).show(ui, |ui| {
             if let Some(page) = page_tabs(ui, self.page) {
                 self.page = page;
@@ -113,7 +136,7 @@ impl SettingsPanel {
         ui.spacing_mut().slider_width = SLIDER_WIDTH;
         match self.page {
             Page::General => general(ui, view, actions),
-            Page::Appearance => self.appearance(ui, view.config, actions),
+            Page::Appearance => self.appearance(ui, view, actions),
             Page::Terminal => terminal(ui, view.config, actions),
             Page::Shell => shell(ui, view, actions),
             Page::Shortcuts => self.shortcuts(ui, view.keymap, actions),
@@ -132,8 +155,22 @@ impl SettingsPanel {
         }
     }
 
-    fn appearance(&mut self, ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
+    fn appearance(&mut self, ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
+        let config = view.config;
+        section_title(ui, &t!("settings-theme"));
+        theme_choice(ui, view, actions);
+
+        ui.add_space(SECTION_GAP);
+        section_title(ui, &t!("settings-transparency"));
+        transparency(ui, view, actions);
+
+        ui.add_space(SECTION_GAP);
         section_title(ui, &t!("settings-font"));
+        let default = t!("settings-font-default", font = view.default_font);
+        font_choice(ui, view, &t!("settings-font-terminal"), FontSlot::Terminal, &view.fonts.monospace, &default, actions);
+        font_choice(ui, view, &t!("settings-font-ui"), FontSlot::Ui, &view.fonts.all, &t!("common-default"), actions);
+        ui.label(weak(t!("settings-font-note")).size(11.0));
+        ui.add_space(4.0);
         let mut size = config.font_size;
         let moved = slider(ui, &t!("settings-font-size"), "font_size", &mut size, config::FONT_SIZES, 1.0, pixels);
         change(actions, moved, Setting::FontSize(size));
@@ -214,10 +251,10 @@ impl SettingsPanel {
             let taken_by = keymap.action(combo).filter(|owner| *owner != action);
             let mut text = RichText::new(combo.label()).monospace();
             if taken_by.is_some() {
-                text = text.strikethrough().color(theme::TEXT_WEAK);
+                text = text.strikethrough().color(theme::colors().text_weak);
             }
             let chip = Frame::new()
-                .fill(theme::HOVER_BG)
+                .fill(theme::colors().hover)
                 .corner_radius(4)
                 .inner_margin(Margin::symmetric(6, 2))
                 .show(ui, |ui| ui.label(text))
@@ -234,7 +271,7 @@ impl SettingsPanel {
         }
 
         let (text, hint) = if recording {
-            (RichText::new(t!("shortcuts-press")).color(theme::ACCENT), t!("shortcuts-press-hint"))
+            (RichText::new(t!("shortcuts-press")).color(theme::colors().accent), t!("shortcuts-press-hint"))
         } else {
             (RichText::new("+"), t!("shortcuts-add-hint"))
         };
@@ -264,13 +301,13 @@ fn page_tabs(ui: &mut Ui, current: Page) -> Option<Page> {
     ui.horizontal(|ui| {
         for page in Page::ALL {
             let active = page == current;
-            let color = if active { theme::TEXT } else { theme::TEXT_WEAK };
+            let color = if active { theme::colors().text } else { theme::colors().text_weak };
             let button = Button::new(RichText::new(page.label()).color(color)).frame(false).min_size(vec2(0.0, 34.0));
             let response = ui.add(button).on_hover_cursor(egui::CursorIcon::PointingHand);
             if active {
                 let rect = response.rect;
                 let underline = Rect::from_min_max(pos2(rect.left() + 6.0, rect.bottom() - 2.0), pos2(rect.right() - 6.0, rect.bottom()));
-                ui.painter().rect_filled(underline, CornerRadius::ZERO, theme::ACCENT);
+                ui.painter().rect_filled(underline, CornerRadius::ZERO, theme::colors().accent);
             }
             if response.clicked() && !active {
                 picked = Some(page);
@@ -278,7 +315,7 @@ fn page_tabs(ui: &mut Ui, current: Page) -> Option<Page> {
         }
     });
     let bottom = ui.min_rect().bottom();
-    ui.painter().hline(ui.max_rect().x_range(), bottom, Stroke::new(1.0, theme::BORDER));
+    ui.painter().hline(ui.max_rect().x_range(), bottom, Stroke::new(1.0, theme::colors().border));
     picked
 }
 
@@ -360,6 +397,133 @@ fn shell(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
     ui.label(weak(t!("settings-shell-aliases-hint")).size(11.0));
 }
 
+/// The theme dropdown -- built-in themes, then your own -- with a button
+/// to read the themes folder again, a strip of the theme's colors, and
+/// whatever went wrong reading the folder.
+fn theme_choice(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
+    let current = &view.theme.name;
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("settings-theme")
+            .width(COMBO_WIDTH)
+            .height(400.0)
+            .selected_text(current.as_str())
+            .show_ui(ui, |ui| {
+                let mut own_started = false;
+                for theme in view.themes.all() {
+                    let hint = match &theme.source {
+                        Source::File(path) => {
+                            if !own_started {
+                                ui.separator();
+                                own_started = true;
+                            }
+                            t!("settings-theme-own", path = tilde(path))
+                        }
+                        Source::Cosmic => t!("settings-theme-cosmic"),
+                        Source::Builtin => t!("settings-theme-builtin"),
+                    };
+                    let chosen = theme.name == *current;
+                    if ui.selectable_label(chosen, &theme.name).on_hover_text(hint).clicked() && !chosen {
+                        actions.push(SidebarAction::SetTheme(theme.name.clone()));
+                    }
+                }
+            })
+            .response
+            .on_hover_text(key_hint("theme"));
+        if ui.button(t!("common-reload")).clicked() {
+            actions.push(SidebarAction::ReloadThemes);
+        }
+    });
+    swatches(ui, view.theme);
+    if let Some(dir) = Themes::dir() {
+        ui.label(weak(t!("settings-themes-folder", path = tilde(&dir))).size(11.0));
+    }
+    for err in view.themes.errors() {
+        ui.label(RichText::new(err).color(theme::colors().error));
+    }
+}
+
+/// The opacity slider and the blur checkbox, and what the system can't do.
+fn transparency(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
+    let (config, support) = (view.config, view.transparency);
+    let mut opacity = config.opacity();
+    let moved = ui
+        .add_enabled_ui(support.supported, |ui| {
+            slider(ui, &t!("settings-opacity"), "opacity", &mut opacity, config::OPACITIES, 0.05, |opacity| {
+                t!("settings-percent", value = f64::from((opacity * 100.0).round()))
+            })
+        })
+        .inner;
+    change(actions, moved, Setting::Opacity(opacity));
+    ui.add_space(4.0);
+    let moved = ui
+        .add_enabled_ui(support.supported && config.opacity() < 1.0, |ui| {
+            checkbox(ui, t!("settings-blur"), "blur", config.blur)
+        })
+        .inner;
+    change(actions, moved.map(|_| true), Setting::Blur(moved.unwrap_or(config.blur)));
+
+    let note = |ui: &mut Ui, text: String| drop(ui.label(weak(text).size(11.0)));
+    if !support.supported {
+        note(ui, t!("settings-transparency-unsupported"));
+    } else if !support.blur {
+        note(ui, t!("settings-blur-unsupported"));
+    }
+    if support.x11 {
+        note(ui, t!("settings-transparency-x11"));
+    }
+}
+
+/// The console colors of `current` as a strip of small squares:
+/// background, foreground, then the normal and the bright colors.
+fn swatches(ui: &mut Ui, current: &Theme) {
+    const SIZE: f32 = 14.0;
+    let colors = &current.terminal;
+    let all: Vec<_> = [colors.background, colors.foreground].into_iter().chain(colors.normal).chain(colors.bright).collect();
+    let (rect, _) = ui.allocate_exact_size(vec2(SIZE * all.len() as f32, SIZE), egui::Sense::hover());
+    let painter = ui.painter();
+    for (i, c) in all.iter().enumerate() {
+        let square = Rect::from_min_size(pos2(rect.left() + i as f32 * SIZE, rect.top()), vec2(SIZE, SIZE));
+        painter.rect_filled(square, CornerRadius::ZERO, egui::Color32::from_rgb(c.r, c.g, c.b));
+    }
+    painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, theme::colors().border), egui::StrokeKind::Outside);
+}
+
+/// The dropdown for one font setting: `default` first, then `families`.
+/// A chosen font that isn't installed says so.
+fn font_choice(
+    ui: &mut Ui,
+    view: &SettingsView,
+    name: &str,
+    slot: FontSlot,
+    families: &[String],
+    default: &str,
+    actions: &mut Vec<SidebarAction>,
+) {
+    let current = view.config.font(slot);
+    ui.label(name).on_hover_text(key_hint(slot.key()));
+    let shown = match current {
+        None => default.to_string(),
+        Some(family) if view.fonts.all.iter().any(|installed| installed == family) => family.to_string(),
+        Some(family) => t!("settings-font-missing", font = family),
+    };
+    egui::ComboBox::from_id_salt(("settings-font", slot.key()))
+        .width(COMBO_WIDTH)
+        .height(400.0)
+        .selected_text(shown)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(current.is_none(), default).clicked() && current.is_some() {
+                actions.push(SidebarAction::SetFont(slot, None));
+            }
+            ui.separator();
+            for family in families {
+                let chosen = current == Some(family.as_str());
+                if ui.selectable_label(chosen, family).clicked() && !chosen {
+                    actions.push(SidebarAction::SetFont(slot, Some(family.clone())));
+                }
+            }
+        });
+}
+
 fn change(actions: &mut Vec<SidebarAction>, moved: Option<bool>, setting: Setting) {
     if let Some(save) = moved {
         actions.push(SidebarAction::ChangeSetting { setting, save });
@@ -401,7 +565,7 @@ fn slider<N: Numeric>(
         .show_value(false)
         .clamping(egui::SliderClamping::Edits);
     let response = ui.add(slider);
-    let color = if ui.is_enabled() { theme::TEXT_WEAK } else { theme::BORDER };
+    let color = if ui.is_enabled() { theme::colors().text_weak } else { theme::colors().border };
     ui.painter().text(
         pos2(response.rect.right(), label.rect.center().y),
         Align2::RIGHT_CENTER,
@@ -424,19 +588,35 @@ mod tests {
 
     use super::*;
 
+    fn fonts() -> FontFamilies {
+        FontFamilies { all: vec!["Hack".into(), "Inter".into()], monospace: vec!["Hack".into()] }
+    }
+
     #[test]
     fn every_page_renders_headless_without_changing_anything() {
         let ctx = egui::Context::default();
         let shell = InstalledShell::new("/bin/bash");
         // Out of range on purpose: showing must not clamp it into a change.
-        let config = Config { font_size: 80.0, cursor_blink: false, ..Config::default() };
+        // A font that isn't installed mustn't turn into one either.
+        let config = Config {
+            font_size: 80.0,
+            cursor_blink: false,
+            font_family: Some("Gone Mono".into()),
+            ..Config::default()
+        };
         let keymap = Keymap::new(&BTreeMap::new());
+        let (themes, fonts) = (Themes::builtin(), fonts());
         let view = SettingsView {
             config: &config,
             shells: std::slice::from_ref(&shell),
             default: &shell,
             window_size: [1000.0, 650.0],
             keymap: &keymap,
+            themes: &themes,
+            theme: themes.get(Some("Nord")),
+            fonts: &fonts,
+            default_font: "Noto Sans Mono",
+            transparency: Transparency::default(),
         };
         let mut panel = SettingsPanel::default();
         let mut actions = Vec::new();
@@ -466,16 +646,22 @@ mod tests {
     #[test]
     fn hovering_a_setting_name_shows_its_key() {
         let ctx = egui::Context::default();
-        theme::apply(&ctx);
+        theme::apply(&ctx, &crate::theme::default_theme().ui, 1.0);
         let shell = InstalledShell::new("/bin/bash");
         let config = Config::default();
         let keymap = Keymap::new(&BTreeMap::new());
+        let (themes, fonts) = (Themes::builtin(), fonts());
         let view = SettingsView {
             config: &config,
             shells: std::slice::from_ref(&shell),
             default: &shell,
             window_size: [1000.0, 650.0],
             keymap: &keymap,
+            themes: &themes,
+            theme: themes.get(None),
+            fonts: &fonts,
+            default_font: "Noto Sans Mono",
+            transparency: Transparency::default(),
         };
         let mut panel = SettingsPanel { page: Page::Appearance, ..SettingsPanel::default() };
         let mut actions = Vec::new();

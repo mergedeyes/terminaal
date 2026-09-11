@@ -22,6 +22,9 @@ use crate::shortcuts::{Action, Bindings, KeyCombo};
 
 /// Font sizes the settings and zooming by shortcut allow.
 pub const FONT_SIZES: RangeInclusive<f32> = 6.0..=36.0;
+/// Window opacities the settings allow; less and the text on top would be
+/// all that's left.
+pub const OPACITIES: RangeInclusive<f32> = 0.2..=1.0;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -57,14 +60,50 @@ pub struct Config {
     /// UI language, `de` or `en`. Unset (or `auto`): German for a German
     /// locale, English otherwise. See [`Config::language`].
     pub language: Option<String>,
+    /// Color theme by name, built in or from the themes folder
+    /// (`crate::theme`). Unset: `theme::DEFAULT`.
+    pub theme: Option<String>,
+    /// Console font family. Unset: cosmic-text's monospace default.
+    pub font_family: Option<String>,
+    /// Font family of the menus and panels. Unset: egui's own.
+    pub ui_font_family: Option<String>,
+    /// How opaque the window's backgrounds are, 1 = not see-through. Read
+    /// through [`Config::opacity`].
+    pub opacity: f32,
+    /// Blur what shines through a see-through window, where the compositor
+    /// can.
+    pub blur: bool,
     /// Keyboard shortcuts that differ from the defaults, by action name
     /// (`[shortcuts]`); see `shortcuts`.
     pub shortcuts: BTreeMap<String, Bindings>,
 }
 
+/// Which font a font setting is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontSlot {
+    /// The console (and the tab bar).
+    Terminal,
+    /// Menus and panels.
+    Ui,
+}
+
+impl FontSlot {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Terminal => "font_family",
+            Self::Ui => "ui_font_family",
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
+            theme: None,
+            font_family: None,
+            ui_font_family: None,
+            opacity: 1.0,
+            blur: true,
             font_size: 15.0,
             line_height_factor: 1.25,
             padding: 8.0,
@@ -150,11 +189,37 @@ impl Config {
 
     /// Set the UI language (`None`: follow the locale) and persist it.
     pub fn save_language(&mut self, language: Option<Language>) -> Result<(), String> {
-        Self::edit(|doc| match language {
-            Some(language) => set_value(doc, "language", language.code()),
-            None => drop(doc.remove("language")),
-        })?;
+        Self::edit(|doc| write_text(doc, "language", language.map(Language::code)))?;
         self.language = language.map(|language| language.code().to_string());
+        Ok(())
+    }
+
+    /// Switch to the theme called `name` and persist that; the default
+    /// theme removes the key.
+    pub fn save_theme(&mut self, name: &str) -> Result<(), String> {
+        let name = (!name.eq_ignore_ascii_case(crate::theme::DEFAULT)).then_some(name);
+        Self::edit(|doc| write_text(doc, "theme", name))?;
+        self.theme = name.map(str::to_string);
+        Ok(())
+    }
+
+    /// The font family chosen for `slot`, if any.
+    pub fn font(&self, slot: FontSlot) -> Option<&str> {
+        match slot {
+            FontSlot::Terminal => self.font_family.as_deref(),
+            FontSlot::Ui => self.ui_font_family.as_deref(),
+        }
+    }
+
+    /// Choose the font family for `slot` and persist it; `None` (the
+    /// default) removes the key.
+    pub fn save_font(&mut self, slot: FontSlot, family: Option<&str>) -> Result<(), String> {
+        Self::edit(|doc| write_text(doc, slot.key(), family))?;
+        let family = family.map(str::to_string);
+        match slot {
+            FontSlot::Terminal => self.font_family = family,
+            FontSlot::Ui => self.ui_font_family = family,
+        }
         Ok(())
     }
 
@@ -181,6 +246,12 @@ impl Config {
         }
     }
 
+    /// The window's opacity, within [`OPACITIES`]; not a number counts as
+    /// opaque.
+    pub fn opacity(&self) -> f32 {
+        if self.opacity.is_finite() { self.opacity.clamp(*OPACITIES.start(), *OPACITIES.end()) } else { 1.0 }
+    }
+
     /// Take over `setting` in memory only.
     pub fn set(&mut self, setting: Setting) {
         match setting {
@@ -196,6 +267,8 @@ impl Config {
             Setting::Sidebar(on) => self.sidebar = on,
             Setting::SidebarWidth(width) => self.sidebar_width = width,
             Setting::Splash(on) => self.splash = on,
+            Setting::Opacity(opacity) => self.opacity = opacity,
+            Setting::Blur(on) => self.blur = on,
         }
     }
 
@@ -245,6 +318,8 @@ pub enum Setting {
     Sidebar(bool),
     SidebarWidth(f32),
     Splash(bool),
+    Opacity(f32),
+    Blur(bool),
 }
 
 impl Setting {
@@ -269,6 +344,8 @@ impl Setting {
             Self::Sidebar(on) => set_value(doc, "sidebar", on),
             Self::SidebarWidth(width) => set_value(doc, "sidebar_width", float(width.into())),
             Self::Splash(on) => set_value(doc, "splash", on),
+            Self::Opacity(opacity) => set_value(doc, "opacity", float(opacity.into())),
+            Self::Blur(on) => set_value(doc, "blur", on),
         }
     }
 }
@@ -281,6 +358,14 @@ fn set_value(doc: &mut toml_edit::DocumentMut, key: &str, value: impl Into<toml_
         *value.decor_mut() = old.decor().clone();
     }
     doc[key] = toml_edit::Item::Value(value);
+}
+
+/// Set `key` to `value`, or with `None` remove it.
+fn write_text(doc: &mut toml_edit::DocumentMut, key: &str, value: Option<&str>) {
+    match value {
+        Some(value) => set_value(doc, key, value),
+        None => drop(doc.remove(key)),
+    }
 }
 
 /// Set `name` under `[shortcuts]` -- or with `None` remove it, and the
@@ -347,12 +432,15 @@ mod tests {
             Setting::WindowSize { width: 1200.4, height: 700.0 },
             Setting::TabBar(false),
             Setting::CursorBlinkInterval(450),
+            Setting::Opacity(0.85),
+            Setting::Blur(false),
         ] {
             setting.write(&mut doc);
         }
         let text = doc.to_string();
         assert!(text.starts_with("# mine\nfont_size = 14.0 # small\ntab_bar = false\n"), "{text}");
         assert!(text.contains("line_height_factor = 1.3\n"), "{text}");
+        assert!(text.contains("opacity = 0.85\n"), "{text}");
 
         let config: Config = toml::from_str(&text).unwrap();
         assert_eq!(config.font_size, 14.0);
@@ -361,6 +449,8 @@ mod tests {
         assert_eq!((config.default_width, config.default_height), (1200.0, 700.0));
         assert!(!config.tab_bar);
         assert_eq!(config.cursor_blink_interval_ms, 450);
+        assert_eq!(config.opacity(), 0.85);
+        assert!(!config.blur);
     }
 
     #[test]
@@ -372,5 +462,36 @@ mod tests {
         assert_eq!(parse("scroll_lines = 0"), 3.0);
         assert_eq!(parse("scroll_lines = -2.0"), 3.0);
         assert_eq!(parse("scroll_lines = nan"), 3.0);
+    }
+
+    #[test]
+    fn opacity_stays_in_range() {
+        let parse = |text| toml::from_str::<Config>(text).unwrap().opacity();
+        assert_eq!(parse(""), 1.0);
+        assert_eq!(parse("opacity = 0.5"), 0.5);
+        assert_eq!(parse("opacity = 1"), 1.0);
+        assert_eq!(parse("opacity = 0"), 0.2);
+        assert_eq!(parse("opacity = 3.0"), 1.0);
+        assert_eq!(parse("opacity = nan"), 1.0);
+    }
+
+    #[test]
+    fn text_settings_are_set_and_removed() {
+        use super::{FontSlot, write_text};
+
+        let mut doc: toml_edit::DocumentMut = "theme = \"Nord\" # mine\n".parse().unwrap();
+        write_text(&mut doc, "theme", Some("Dracula"));
+        write_text(&mut doc, FontSlot::Terminal.key(), Some("Hack"));
+        let text = doc.to_string();
+        assert!(text.starts_with("theme = \"Dracula\" # mine\n"), "{text}");
+
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.theme.as_deref(), Some("Dracula"));
+        assert_eq!(config.font(FontSlot::Terminal), Some("Hack"));
+        assert_eq!(config.font(FontSlot::Ui), None);
+
+        write_text(&mut doc, "theme", None);
+        write_text(&mut doc, FontSlot::Terminal.key(), None);
+        assert_eq!(doc.to_string().trim(), "");
     }
 }

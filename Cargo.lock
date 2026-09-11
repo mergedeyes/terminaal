@@ -3679,6 +3679,9 @@ dependencies = [
  "toml",
  "toml_edit 0.22.27",
  "unic-langid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wgpu",
  "winit",
 ]

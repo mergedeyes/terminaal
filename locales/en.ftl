@@ -114,6 +114,32 @@ settings-page-shortcuts = Shortcuts
 settings-font = Font
 settings-layout = Window
 settings-shell-aliases-hint = Aliases and functions per shell: sidebar, "Shells" section.
+settings-theme = Theme
+settings-theme-builtin = Built-in theme
+settings-theme-own = Your theme from { $path }
+settings-theme-cosmic = Follows the desktop's COSMIC theme, switching between light and dark too
+settings-transparency = Translucency
+settings-opacity = Opacity
+settings-percent = { $value } %
+settings-blur = Blur what's behind (frosted)
+settings-blur-unsupported = Blur needs a compositor with ext-background-effect (such as COSMIC); on KDE it works anyway.
+settings-transparency-unsupported = The graphics driver or compositor offers no see-through windows.
+settings-transparency-x11 = On X11 the window stays opaque; see-through needs Wayland.
+settings-themes-folder = Your own themes: TOML files in { $path }, in Alacritty's format (its themes work as they are), optionally with [ui] for the interface. After changes, click "Reload".
+settings-themes-reloaded = { $count ->
+    [one] Loaded { $count } theme.
+   *[other] Loaded { $count } themes.
+}
+settings-font-terminal = Console
+settings-font-ui = Menus
+settings-font-default = Default · { $font }
+settings-font-missing = { $font } (not installed)
+settings-font-note = The tab bar uses the console font.
+
+## Themes
+
+theme-missing-color = The color { $key } is missing.
+theme-bad-color = { $key }: “{ $value }” is not a color (#rrggbb).
 
 ## Settings: keyboard shortcuts
 

@@ -15,7 +15,8 @@
 //!   buffers rather than going into the grid's buffer so they don't
 //!   disturb its per-line shaping cache.
 //!
-//! Everything is in physical pixels, same as the rest of `render/`.
+//! Everything is in physical pixels, same as the rest of `render/`. The
+//! colors are the theme's chrome colors, the same egui's panels use.
 
 use alacritty_terminal::vte::ansi::Rgb;
 use glyphon::{Buffer as TextBuffer, Color as TextColor, Shaping, TextArea, TextBounds, Wrap};
@@ -23,20 +24,7 @@ use glyphon::{Buffer as TextBuffer, Color as TextColor, Shaping, TextArea, TextB
 use crate::render::palette::to_linear;
 use crate::render::quad::QuadInstance;
 use crate::render::text::{CellMetrics, TextRendererState};
-
-// sRGB values, as you'd write them in CSS; `Rect::quad` linearizes them.
-// Kept in sync with the egui side in `ui::theme`.
-const BAR_BG: Rgb = Rgb { r: 22, g: 22, b: 22 };
-const BORDER: Rgb = Rgb { r: 48, g: 48, b: 48 };
-const HOVER_BG: Rgb = Rgb { r: 36, g: 36, b: 36 };
-const CLOSE_HOVER_BG: Rgb = Rgb { r: 64, g: 64, b: 64 };
-const ACCENT: Rgb = Rgb { r: 59, g: 142, b: 234 };
-const ICON: Rgb = Rgb { r: 135, g: 135, b: 135 };
-const ICON_HOVER: Rgb = Rgb { r: 229, g: 229, b: 229 };
-
-const TEXT_ACTIVE: TextColor = TextColor::rgb(229, 229, 229);
-const TEXT_HOVER: TextColor = TextColor::rgb(200, 200, 200);
-const TEXT_INACTIVE: TextColor = TextColor::rgb(135, 135, 135);
+use crate::theme::{UiColors, mix};
 
 /// Widest a single tab gets, in cells; tabs shrink below this once
 /// they no longer all fit side by side.
@@ -172,6 +160,9 @@ pub struct TabBar {
     /// The terminal's default background. The active tab is filled with
     /// it so it visually merges into the terminal content below.
     terminal_bg: Rgb,
+    colors: UiColors,
+    /// The window's opacity, for the bar's and tabs' backgrounds.
+    opacity: f32,
     buffers: Vec<TextBuffer>,
     /// What each buffer in `buffers` currently holds, so unchanged
     /// labels aren't re-shaped every frame.
@@ -180,8 +171,8 @@ pub struct TabBar {
 }
 
 impl TabBar {
-    pub fn new(terminal_bg: Rgb) -> Self {
-        Self { terminal_bg, buffers: Vec::new(), shaped: Vec::new(), placements: Vec::new() }
+    pub fn new(terminal_bg: Rgb, colors: UiColors, opacity: f32) -> Self {
+        Self { terminal_bg, colors, opacity, buffers: Vec::new(), shaped: Vec::new(), placements: Vec::new() }
     }
 
     /// Append the bar's rectangles to `quads` and re-fill the label
@@ -198,26 +189,45 @@ impl TabBar {
         self.placements.clear();
         let (h, px) = (layout.height, layout.px);
         let cell = text.cell;
-        let bar_w = layout.right - layout.left;
+        let (c, op) = (self.colors, self.opacity);
+        // Backgrounds are as see-through as the window; lines, icons and
+        // text stay solid.
+        let fill = |rect: Rect, color: Rgb| QuadInstance {
+            offset: [rect.x, rect.y],
+            size: [rect.w, rect.h],
+            color: to_linear(color, op),
+        };
+        let text_color = |Rgb { r, g, b }: Rgb| TextColor::rgb(r, g, b);
+        let text_active = text_color(c.text);
+        let text_hover = text_color(mix(c.text_weak, c.text, 0.7));
+        let text_inactive = text_color(c.text_weak);
 
-        quads.push(Rect { x: layout.left, y: 0.0, w: bar_w, h }.quad(BAR_BG));
-        quads.push(Rect { x: layout.left, y: h - px, w: bar_w, h: px }.quad(BORDER));
+        // The bar's background and bottom border leave the active tab out:
+        // under its own see-through background they'd show through.
+        let spans = match layout.tabs.get(active) {
+            Some(slot) => [(layout.left, slot.rect.x), (slot.rect.x + slot.rect.w, layout.right)],
+            None => [(layout.left, layout.right), (0.0, 0.0)],
+        };
+        for &(x0, x1) in spans.iter().filter(|(x0, x1)| x1 > x0) {
+            quads.push(fill(Rect { x: x0, y: 0.0, w: x1 - x0, h }, c.background));
+            quads.push(Rect { x: x0, y: h - px, w: x1 - x0, h: px }.quad(c.border));
+        }
 
         let sep_h = (h * 0.5).round();
-        let separator = |x: f32| Rect { x: x - px, y: ((h - sep_h) * 0.5).round(), w: px, h: sep_h }.quad(BORDER);
+        let separator = |x: f32| Rect { x: x - px, y: ((h - sep_h) * 0.5).round(), w: px, h: sep_h }.quad(c.border);
 
         // Sidebar toggle: a hamburger icon drawn from three quads, so it
         // doesn't depend on the monospace font having the glyph.
         let t = layout.toggle;
         let toggle_hovered = hovered == Some(TabBarHit::ToggleSidebar);
         if toggle_hovered {
-            quads.push(Rect { h: h - px, ..t }.quad(HOVER_BG));
+            quads.push(fill(Rect { h: h - px, ..t }, c.hover));
         }
         let (line_w, gap, thick) = ((h * 0.4).round(), (h * 0.14).round(), px.max((h * 0.05).round()));
         let line_x = (t.x + (t.w - line_w) * 0.5).round();
         let line_y = (t.y + (h - thick) * 0.5).round();
         for dy in [-gap, 0.0, gap] {
-            let icon = if toggle_hovered { ICON_HOVER } else { ICON };
+            let icon = if toggle_hovered { c.text } else { c.text_weak };
             quads.push(Rect { x: line_x, y: line_y + dy, w: line_w, h: thick }.quad(icon));
         }
         if active != 0 {
@@ -234,11 +244,11 @@ impl TabBar {
             if is_active {
                 // Covers the bottom border too, so the active tab opens
                 // straight into the terminal below.
-                quads.push(r.quad(self.terminal_bg));
-                quads.push(Rect { x: r.x, y: 0.0, w: r.w, h: 2.0 * px }.quad(ACCENT));
+                quads.push(fill(r, self.terminal_bg));
+                quads.push(Rect { x: r.x, y: 0.0, w: r.w, h: 2.0 * px }.quad(c.accent));
             } else {
                 if is_hovered {
-                    quads.push(Rect { h: h - px, ..r }.quad(HOVER_BG));
+                    quads.push(fill(Rect { h: h - px, ..r }, c.hover));
                 }
                 // Separator on the right edge, unless the neighbour is
                 // the active tab (its own background already delimits it).
@@ -255,32 +265,32 @@ impl TabBar {
             let label_left = r.x + layout.label_pad;
             let max_chars = ((label_right - label_left) / cell.width).floor().max(0.0) as usize;
             let color = if is_active {
-                TEXT_ACTIVE
+                text_active
             } else if is_hovered {
-                TEXT_HOVER
+                text_hover
             } else {
-                TEXT_INACTIVE
+                text_inactive
             };
             let clip = Rect { x: label_left, y: 0.0, w: (label_right - label_left).max(0.0), h };
             self.push_label(text, &truncate(title, max_chars), label_left, text_top, clip, color);
 
-            if let Some(c) = slot.close.filter(|_| show_close) {
+            if let Some(close) = slot.close.filter(|_| show_close) {
                 let close_hovered = hovered == Some(TabBarHit::Close(i));
                 if close_hovered {
-                    quads.push(c.quad(CLOSE_HOVER_BG));
+                    quads.push(fill(close, c.border_strong));
                 }
-                let color = if close_hovered { TEXT_ACTIVE } else { TEXT_INACTIVE };
-                let left = (c.x + (c.w - cell.width) * 0.5).round();
-                self.push_label(text, "×", left, text_top, c, color);
+                let color = if close_hovered { text_active } else { text_inactive };
+                let left = (close.x + (close.w - cell.width) * 0.5).round();
+                self.push_label(text, "×", left, text_top, close, color);
             }
         }
 
         let b = layout.new_tab;
         let new_hovered = hovered == Some(TabBarHit::NewTab);
         if new_hovered {
-            quads.push(Rect { h: h - px, ..b }.quad(HOVER_BG));
+            quads.push(fill(Rect { h: h - px, ..b }, c.hover));
         }
-        let color = if new_hovered { TEXT_ACTIVE } else { TEXT_INACTIVE };
+        let color = if new_hovered { text_active } else { text_inactive };
         let left = (b.x + (b.w - cell.width) * 0.5).round();
         self.push_label(text, "+", left, text_top, b, color);
     }

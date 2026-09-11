@@ -119,7 +119,7 @@ impl KeysPanel {
 
         section_title(ui, &t!("sidebar-keys"));
         if let Some(err) = data.keys_error.clone() {
-            ui.label(RichText::new(err).color(theme::ERROR));
+            ui.label(RichText::new(err).color(theme::colors().error));
             if ui.button(t!("common-reload")).clicked() {
                 data.reload();
             }
@@ -200,7 +200,7 @@ impl KeysPanel {
             data.catalog.saved.iter().filter(|h| h.uses_key(&key.name)).map(|h| h.name.clone()).collect();
 
         ui.add_space(4.0);
-        Frame::new().fill(theme::ROW_BG).corner_radius(egui::CornerRadius::same(4)).inner_margin(Margin::same(8)).show(ui, |ui| {
+        Frame::new().fill(theme::colors().row).corner_radius(egui::CornerRadius::same(4)).inner_margin(Margin::same(8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match &info {
                 Ok(info) => {
@@ -211,7 +211,7 @@ impl KeysPanel {
                     }
                 }
                 Err(err) => {
-                    ui.label(RichText::new(err).color(theme::ERROR));
+                    ui.label(RichText::new(err).color(theme::colors().error));
                 }
             }
             match &key.file {
@@ -235,10 +235,10 @@ impl KeysPanel {
         if let Some(files) = &files {
             ui.label(t!("keys-delete-files-question", name = &key.name));
             for file in files {
-                ui.label(RichText::new(tilde(file)).monospace().size(11.0).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(tilde(file)).monospace().size(11.0).color(theme::colors().text_weak));
             }
             ui.horizontal_wrapped(|ui| {
-                if ui.button(RichText::new(t!("keys-delete-files")).color(theme::ERROR)).clicked() {
+                if ui.button(RichText::new(t!("keys-delete-files")).color(theme::colors().error)).clicked() {
                     with_files = Some(true);
                 }
                 if ui.button(t!("keys-keep-files")).clicked() {
@@ -250,7 +250,7 @@ impl KeysPanel {
             ui.horizontal_wrapped(|ui| {
                 copy = ui.add_enabled(info.is_ok(), egui::Button::new(t!("keys-copy-public"))).clicked();
                 if confirming {
-                    confirm = ui.button(RichText::new(t!("common-remove")).color(theme::ERROR)).clicked();
+                    confirm = ui.button(RichText::new(t!("common-remove")).color(theme::colors().error)).clicked();
                     cancel = ui.button(t!("common-no")).clicked();
                 } else {
                     rename = ui.button("✏").on_hover_text(t!("keys-rename")).clicked();
@@ -313,7 +313,7 @@ impl KeysPanel {
     fn form_ui(&mut self, ui: &mut Ui, data: &mut SshData) {
         let Some(form) = self.form.as_mut() else { return };
         let (mut save, mut cancel) = (false, false);
-        Frame::group(ui.style()).fill(theme::ROW_BG).inner_margin(Margin::same(10)).show(ui, |ui| {
+        Frame::group(ui.style()).fill(theme::colors().row).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match form {
                 Form::Generate(form) => {
@@ -344,7 +344,7 @@ impl KeysPanel {
                     ui.label(RichText::new(t!("keys-agent-title")).strong());
                     match identities {
                         Err(err) => {
-                            ui.label(RichText::new(err.as_str()).color(theme::ERROR));
+                            ui.label(RichText::new(err.as_str()).color(theme::colors().error));
                         }
                         Ok(list) if list.is_empty() => {
                             ui.label(weak(t!("keys-agent-empty")));
@@ -500,7 +500,7 @@ fn text_field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) -> egui:
 
 fn show_error(ui: &mut Ui, error: &Option<String>) {
     if let Some(err) = error {
-        ui.label(RichText::new(err).color(theme::ERROR));
+        ui.label(RichText::new(err).color(theme::colors().error));
     }
 }
 

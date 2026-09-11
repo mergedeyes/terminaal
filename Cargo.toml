@@ -27,6 +27,12 @@ ssh2 = "0.9.6"
 toml = "0.8"
 toml_edit = "0.22"
 unic-langid = "0.9.6"
+# Blur behind the see-through window (ext-background-effect, see blur.rs),
+# spoken on winit's own Wayland connection: the versions and features
+# winit already uses.
+wayland-backend = { version = "0.3.17", features = ["client_system"] }
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 wgpu = "30.0.1"
 winit = "0.30.13"
 

@@ -506,7 +506,7 @@ impl SshPanel {
 
         section_title(ui, &t!("ssh-saved-hosts"));
         if let Some(err) = data.hosts_error.clone() {
-            ui.label(RichText::new(err).color(theme::ERROR));
+            ui.label(RichText::new(err).color(theme::colors().error));
             if ui.button(t!("common-reload")).clicked() {
                 data.reload();
             }
@@ -623,7 +623,7 @@ impl SshPanel {
                 }
             }
             if confirming {
-                delete = ui.button(RichText::new(t!("common-delete")).color(theme::ERROR)).clicked();
+                delete = ui.button(RichText::new(t!("common-delete")).color(theme::colors().error)).clicked();
                 cancel_delete = ui.button(t!("common-no")).clicked();
             } else {
                 edit = ui.button("✏").on_hover_text(t!("common-edit")).clicked();
@@ -681,7 +681,7 @@ impl SshPanel {
 
         let Some(editor) = self.editor.as_mut() else { return };
         let (mut save, mut cancel) = (false, false);
-        Frame::group(ui.style()).fill(theme::ROW_BG).inner_margin(Margin::same(10)).show(ui, |ui| {
+        Frame::group(ui.style()).fill(theme::colors().row).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new(if editor.original.is_some() { t!("host-edit") } else { t!("host-new") }).strong());
             ui.add_space(2.0);
@@ -721,7 +721,7 @@ impl SshPanel {
             advanced_ui(ui, editor);
 
             if let Some(err) = &editor.error {
-                ui.label(RichText::new(err).color(theme::ERROR));
+                ui.label(RichText::new(err).color(theme::colors().error));
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -786,7 +786,7 @@ fn logins_ui(ui: &mut Ui, editor: &mut HostEditor, key_names: &[String]) {
     let (id, count) = (editor.id, editor.logins.len());
     let (mut remove, mut promote) = (None, None);
     for (i, login) in editor.logins.iter_mut().enumerate() {
-        Frame::new().fill(theme::BG).corner_radius(CornerRadius::same(4)).inner_margin(Margin::same(6)).show(ui, |ui| {
+        Frame::new().fill(theme::colors().bg).corner_radius(CornerRadius::same(4)).inner_margin(Margin::same(6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             if count > 1 {
                 ui.horizontal(|ui| {
@@ -958,7 +958,7 @@ fn group(ui: &mut Ui, title: &str) {
 fn option_label(ui: &mut Ui, label: &str, keyword: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.label(weak(label));
-        ui.label(RichText::new(keyword).monospace().size(10.0).color(theme::TEXT_WEAK));
+        ui.label(RichText::new(keyword).monospace().size(10.0).color(theme::colors().text_weak));
     });
 }
 

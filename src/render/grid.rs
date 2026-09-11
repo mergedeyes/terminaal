@@ -36,19 +36,11 @@ use crate::render::quad::QuadInstance;
 use crate::render::text::{CellMetrics, TextRendererState};
 use crate::terminal::listener::EventProxyListener;
 
-/// Selection highlight (sRGB), blended over each covered cell.
-const SELECTION: Rgb = Rgb { r: 89, g: 140, b: 217 };
-const SELECTION_ALPHA: f32 = 0.45;
-
 /// Shaped rows kept around beyond the visible ones, as a multiple of the
 /// visible row count (with a floor for tiny windows). Covers scrolling
 /// back and forth through recent output without re-shaping it.
 const CACHE_ROWS_FACTOR: usize = 4;
 const CACHE_MIN: usize = 256;
-
-fn dim(c: Rgb) -> Rgb {
-    Rgb { r: (c.r as f32 * 0.66) as u8, g: (c.g as f32 * 0.66) as u8, b: (c.b as f32 * 0.66) as u8 }
-}
 
 /// Everything about a cell's text styling that can make it join or break
 /// a run with its neighbour. Plain `PartialEq`/`Hash`-able so consecutive
@@ -169,7 +161,13 @@ pub fn build_frame(
             std::mem::swap(&mut fg, &mut bg);
         }
         if cell.flags.contains(Flags::DIM) {
-            fg = dim(fg);
+            fg = crate::theme::dim(fg);
+        }
+        // Like Alacritty, the theme's selection colors replace the cell's.
+        if selected {
+            let (selection_bg, selection_fg) = palette.selection();
+            bg = selection_bg;
+            fg = selection_fg.unwrap_or(fg);
         }
 
         if bg != default_bg {
@@ -177,17 +175,6 @@ pub fn build_frame(
                 offset: [origin_x + col as f32 * cell_w, origin_y + row as f32 * cell_h],
                 size: [cell_w, cell_h],
                 color: to_linear(bg, 1.0),
-            });
-        }
-
-        // Drawn after the background quad (and before text, since text
-        // renders in a separate later pass) so a selection is visible as
-        // a translucent overlay regardless of the cell's own background.
-        if selected {
-            quads.push(QuadInstance {
-                offset: [origin_x + col as f32 * cell_w, origin_y + row as f32 * cell_h],
-                size: [cell_w, cell_h],
-                color: to_linear(SELECTION, SELECTION_ALPHA),
             });
         }
 

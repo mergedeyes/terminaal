@@ -47,7 +47,7 @@ fn window_icon() -> Option<Icon> {
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
 }
 
-use crate::config::{self, Config, Setting};
+use crate::config::{self, Config, FontSlot, Setting};
 use crate::i18n::{self, t};
 use crate::gpu::GpuState;
 use crate::input;
@@ -55,13 +55,17 @@ use crate::render::grid::{self, GridText};
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::{QuadInstance, QuadRenderer};
 use crate::render::tab_bar::{self, TabBar, TabBarHit, TabBarLayout};
-use crate::render::text::{CellMetrics, TextRendererState};
+use crate::render::text::{CellMetrics, FontFamilies, TextRendererState};
+use crate::theme::{Theme, Themes};
+use crate::ui::theme::FontFace;
+use crate::blur::Blur;
+use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use crate::shells::{self, launch, InstalledShell};
 use crate::shortcuts::{Action, KeyCombo, Keymap};
 use crate::ssh::SshTarget;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
-use crate::ui::settings_panel::{SettingsPanel, SettingsView};
+use crate::ui::settings_panel::{SettingsPanel, SettingsView, Transparency};
 use crate::ui::sidebar::{Sidebar, SidebarAction};
 use crate::ui::splash::{self, Splash, SplashFrames};
 use crate::ui::UiLayer;
@@ -78,6 +82,8 @@ pub enum UserEvent {
     Terminal(usize, TermEvent),
     /// The splash animation finished decoding (`ui::splash`).
     SplashReady(Result<SplashFrames, String>),
+    /// The COSMIC desktop's theme changed (`theme::cosmic::watch`).
+    CosmicThemeChanged,
 }
 
 pub struct App {
@@ -145,6 +151,9 @@ enum Origin {
 }
 
 struct AppState {
+    /// Blur behind the window where the compositor has ext-background-effect.
+    /// Declared first, so it goes before the window whose surface it borrows.
+    blur: Option<Blur>,
     window: Arc<Window>,
     gpu: GpuState,
     quad_renderer: QuadRenderer,
@@ -158,6 +167,15 @@ struct AppState {
     /// Tab-bar element under the mouse, for hover highlighting.
     hovered: Option<TabBarHit>,
     palette: Palette,
+    /// Every theme to pick from, and the one in use (`config.theme`).
+    themes: Themes,
+    theme: Theme,
+    /// Installed font families, for the settings.
+    fonts: FontFamilies,
+    /// The window is blurred behind right now (`blur`, or winit's KWin blur).
+    blurred: bool,
+    /// Running on X11, where a window can't become see-through later on.
+    x11: bool,
     proxy: EventLoopProxy<UserEvent>,
     config: Config,
 
@@ -221,6 +239,8 @@ impl AppState {
         connect: Option<SshTarget>,
     ) -> Self {
         let gpu = pollster::block_on(GpuState::new(window.clone(), event_loop));
+        let themes = Themes::load();
+        let theme = themes.get(config.theme.as_deref()).clone();
 
         // Everything downstream (surface size, buffer bounds, cell math)
         // is kept in *physical* pixels, so the font size we hand to
@@ -234,9 +254,11 @@ impl AppState {
             gpu.format,
             physical_font_size,
             config.line_height_factor,
+            config.font(FontSlot::Terminal),
         );
+        let fonts = text.families();
         let quad_renderer = QuadRenderer::new(&gpu.device, gpu.format);
-        let ui = UiLayer::new(&window, &gpu.device, gpu.format);
+        let ui = UiLayer::new(&window, &gpu.device, gpu.format, &theme.ui);
 
         let padding = config.padding * scale_factor;
         let tab_bar_height = tab_bar_height(&config, text.cell, scale_factor);
@@ -252,7 +274,12 @@ impl AppState {
             .ok();
 
         let next_blink = Instant::now() + Duration::from_millis(config.cursor_blink_interval_ms);
-        let palette = Palette::default();
+        let blur = Blur::new(&window);
+        let x11 = matches!(
+            window.display_handle().map(|handle| handle.as_raw()),
+            Ok(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_))
+        );
+        let palette = Palette::new(&theme.terminal);
         let default_shell = shells::default_shell(config.shell.as_deref());
         let splash = if config.splash { spawn_splash_decoder(proxy.clone(), scale_factor) } else { None };
 
@@ -262,10 +289,17 @@ impl AppState {
             quad_renderer,
             text,
             grid_text: GridText::default(),
-            tab_bar: TabBar::new(palette.named(NamedColor::Background)),
+            // Opaque until `apply_transparency` below.
+            tab_bar: TabBar::new(palette.named(NamedColor::Background), theme.ui, 1.0),
             tab_bar_height,
             hovered: None,
             palette,
+            themes,
+            theme,
+            fonts,
+            blur,
+            blurred: false,
+            x11,
             proxy,
             ui,
             sidebar: Sidebar::new(&default_shell),
@@ -294,6 +328,12 @@ impl AppState {
             next_blink,
             clipboard,
         };
+        state.apply_ui_fonts();
+        state.apply_transparency();
+        let proxy = state.proxy.clone();
+        crate::theme::cosmic::watch(&crate::theme::cosmic::Roots::system(), move || {
+            let _ = proxy.send_event(UserEvent::CosmicThemeChanged);
+        });
         // The very first tab failing to spawn means we can't do anything
         // useful at all -- that's the same "just crash" behaviour the
         // single-session version had. Later tabs (Ctrl+Shift+T) are
@@ -937,6 +977,9 @@ impl AppState {
         self.gpu.resize(width, height);
         self.quad_renderer.resize(&self.gpu.queue, width as f32, height as f32);
         self.relayout();
+        if self.blurred {
+            self.update_blur();
+        }
     }
 
     /// Recompute the grid size from the window size, sidebar and tab bar,
@@ -1013,6 +1056,15 @@ impl AppState {
                         default: &default_shell,
                         window_size,
                         keymap: &self.keymap,
+                        themes: &self.themes,
+                        theme: &self.theme,
+                        fonts: &self.fonts,
+                        default_font: self.text.default_family(),
+                        transparency: Transparency {
+                            supported: self.gpu.supports_translucency(),
+                            blur: self.blur.is_some(),
+                            x11: self.x11,
+                        },
                     };
                     self.settings.show_tab(ui, &view, &mut settings_actions);
                 });
@@ -1105,7 +1157,98 @@ impl AppState {
             SidebarAction::ChangeSetting { setting, save } => self.change_setting(setting, save),
             SidebarAction::OpenSettings => self.open_settings(),
             SidebarAction::SetShortcut(action, combos) => self.set_shortcut(action, combos, origin),
+            SidebarAction::SetTheme(name) => {
+                if let Err(err) = self.config.save_theme(&name) {
+                    self.report(origin, Err(err));
+                }
+                self.apply_theme();
+            }
+            SidebarAction::ReloadThemes => {
+                self.themes = Themes::load();
+                self.apply_theme();
+                self.report(origin, Ok(t!("settings-themes-reloaded", count = self.themes.all().len())));
+            }
+            SidebarAction::SetFont(slot, family) => {
+                if let Err(err) = self.config.save_font(slot, family.as_deref()) {
+                    self.report(origin, Err(err));
+                }
+                if slot == FontSlot::Terminal {
+                    self.text.set_family(self.config.font(FontSlot::Terminal));
+                    self.update_font();
+                }
+                self.apply_ui_fonts();
+                self.window.request_redraw();
+            }
         }
+    }
+
+    /// Switch to the configured theme: the console's palette, the tab bar
+    /// and the egui chrome. Rows shaped in the old colors just drop out of
+    /// the grid's cache, since their colors are part of its key.
+    fn apply_theme(&mut self) {
+        self.theme = self.themes.get(self.config.theme.as_deref()).clone();
+        self.palette = Palette::new(&self.theme.terminal);
+        self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity());
+        crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.opacity());
+        self.window.request_redraw();
+    }
+
+    /// Read the themes again -- the COSMIC desktop's changed -- and apply
+    /// the configured one, in case that's it.
+    fn reload_themes(&mut self) {
+        self.themes = Themes::load();
+        self.apply_theme();
+    }
+
+    /// How opaque the window's backgrounds are drawn: the configured
+    /// opacity, as long as the surface can be see-through at all.
+    fn opacity(&self) -> f32 {
+        if self.gpu.translucent() { self.config.opacity() } else { 1.0 }
+    }
+
+    /// Make the window as see-through as `opacity` says, blurred behind
+    /// with `blur` -- as far as driver and compositor allow.
+    fn apply_transparency(&mut self) {
+        let was = self.gpu.translucent();
+        self.gpu.set_translucent(self.config.opacity() < 1.0);
+        let translucent = self.gpu.translucent();
+        if translucent != was {
+            // On Wayland this drops the opaque region, so the compositor
+            // blends the window at all. X11 only takes it at creation.
+            self.window.set_transparent(translucent);
+        }
+        let blur = translucent && self.config.blur;
+        if blur != self.blurred {
+            self.blurred = blur;
+            // KWin's blur; `self.blur` is everyone else's.
+            self.window.set_blur(blur);
+            self.update_blur();
+        }
+        self.apply_theme();
+    }
+
+    /// Tell the compositor what to blur: the whole window, or nothing.
+    fn update_blur(&mut self) {
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let size = (size.width.ceil() as i32, size.height.ceil() as i32);
+        if let Some(blur) = &mut self.blur {
+            blur.set(self.blurred, size);
+        }
+    }
+
+    /// Hand egui the chosen menu font, and the chosen console font for its
+    /// monospace bits; one left at the default keeps egui's own.
+    fn apply_ui_fonts(&self) {
+        let face = |family: Option<&str>| {
+            let family = family?;
+            let face = self.text.face_data(family);
+            if face.is_none() {
+                log::warn!("font {family:?} is not installed");
+            }
+            face.map(|(data, index)| FontFace { data, index })
+        };
+        let (ui, monospace) = (face(self.config.font(FontSlot::Ui)), face(self.config.font(FontSlot::Terminal)));
+        crate::ui::theme::set_fonts(&self.ui.ctx, ui, monospace);
     }
 
     /// Show an action's outcome where it was triggered.
@@ -1138,6 +1281,7 @@ impl AppState {
             // `run_ui` moves the console along.
             Setting::SidebarWidth(_) => {}
             Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
+            Setting::Opacity(_) | Setting::Blur(_) => self.apply_transparency(),
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
             Setting::ScrollbackLines(lines) if save => {
@@ -1169,7 +1313,7 @@ impl AppState {
         let scale_factor = self.window.scale_factor() as f32;
         self.text.set_font(self.font_size() * scale_factor, self.config.line_height_factor);
         self.grid_text = GridText::default();
-        self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background));
+        self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity());
         self.tab_bar_height = tab_bar_height(&self.config, self.text.cell, scale_factor);
         // Forces the resize: the shells learn the new cell size even if
         // the grid keeps its columns and rows.
@@ -1215,6 +1359,20 @@ impl AppState {
                 &mut self.text,
                 &mut self.quads,
             );
+        }
+
+        // A see-through window starts out empty (see the clear color): the
+        // console's background is a quad of its own, drawn first, and the
+        // sidebar's is egui's -- one under the other would double up.
+        let opacity = self.opacity();
+        if opacity < 1.0 && show_grid {
+            let (width, height) = (self.gpu.surface_config.width as f32, self.gpu.surface_config.height as f32);
+            let background = QuadInstance {
+                offset: [self.sidebar_width, self.tab_bar_height],
+                size: [width - self.sidebar_width, height - self.tab_bar_height],
+                color: to_linear(self.palette.named(NamedColor::Background), opacity),
+            };
+            self.quads.insert(0, background);
         }
 
         let t_build = Instant::now();
@@ -1295,7 +1453,8 @@ impl AppState {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame_encoder") });
 
-        let [r, g, b, a] = to_linear(self.palette.named(NamedColor::Background), 1.0).map(f64::from);
+        let clear = if opacity < 1.0 { [0.0; 4] } else { to_linear(self.palette.named(NamedColor::Background), 1.0) };
+        let [r, g, b, a] = clear.map(f64::from);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
@@ -1431,6 +1590,11 @@ impl ApplicationHandler<UserEvent> for App {
         let attrs = Window::default_attributes()
             .with_inner_size(LogicalSize::new(self.config.default_width, self.config.default_height))
             .with_title("Terminaal")
+            // Deliberately never `with_transparent`: Wayland takes it later
+            // (`apply_transparency`), and on X11 -- whose surface is opaque
+            // anyway -- a window with an alpha visual crashed Xwayland
+            // (abort in Mesa's libgallium, COSMIC), taking every X11 app
+            // down with it.
             .with_window_icon(window_icon());
         // Without an app_id (Wayland) / WM_CLASS (X11) the dock can't tell
         // which app the window belongs to: COSMIC matched it to an unrelated
@@ -1541,6 +1705,10 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Terminal(tab_id, term_event) => (tab_id, term_event),
             UserEvent::SplashReady(frames) => {
                 state.start_splash(frames);
+                return;
+            }
+            UserEvent::CosmicThemeChanged => {
+                state.reload_themes();
                 return;
             }
         };

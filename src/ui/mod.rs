@@ -37,9 +37,9 @@ struct PreparedFrame {
 }
 
 impl UiLayer {
-    pub fn new(window: &Window, device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(window: &Window, device: &wgpu::Device, format: wgpu::TextureFormat, colors: &crate::theme::UiColors) -> Self {
         let ctx = egui::Context::default();
-        theme::apply(&ctx);
+        theme::apply(&ctx, colors, 1.0);
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,

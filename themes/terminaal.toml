@@ -1,0 +1,49 @@
+# Terminaal's own look: the xterm.js palette on black, with the chrome in
+# dark grays and blue.
+
+[colors.primary]
+background = "#000000"
+foreground = "#e5e5e5"
+bright_foreground = "#ffffff"
+dim_foreground = "#969696"
+
+[colors.cursor]
+cursor = "#e5e5e5"
+
+[colors.selection]
+background = "#3c6197"
+
+[colors.normal]
+black = "#000000"
+red = "#cd3131"
+green = "#0dbc79"
+yellow = "#e5e510"
+blue = "#2472c8"
+magenta = "#bc3fbc"
+cyan = "#11a8cd"
+white = "#e5e5e5"
+
+[colors.bright]
+black = "#666666"
+red = "#f14c4c"
+green = "#23d18b"
+yellow = "#f5f543"
+blue = "#3b8eea"
+magenta = "#d670d6"
+cyan = "#29b8db"
+white = "#e5e5e5"
+
+[ui]
+background = "#161616"
+row = "#1c1c1c"
+hover = "#242424"
+selected = "#212936"
+border = "#303030"
+border_strong = "#404040"
+accent = "#3b8eea"
+text = "#e5e5e5"
+text_weak = "#878787"
+error = "#f14c4c"
+success = "#23d18b"
+input = "#0c0c0c"
+text_selection = "#264f78"
