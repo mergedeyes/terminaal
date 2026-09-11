@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Terminaal
+GenericName=Terminal
+Comment=Terminalemulator mit SSH-Verwaltung
+Exec=terminaal
+Icon=terminaal
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;ssh;terminal;konsole;
+StartupWMClass=terminaal

@@ -1,0 +1,72 @@
+[package]
+name = "terminaal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+arboard = { version = "3", features = ["wayland-data-control"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+egui = "0.36.2"
+egui-wgpu = "0.36.2"
+egui-winit = "0.36.2"
+env_logger = "0.11.11"
+fluent-bundle = "0.16.0"
+glyphon = "0.12.0"
+image = { version = "0.25", default-features = false, features = ["gif"] }
+libc = "0.2.189"
+log = "0.4.34"
+png = "0.18"
+pollster = "1.0.1"
+serde = { version = "1", features = ["derive"] }
+ssh-key = { version = "0.6", features = ["ed25519", "encryption", "getrandom", "std"] }
+ssh2 = "0.9.6"
+toml = "0.8"
+toml_edit = "0.22"
+unic-langid = "0.9.6"
+wgpu = "30.0.1"
+winit = "0.30.13"
+
+# Text shaping/rasterization is the hot path in the render loop
+# (see the [timing] discussion) and ~10x slower unoptimized. These
+# crates rarely change, so compiling just them at opt-level 3 buys
+# near-release shaping performance in `cargo run` (no --release)
+# while `terminal`'s own code stays on the fast-incremental-compile,
+# full-debug-info dev profile.
+[profile.dev.package.cosmic-text]
+opt-level = 3
+
+[profile.dev.package.swash]
+opt-level = 3
+
+[profile.dev.package.ttf-parser]
+opt-level = 3
+
+# libssh2 is built from source (C, via the `cc` crate), which follows the
+# profile's opt-level too -- and its bcrypt key derivation for encrypted
+# private keys takes many seconds at -O0, freezing the passphrase step.
+[profile.dev.package.libssh2-sys]
+opt-level = 3
+
+# Same story for ssh-key's bcrypt KDF when encrypting a newly generated
+# key with a passphrase.
+[profile.dev.package.bcrypt-pbkdf]
+opt-level = 3
+
+[profile.dev.package.blowfish]
+opt-level = 3
+
+# Decoding and scaling the startup splash's GIF frames (ui::splash) races
+# the first shell prompt; unoptimized it's many times slower, and a splash
+# that arrives too late is skipped.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.gif]
+opt-level = 3
+
+[profile.dev.package.weezl]
+opt-level = 3
+
+[dev-dependencies]
+fluent-syntax = "0.12.0"
