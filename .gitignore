@@ -1,3 +1,4 @@
 /target
 *.sublime-*
 .claude/
+*.code-workspace

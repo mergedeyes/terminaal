@@ -47,7 +47,7 @@ impl TextRendererState {
         let mut atlas = TextAtlas::new(device, queue, &cache, format);
         let renderer = TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 
-        let metrics = Metrics::new(font_size, font_size * line_height_factor);
+        let metrics = metrics(font_size, line_height_factor);
         let cell = measure_cell(&mut font_system, metrics);
 
         Self { font_system, swash_cache, viewport, atlas, renderer, cell, metrics }
@@ -59,10 +59,25 @@ impl TextRendererState {
     }
 }
 
+/// Text metrics for a physical font size, rounded to whole pixels.
+///
+/// `Buffer::set_monospace_width` (which the grid relies on to keep glyphs
+/// on the cell grid) snaps each advance to a multiple of the cell width
+/// *in ems* while the advance itself is in pixels -- which amounts to
+/// rounding the font size. At a fractional size (15 pt at 125 % = 18.75)
+/// every glyph came out a fraction of a pixel wider or narrower than a
+/// cell, so long rows ran away from their cells: the cursor trailed a
+/// long command line, nano's status bar looked cut off. With a whole
+/// pixel size the snapping is exact.
+pub fn metrics(font_size: f32, line_height_factor: f32) -> Metrics {
+    let font_size = font_size.round().max(1.0);
+    Metrics::new(font_size, font_size * line_height_factor)
+}
+
 /// Shape a single reference glyph to find out how wide a monospace
 /// character actually is at this font size on this system, rather than
 /// assuming a fixed ratio to the font size.
-fn measure_cell(font_system: &mut FontSystem, metrics: Metrics) -> CellMetrics {
+pub(crate) fn measure_cell(font_system: &mut FontSystem, metrics: Metrics) -> CellMetrics {
     let mut probe = TextBuffer::new(font_system, metrics);
     {
         let mut probe = probe.borrow_with(font_system);

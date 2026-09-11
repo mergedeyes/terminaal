@@ -26,7 +26,10 @@ use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
-use glyphon::{Attrs, Buffer as TextBuffer, Color as TextColor, Shaping, Style, TextArea, TextBounds, Weight, Wrap};
+use glyphon::{
+    Attrs, Buffer as TextBuffer, Color as TextColor, FontSystem, Metrics, Shaping, Style, TextArea, TextBounds, Weight,
+    Wrap,
+};
 
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::QuadInstance;
@@ -242,7 +245,7 @@ impl GridText {
             match self.cache.get_mut(row) {
                 Some(cached) => cached.last_used = self.frame,
                 None => {
-                    let buffer = shape_row(text, &default_attrs, row);
+                    let buffer = shape_row(&mut text.font_system, text.metrics, text.cell, &default_attrs, row);
                     self.cache.insert(row.clone(), CachedRow { buffer, last_used: self.frame });
                 }
             }
@@ -276,9 +279,14 @@ impl GridText {
     }
 }
 
-fn shape_row(text: &mut TextRendererState, default_attrs: &Attrs<'static>, row: &RowText) -> TextBuffer {
-    let TextRendererState { font_system, metrics, cell, .. } = text;
-    let mut buffer = TextBuffer::new(font_system, *metrics);
+fn shape_row(
+    font_system: &mut FontSystem,
+    metrics: Metrics,
+    cell: CellMetrics,
+    default_attrs: &Attrs<'static>,
+    row: &RowText,
+) -> TextBuffer {
+    let mut buffer = TextBuffer::new(font_system, metrics);
     {
         let mut buffer = buffer.borrow_with(font_system);
         buffer.set_wrap(Wrap::None);
@@ -327,6 +335,31 @@ mod tests {
         let mut blank = row(&[(' ', RED), (' ', BLUE)]);
         blank.trim_end();
         assert!(blank.text.is_empty() && blank.runs.is_empty());
+    }
+
+    /// Every glyph of a long row has to start exactly at its cell, at
+    /// fractional scale factors too (cosmic-text's monospace snapping,
+    /// see `text::metrics`).
+    #[test]
+    fn glyphs_stay_on_their_cells() {
+        use crate::render::text::{measure_cell, metrics};
+        use glyphon::Family;
+
+        let mut font_system = FontSystem::new();
+        let text: String = format!("echo verrrrrrr {} looonnggg teeeext", "y".repeat(120));
+        for scale in [1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.25] {
+            let metrics = metrics(15.0 * scale, 1.2);
+            let cell = measure_cell(&mut font_system, metrics);
+            let attrs = Attrs::new().family(Family::Monospace).metrics(metrics);
+            let row = row(&text.chars().map(|c| (c, RED)).collect::<Vec<_>>());
+            let buffer = shape_row(&mut font_system, metrics, cell, &attrs, &row);
+            let glyphs = buffer.layout_runs().next().unwrap().glyphs;
+            assert_eq!(glyphs.len(), text.len());
+            for (col, glyph) in glyphs.iter().enumerate() {
+                let drift = glyph.x - col as f32 * cell.width;
+                assert!(drift.abs() < 0.01, "scale {scale}: column {col} is {drift} px off");
+            }
+        }
     }
 
     #[test]
