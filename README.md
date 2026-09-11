@@ -22,6 +22,7 @@ in a sidebar, and never have secrets written to disk.
 
 **SCREENSHOTS:**
 <img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/8b66f2ea-c9c3-42c5-9f1c-5429d2435855" />
+<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/64894246-9511-46f7-8931-fa2353f9dde8" />
 
 ## Features
 
