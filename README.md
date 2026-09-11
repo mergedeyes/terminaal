@@ -17,6 +17,7 @@ in a sidebar, and never have secrets written to disk.
 
 > **Status:** under active development. It's used as a daily driver on
 > Linux (Wayland and X11). Expect rough edges, and expect the config format to change.
+
 > **DISCLAIMER:** This project is coded mostly by Claude Code, I do make all decisions though; So all features were planned by me.
 
 ## Features
