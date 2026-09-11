@@ -28,12 +28,13 @@ in a sidebar, and never have secrets written to disk.
 - Redraws only when something changes (output, input, cursor blink), so it stays
   idle when you do
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
-- Scrollback with the mouse wheel (speed adjustable under **⚙**), mouse selection,
+- Scrollback with the mouse wheel (speed adjustable in the settings), mouse selection,
   clipboard copy and paste
 - Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
   reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
 - Right-click menu in the terminal: copy, paste, and paste and run
+- A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
 - Optional start-up animation
 
 ### Shells
@@ -69,7 +70,7 @@ in a sidebar, and never have secrets written to disk.
 ### Languages
 - English and German, via [Project Fluent](https://projectfluent.org/).
   The default follows your system locale (German for a German locale, English
-  otherwise). Switch it any time in the sidebar under **⚙**
+  otherwise). Switch it any time in the settings tab
 
 ## Installation
 
@@ -118,6 +119,7 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close tab |
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
+| <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
 
 Tabs can also be closed with a middle click; the ☰ button in the tab bar
@@ -154,9 +156,10 @@ splash = true                 # start-up animation
 # language = "en"             # "en" or "de" (default: from your locale)
 ```
 
-Every option can also be set in the sidebar under **⚙** (hover a control to
-see its key). Font, padding, tab bar, sidebar width, cursor and scrolling
-apply right away; window size, sidebar and animation at the next start. When you
+Every option can also be set in the settings tab (**⚙** in the sidebar, or
+<kbd>Ctrl</kbd>+<kbd>,</kbd>; hover a setting's name to see its key). Font,
+padding, tab bar, cursor and scrolling apply right away, the sidebar width once
+you let go of its slider; window size, sidebar and animation at the next start. When you
 change something there, Terminaal edits just that line and keeps your comments and
 formatting.
 

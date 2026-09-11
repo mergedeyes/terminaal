@@ -4,7 +4,7 @@
 //!
 //! Screen layout, left to right: the sidebar (`ui::sidebar`, optional),
 //! then the console column -- tab bar on top (`render::tab_bar`), the
-//! terminal grid below it.
+//! terminal grid below it (or, in the settings tab, egui's settings page).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -59,6 +59,7 @@ use crate::shells::{self, launch, InstalledShell};
 use crate::ssh::SshTarget;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
+use crate::ui::settings_panel::SettingsPanel;
 use crate::ui::sidebar::{Sidebar, SidebarAction};
 use crate::ui::splash::{self, Splash, SplashFrames};
 use crate::ui::UiLayer;
@@ -92,18 +93,53 @@ impl App {
     }
 }
 
-/// One shell session. Rendering resources (window, GPU, font/text state,
-/// quad renderer) live once on `AppState` and are shared -- only the
-/// terminal session itself differs per tab, since only the active tab's
-/// content is ever built into `AppState::quads`/`text.buffer` on a given
-/// redraw.
+/// One tab: a shell session or the settings page. Rendering resources
+/// (window, GPU, font/text state, quad renderer) live once on `AppState`
+/// and are shared -- only the terminal session itself differs per tab,
+/// since only the active tab's content is ever built into
+/// `AppState::quads`/`text.buffer` on a given redraw.
 struct Tab {
     id: usize,
-    terminal: TerminalSession,
+    content: TabContent,
     title: String,
     /// What the title falls back to when the program resets it: the
     /// shell's name, or `user@host` for SSH.
     default_title: String,
+}
+
+enum TabContent {
+    Terminal(TerminalSession),
+    /// The settings page (`ui::settings_panel`), drawn by egui where the
+    /// grid would be. At most one tab has it.
+    Settings,
+}
+
+impl Tab {
+    /// `None` for the settings tab.
+    fn terminal(&self) -> Option<&TerminalSession> {
+        match &self.content {
+            TabContent::Terminal(terminal) => Some(terminal),
+            TabContent::Settings => None,
+        }
+    }
+
+    fn is_settings(&self) -> bool {
+        matches!(self.content, TabContent::Settings)
+    }
+
+    /// Input or a reply for the tab's shell; the settings tab has none.
+    fn send_input(&self, bytes: Vec<u8>) {
+        if let Some(terminal) = self.terminal() {
+            terminal.send_input(bytes);
+        }
+    }
+}
+
+/// Where a [`SidebarAction`] came from; its outcome is reported there.
+#[derive(Clone, Copy)]
+enum Origin {
+    Sidebar,
+    Settings,
 }
 
 struct AppState {
@@ -125,9 +161,11 @@ struct AppState {
 
     ui: UiLayer,
     sidebar: Sidebar,
+    /// The settings tab's page; kept while the tab is closed.
+    settings: SettingsPanel,
     sidebar_visible: bool,
-    /// The user last clicked into the sidebar, so the keyboard may go to
-    /// egui there. Otherwise it belongs to the terminal alone: egui never
+    /// The user last clicked into the sidebar or the settings page, so
+    /// the keyboard may go to egui there. Otherwise it belongs to the terminal alone: egui never
     /// sees key presses then and any focus it holds is dropped -- else a
     /// Tab typed for the shell would move egui's focus into the sidebar
     /// (egui's keyboard navigation), swallowing all further input and
@@ -224,6 +262,7 @@ impl AppState {
             proxy,
             ui,
             sidebar: Sidebar::new(&default_shell),
+            settings: SettingsPanel::default(),
             sidebar_visible: config.sidebar,
             keyboard_to_ui: false,
             sidebar_width,
@@ -275,7 +314,7 @@ impl AppState {
             self.text.cell.height,
             self.config.scrollback_lines,
         )?;
-        self.push_tab(id, terminal, shell.name.clone());
+        self.push_tab(id, TabContent::Terminal(terminal), shell.name.clone());
         Ok(())
     }
 
@@ -294,13 +333,33 @@ impl AppState {
             self.text.cell.height,
             self.config.scrollback_lines,
         )?;
-        self.push_tab(id, terminal, target.label.clone());
+        self.push_tab(id, TabContent::Terminal(terminal), target.label.clone());
         Ok(())
     }
 
-    fn push_tab(&mut self, id: usize, terminal: TerminalSession, title: String) {
-        self.tabs.push(Tab { id, terminal, title: title.clone(), default_title: title });
+    fn push_tab(&mut self, id: usize, content: TabContent, title: String) {
+        self.tabs.push(Tab { id, content, title: title.clone(), default_title: title });
         self.active_tab = self.tabs.len() - 1;
+        self.switched_tab();
+    }
+
+    /// Switch to the settings tab, opening it if there's none yet.
+    fn open_settings(&mut self) {
+        match self.tabs.iter().position(Tab::is_settings) {
+            Some(idx) => self.select_tab(idx),
+            None => {
+                let id = self.next_tab_id;
+                self.next_tab_id += 1;
+                self.push_tab(id, TabContent::Settings, t!("sidebar-settings"));
+            }
+        }
+    }
+
+    /// Another tab is on screen now. The keyboard comes back from egui: a
+    /// widget focused in the settings tab mustn't keep it once a shell
+    /// is showing -- and a new shell tab is there to type into.
+    fn switched_tab(&mut self) {
+        self.give_keyboard_to_terminal();
         self.update_window_title();
         self.window.request_redraw();
     }
@@ -325,12 +384,17 @@ impl AppState {
             event_loop.exit();
             return;
         }
+        let was_active = idx == self.active_tab;
         if self.active_tab > idx {
             self.active_tab -= 1;
         }
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
-        self.update_window_title();
-        self.window.request_redraw();
+        if was_active {
+            self.switched_tab();
+        } else {
+            self.update_window_title();
+            self.window.request_redraw();
+        }
     }
 
     fn next_tab(&mut self) {
@@ -338,8 +402,7 @@ impl AppState {
             return;
         }
         self.active_tab = (self.active_tab + 1) % self.tabs.len();
-        self.update_window_title();
-        self.window.request_redraw();
+        self.switched_tab();
     }
 
     fn prev_tab(&mut self) {
@@ -347,8 +410,7 @@ impl AppState {
             return;
         }
         self.active_tab = (self.active_tab + self.tabs.len() - 1) % self.tabs.len();
-        self.update_window_title();
-        self.window.request_redraw();
+        self.switched_tab();
     }
 
     fn select_tab(&mut self, idx: usize) {
@@ -356,12 +418,20 @@ impl AppState {
             return;
         }
         self.active_tab = idx;
-        self.update_window_title();
-        self.window.request_redraw();
+        self.switched_tab();
     }
 
     fn current_tab(&self) -> &Tab {
         &self.tabs[self.active_tab]
+    }
+
+    /// The active tab's shell session; `None` on the settings tab.
+    fn current_terminal(&self) -> Option<&TerminalSession> {
+        self.tabs.get(self.active_tab).and_then(Tab::terminal)
+    }
+
+    fn settings_active(&self) -> bool {
+        self.tabs.get(self.active_tab).is_some_and(Tab::is_settings)
     }
 
     fn toggle_sidebar(&mut self) {
@@ -389,14 +459,21 @@ impl AppState {
         self.context_menu.as_ref().is_some_and(|menu| menu.contains(self.to_points(pos)))
     }
 
-    /// egui owns the mouse at `pos`: the sidebar or the open context menu.
-    fn over_ui(&self, pos: (f64, f64)) -> bool {
-        self.over_sidebar(pos.0) || self.over_context_menu(pos)
+    /// The settings page is at `pos`: everything below the tab bar right
+    /// of the sidebar, while the settings tab is showing.
+    fn over_settings(&self, (x, y): (f64, f64)) -> bool {
+        self.settings_active() && !self.over_sidebar(x) && y >= self.tab_bar_height as f64
     }
 
-    /// Key presses go to the sidebar rather than the terminal: the user
-    /// clicked into it and a widget there has focus.
-    fn sidebar_has_keyboard(&self) -> bool {
+    /// egui owns the mouse at `pos`: the sidebar, the settings page or the
+    /// open context menu.
+    fn over_ui(&self, pos: (f64, f64)) -> bool {
+        self.over_sidebar(pos.0) || self.over_settings(pos) || self.over_context_menu(pos)
+    }
+
+    /// Key presses go to egui rather than the terminal: the user clicked
+    /// into the sidebar or the settings page and a widget there has focus.
+    fn ui_has_keyboard(&self) -> bool {
         self.keyboard_to_ui && self.ui.wants_keyboard()
     }
 
@@ -495,7 +572,7 @@ impl AppState {
     }
 
     fn copy_selection(&mut self) {
-        let text = self.current_tab().terminal.term.lock().selection_to_string();
+        let text = self.current_terminal().and_then(|terminal| terminal.term.lock().selection_to_string());
         let (Some(text), Some(clipboard)) = (text, self.clipboard.as_mut()) else { return };
         if let Err(err) = clipboard.set_text(text) {
             log::warn!("failed to set clipboard: {err}");
@@ -533,20 +610,22 @@ impl AppState {
     /// if they had scrolled into history, and resets the blink cycle so
     /// the cursor doesn't look like it vanished mid-keystroke.
     fn send_typed(&mut self, bytes: Vec<u8>) {
+        self.reset_cursor_blink();
+        let Some(terminal) = self.current_terminal() else { return };
         {
-            let mut term = self.current_tab().terminal.term.lock();
+            let mut term = terminal.term.lock();
             if term.renderable_content().display_offset != 0 {
                 term.scroll_display(Scroll::Bottom);
             }
         }
-        self.reset_cursor_blink();
-        self.current_tab().terminal.send_input(bytes);
+        terminal.send_input(bytes);
     }
 
     /// Open the context menu at the mouse. Whether copying and pasting
     /// are possible is decided now, not while it's open.
     fn open_context_menu(&mut self) {
-        let can_copy = self.current_tab().terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
+        let Some(terminal) = self.current_terminal() else { return };
+        let can_copy = terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
         let can_paste = self.clipboard.as_mut().is_some_and(|c| c.get_text().is_ok_and(|text| !text.is_empty()));
         self.context_menu = Some(ContextMenu::new(self.to_points(self.last_cursor_pos), can_copy, can_paste));
         self.set_hovered(None);
@@ -600,6 +679,10 @@ impl AppState {
                 self.toggle_sidebar();
                 return;
             }
+            Key::Character(c) if ctrl && !shift && c == "," => {
+                self.open_settings();
+                return;
+            }
             Key::Named(NamedKey::Tab) if ctrl && shift => {
                 self.prev_tab();
                 return;
@@ -611,9 +694,10 @@ impl AppState {
             _ => {}
         }
 
-        // Everything below is input *for* something. While a sidebar
-        // widget has focus it belongs to egui, which already got the event.
-        if self.sidebar_has_keyboard() {
+        // Everything below is input *for* something. While a widget in the
+        // sidebar or the settings tab has focus it belongs to egui, which
+        // already got the event.
+        if self.ui_has_keyboard() {
             return;
         }
 
@@ -644,8 +728,8 @@ impl AppState {
         }
         let origin = self.grid_origin();
         let (col, row, side) = pixel_to_cell(position.x, position.y, origin, self.text.cell, self.cols, self.rows);
-        {
-            let mut term = self.current_tab().terminal.term.lock();
+        if let Some(terminal) = self.current_terminal() {
+            let mut term = terminal.term.lock();
             let display_offset = term.renderable_content().display_offset as i32;
             let point = Point::new(Line(row as i32 - display_offset), Column(col));
             if let Some(sel) = term.selection.as_mut() {
@@ -696,9 +780,10 @@ impl AppState {
                     return;
                 }
             }
-            // Presses on the sidebar are egui's alone; with them the
-            // keyboard moves over too, and back with a press anywhere else.
-            if self.over_sidebar(self.last_cursor_pos.0) {
+            // Presses on the sidebar or the settings page are egui's
+            // alone; with them the keyboard moves over too, and back with
+            // a press anywhere else.
+            if self.over_sidebar(self.last_cursor_pos.0) || self.over_settings(self.last_cursor_pos) {
                 self.keyboard_to_ui = true;
                 return;
             }
@@ -721,10 +806,12 @@ impl AppState {
                 let origin = self.grid_origin();
                 let (x, y) = self.last_cursor_pos;
                 let (col, row, side) = pixel_to_cell(x, y, origin, self.text.cell, self.cols, self.rows);
-                let mut term = self.current_tab().terminal.term.lock();
-                let display_offset = term.renderable_content().display_offset as i32;
-                let point = Point::new(Line(row as i32 - display_offset), Column(col));
-                term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                if let Some(terminal) = self.current_terminal() {
+                    let mut term = terminal.term.lock();
+                    let display_offset = term.renderable_content().display_offset as i32;
+                    let point = Point::new(Line(row as i32 - display_offset), Column(col));
+                    term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                }
             }
             ElementState::Released => {
                 self.left_button_down = false;
@@ -745,17 +832,18 @@ impl AppState {
         // themselves, as arrow keys or mouse reports.
         let (x, y) = self.last_cursor_pos;
         let (col, row, _) = pixel_to_cell(x, y, self.grid_origin(), self.text.cell, self.cols, self.rows);
-        let mode = *self.current_tab().terminal.term.lock().mode();
+        let Some(terminal) = self.current_terminal() else { return };
+        let mode = *terminal.term.lock().mode();
         if let Some(bytes) = input::wheel_to_bytes(lines, mode, (col, row), self.modifiers) {
             if !bytes.is_empty() {
-                self.current_tab().terminal.send_input(bytes);
+                terminal.send_input(bytes);
             }
             return;
         }
         // Sign convention (positive = further into scrollback) matches
         // `Scroll::Delta`'s own doc; flip this if it turns out inverted
         // on your setup.
-        self.current_tab().terminal.term.lock().scroll_display(Scroll::Delta(lines));
+        terminal.term.lock().scroll_display(Scroll::Delta(lines));
         self.window.request_redraw();
     }
 
@@ -787,11 +875,13 @@ impl AppState {
             // size, or a background tab would present a stale grid size
             // to its shell the moment it becomes active.
             for tab in &mut self.tabs {
-                tab.terminal.resize(
-                    GridSize { columns: cols, screen_lines: rows },
-                    self.text.cell.width,
-                    self.text.cell.height,
-                );
+                if let TabContent::Terminal(terminal) = &mut tab.content {
+                    terminal.resize(
+                        GridSize { columns: cols, screen_lines: rows },
+                        self.text.cell.width,
+                        self.text.cell.height,
+                    );
+                }
             }
         }
         self.window.request_redraw();
@@ -806,14 +896,18 @@ impl AppState {
         let header_height = if self.tab_bar_height > 0.0 { self.tab_bar_height / scale_factor } else { 36.0 };
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let window_size = [size.width, size.height];
+        let settings_active = self.settings_active();
+        // The settings page starts below the tab bar.
+        let page_top = self.tab_bar_height / scale_factor;
 
         // Focus egui picked up without the user clicking into the sidebar
-        // doesn't count; see `keyboard_to_ui`.
+        // or the settings page doesn't count; see `keyboard_to_ui`.
         if !self.keyboard_to_ui {
             self.ui.release_keyboard();
         }
         let mut right_edge = 0.0;
         let mut actions = Vec::new();
+        let mut settings_actions = Vec::new();
         let splash = self.splash.as_ref();
         let mut splash_next = None;
         let context_menu = &mut self.context_menu;
@@ -822,10 +916,18 @@ impl AppState {
             // egui may run this more than once per frame; only the last
             // pass counts.
             (right_edge, actions) = if visible {
-                self.sidebar.show(ui, &default_shell, &self.config, window_size, header_height)
+                self.sidebar.show(ui, &default_shell, &self.config, header_height)
             } else {
                 (0.0, Vec::new())
             };
+            if settings_active {
+                settings_actions.clear();
+                let page = egui::Rect::from_min_max(egui::pos2(right_edge, page_top), ui.max_rect().max);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+                    let shells = self.sidebar.shells();
+                    self.settings.show_tab(ui, &self.config, shells, &default_shell, window_size, &mut settings_actions);
+                });
+            }
             // A click only registers in the pass that saw it, so keep it
             // over a later one.
             if let Some(menu) = context_menu.as_mut() {
@@ -857,7 +959,10 @@ impl AppState {
         }
 
         for action in actions {
-            self.apply_sidebar_action(action);
+            self.apply_action(action, Origin::Sidebar);
+        }
+        for action in settings_actions {
+            self.apply_action(action, Origin::Settings);
         }
         // The menu is in this frame already; the redraw takes it away.
         if let Some(action) = menu_action {
@@ -872,29 +977,26 @@ impl AppState {
         }
     }
 
-    fn apply_sidebar_action(&mut self, action: SidebarAction) {
+    fn apply_action(&mut self, action: SidebarAction, origin: Origin) {
         match action {
-            // A new tab is there to type into.
-            SidebarAction::OpenTab(shell) => match self.add_tab(&shell) {
-                Ok(()) => self.give_keyboard_to_terminal(),
-                Err(err) => {
+            SidebarAction::OpenTab(shell) => {
+                if let Err(err) = self.add_tab(&shell) {
                     log::error!("failed to open {} tab: {err}", shell.name);
-                    self.sidebar.report(Err(t!("app-shell-start-failed", shell = &shell.name, err = err.to_string())));
+                    self.report(origin, Err(t!("app-shell-start-failed", shell = &shell.name, err = err.to_string())));
                 }
-            },
-            SidebarAction::Connect(target) => match self.add_ssh_tab(&target) {
-                Ok(()) => self.give_keyboard_to_terminal(),
-                Err(err) => {
+            }
+            SidebarAction::Connect(target) => {
+                if let Err(err) = self.add_ssh_tab(&target) {
                     log::error!("failed to open SSH tab for {}: {err}", target.label);
-                    self.sidebar.report(Err(t!("app-ssh-tab-failed", target = &target.label, err = err.to_string())));
+                    self.report(origin, Err(t!("app-ssh-tab-failed", target = &target.label, err = err.to_string())));
                 }
-            },
+            }
             SidebarAction::SetDefaultShell(shell) => {
                 let result = self
                     .config
                     .save_shell(&shell.path)
                     .map(|()| t!("app-default-shell-set", shell = &shell.name));
-                self.sidebar.report(result);
+                self.report(origin, result);
                 self.window.request_redraw();
             }
             SidebarAction::SetLanguage(language) => {
@@ -902,10 +1004,25 @@ impl AppState {
                     i18n::set(self.config.language());
                     t!("app-language-changed")
                 });
-                self.sidebar.report(result);
+                // Its title would stay in the old language otherwise.
+                for tab in self.tabs.iter_mut().filter(|tab| tab.is_settings()) {
+                    tab.title = t!("sidebar-settings");
+                    tab.default_title = tab.title.clone();
+                }
+                self.update_window_title();
+                self.report(origin, result);
                 self.window.request_redraw();
             }
             SidebarAction::ChangeSetting { setting, save } => self.change_setting(setting, save),
+            SidebarAction::OpenSettings => self.open_settings(),
+        }
+    }
+
+    /// Show an action's outcome where it was triggered.
+    fn report(&mut self, origin: Origin, result: Result<String, String>) {
+        match origin {
+            Origin::Sidebar => self.sidebar.report(result),
+            Origin::Settings => self.settings.report(result),
         }
     }
 
@@ -929,8 +1046,8 @@ impl AppState {
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
             Setting::ScrollbackLines(lines) if save => {
-                for tab in &self.tabs {
-                    tab.terminal.set_scrollback(lines);
+                for terminal in self.tabs.iter().filter_map(Tab::terminal) {
+                    terminal.set_scrollback(lines);
                 }
             }
             // Read where they're used, or only at the next start.
@@ -941,7 +1058,7 @@ impl AppState {
             | Setting::Splash(_) => {}
         }
         if save && let Err(err) = self.config.save(setting) {
-            self.sidebar.report(Err(err));
+            self.settings.report(Err(err));
         }
         self.window.request_redraw();
     }
@@ -969,18 +1086,25 @@ impl AppState {
 
         // Clone the `Arc` (cheap refcount bump) *before* locking, so the
         // resulting `MutexGuard` doesn't keep an immutable borrow of
-        // `self` alive -- `self.current_tab().terminal.term.lock()`
+        // `self` alive -- locking through `self.current_terminal()`
         // would, and that then collides with the `&mut self.quads`
         // needed right below for `build_frame`. The lock only covers
         // copying the grid out; shaping happens after it's released, so
         // the PTY thread isn't blocked from parsing new output meanwhile.
-        let term_arc = self.current_tab().terminal.term.clone();
-        let rows = {
-            let term = term_arc.lock();
-            let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&term));
-            grid::build_frame(&term, selection_range, self.cursor_visible, &self.palette, &mut self.quads, geometry)
-        };
-        self.grid_text.update(&mut self.text, rows);
+        let term_arc = self.current_terminal().map(|terminal| terminal.term.clone());
+        // The settings tab has no grid; egui paints its page there.
+        let show_grid = term_arc.is_some();
+        match term_arc {
+            Some(term_arc) => {
+                let rows = {
+                    let term = term_arc.lock();
+                    let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&term));
+                    grid::build_frame(&term, selection_range, self.cursor_visible, &self.palette, &mut self.quads, geometry)
+                };
+                self.grid_text.update(&mut self.text, rows);
+            }
+            None => self.quads.clear(),
+        }
 
         if let Some(layout) = self.tab_bar_layout() {
             self.tab_bar.build(
@@ -1013,11 +1137,16 @@ impl AppState {
             right: self.gpu.surface_config.width as i32,
             bottom: self.gpu.surface_config.height as i32,
         };
-        let grid_areas = self.grid_text.text_areas(
-            geometry,
-            grid_bounds,
-            glyphon::Color::rgb(default_fg.r, default_fg.g, default_fg.b),
-        );
+        let grid_areas = show_grid
+            .then(|| {
+                self.grid_text.text_areas(
+                    geometry,
+                    grid_bounds,
+                    glyphon::Color::rgb(default_fg.r, default_fg.g, default_fg.b),
+                )
+            })
+            .into_iter()
+            .flatten();
 
         if let Err(err) = self.text.renderer.prepare(
             &self.gpu.device,
@@ -1262,19 +1391,19 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         // egui sees every event first. A mouse move only needs a redraw
-        // for egui if it's over (or just left) the sidebar or the context
-        // menu -- otherwise
-        // every twitch over the terminal would redraw for nothing.
+        // for egui if it's over (or just left) one of egui's parts -- the
+        // sidebar, the settings page, the context menu (`over_ui`) --
+        // otherwise every twitch over the terminal would redraw for nothing.
         // egui-winit also flags `RedrawRequested` itself as wanting a
         // repaint; honouring that would schedule the next frame from
         // every frame, redrawing nonstop at the display's refresh rate.
-        // Key presses and IME input only reach egui while the sidebar
-        // has the keyboard; releases always do, so no key stays "held".
+        // Key presses and IME input only reach egui while it has the
+        // keyboard; releases always do, so no key stays "held".
         let for_ui = match &event {
             WindowEvent::KeyboardInput { event: key, .. } => {
-                key.state == ElementState::Released || state.sidebar_has_keyboard()
+                key.state == ElementState::Released || state.ui_has_keyboard()
             }
-            WindowEvent::Ime(_) => state.sidebar_has_keyboard(),
+            WindowEvent::Ime(_) => state.ui_has_keyboard(),
             _ => true,
         };
         if for_ui && state.ui.on_window_event(&state.window, &event).repaint {
@@ -1348,12 +1477,12 @@ impl ApplicationHandler<UserEvent> for App {
             // in order relative to whatever the user is typing -- upstream
             // Alacritty does this deliberately for the same reason.
             TermEvent::PtyWrite(text) => {
-                state.tabs[idx].terminal.send_input(text.into_bytes());
+                state.tabs[idx].send_input(text.into_bytes());
             }
             TermEvent::ColorRequest(index, format) => {
                 let rgb = state.palette.get(index);
                 let response = format(rgb);
-                state.tabs[idx].terminal.send_input(response.into_bytes());
+                state.tabs[idx].send_input(response.into_bytes());
             }
             TermEvent::TextAreaSizeRequest(format) => {
                 let window_size = WindowSize {
@@ -1363,7 +1492,7 @@ impl ApplicationHandler<UserEvent> for App {
                     cell_height: state.text.cell.height as u16,
                 };
                 let response = format(window_size);
-                state.tabs[idx].terminal.send_input(response.into_bytes());
+                state.tabs[idx].send_input(response.into_bytes());
             }
             TermEvent::ClipboardStore(_ty, text) => {
                 // Both `ClipboardType` variants (`Clipboard` and the X11
@@ -1377,7 +1506,7 @@ impl ApplicationHandler<UserEvent> for App {
             TermEvent::ClipboardLoad(_ty, format) => {
                 let text = state.clipboard.as_mut().and_then(|c| c.get_text().ok()).unwrap_or_default();
                 let response = format(&text);
-                state.tabs[idx].terminal.send_input(response.into_bytes());
+                state.tabs[idx].send_input(response.into_bytes());
             }
 
             TermEvent::CursorBlinkingChange => {

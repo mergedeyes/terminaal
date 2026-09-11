@@ -1,4 +1,4 @@
-//! The sidebar's settings section (⚙): every option in config.toml.
+//! The settings tab (⚙ in the sidebar, Ctrl+,): every option in config.toml.
 //!
 //! Changes apply right away -- sliders already while being dragged, but
 //! they're only written to the config once let go. Both are `app.rs`'s job
@@ -7,7 +7,7 @@
 use std::ops::RangeInclusive;
 
 use egui::emath::Numeric;
-use egui::{Align2, DragValue, Response, TextStyle, Ui, pos2};
+use egui::{Align2, CornerRadius, DragValue, Frame, Margin, Response, ScrollArea, TextStyle, Ui, pos2};
 
 use crate::config::{Config, Setting};
 use crate::i18n::{Language, t};
@@ -16,19 +16,41 @@ use crate::ui::sidebar::SidebarAction;
 use crate::ui::theme;
 use crate::ui::widgets::{Status, section_title, weak};
 
-/// Fixed rather than following the sidebar: the sidebar-width slider
-/// would otherwise stretch under the mouse while being dragged.
+/// Fixed rather than stretching across the whole tab.
 const SLIDER_WIDTH: f32 = 200.0;
 const SECTION_GAP: f32 = 18.0;
 
 #[derive(Default)]
 pub struct SettingsPanel {
     status: Option<Status>,
+    /// The sidebar width while its slider is dragged. Only applied once
+    /// let go: the tab sits right of the sidebar, so a live change would
+    /// move the slider away under the mouse.
+    sidebar_width: Option<f32>,
 }
 
 impl SettingsPanel {
     pub fn report(&mut self, result: Result<String, String>) {
         self.status = Some(Status::from_result(result));
+    }
+
+    /// The whole tab: fills `ui`'s max rect (below the tab bar, right of
+    /// the sidebar) and scrolls when the settings don't fit.
+    pub fn show_tab(
+        &mut self,
+        ui: &mut Ui,
+        config: &Config,
+        shells: &[InstalledShell],
+        default: &InstalledShell,
+        window_size: [f64; 2],
+        actions: &mut Vec<SidebarAction>,
+    ) {
+        ui.painter().rect_filled(ui.max_rect(), CornerRadius::ZERO, theme::BG);
+        ScrollArea::vertical().id_salt("settings-tab").auto_shrink([false; 2]).show(ui, |ui| {
+            Frame::new().inner_margin(Margin::symmetric(24, 16)).show(ui, |ui| {
+                self.show(ui, config, shells, default, window_size, actions);
+            });
+        });
     }
 
     /// `window_size` is the window's current size in logical pixels.
@@ -69,10 +91,17 @@ impl SettingsPanel {
         let mut padding = config.padding;
         let moved = slider(ui, &t!("settings-padding"), "padding", &mut padding, 0.0..=40.0, 1.0, pixels);
         change(actions, moved, Setting::Padding(padding));
-        let mut width = config.sidebar_width;
+        let mut width = self.sidebar_width.unwrap_or(config.sidebar_width);
         // Narrower and the section tabs in the header no longer fit.
         let moved = slider(ui, &t!("settings-sidebar-width"), "sidebar_width", &mut width, 260.0..=600.0, 10.0, pixels);
-        change(actions, moved, Setting::SidebarWidth(width));
+        match moved {
+            Some(false) => self.sidebar_width = Some(width),
+            Some(true) => {
+                self.sidebar_width = None;
+                change(actions, moved, Setting::SidebarWidth(width));
+            }
+            None => {}
+        }
         ui.add_space(4.0);
         let moved = checkbox(ui, t!("settings-tab-bar"), "tab_bar", config.tab_bar);
         change(actions, moved.map(|_| true), Setting::TabBar(moved.unwrap_or(config.tab_bar)));
@@ -131,14 +160,15 @@ impl SettingsPanel {
         let moved = checkbox(ui, t!("settings-startup-splash"), "splash", config.splash);
         change(actions, moved.map(|_| true), Setting::Splash(moved.unwrap_or(config.splash)));
         ui.add_space(4.0);
-        ui.label(t!("settings-window-size"));
+        let keys = format!("{}\n{}", key_hint("default_width"), key_hint("default_height"));
+        ui.label(t!("settings-window-size")).on_hover_text(keys);
         let (mut width, mut height) = (config.default_width, config.default_height);
         let mut moved = None;
         ui.horizontal(|ui| {
             let drag = |value| DragValue::new(value).range(300.0..=8000.0).speed(5.0).max_decimals(0);
-            let w = ui.add(drag(&mut width)).on_hover_text(key_hint("default_width"));
+            let w = ui.add(drag(&mut width));
             ui.label("×");
-            let h = ui.add(drag(&mut height)).on_hover_text(key_hint("default_height"));
+            let h = ui.add(drag(&mut height));
             moved = [changed(&w), changed(&h)].into_iter().flatten().reduce(|a, b| a || b);
         });
         let [current_w, current_h] = window_size.map(f64::round);
@@ -185,7 +215,8 @@ fn changed(response: &Response) -> Option<bool> {
 }
 
 /// A named slider for one config key, its value shown above the slider's
-/// right end. See [`changed`] for the result.
+/// right end and the key in the name's tooltip. See [`changed`] for the
+/// result.
 fn slider<N: Numeric>(
     ui: &mut Ui,
     name: &str,
@@ -195,14 +226,14 @@ fn slider<N: Numeric>(
     step: f64,
     shown: impl Fn(N) -> String,
 ) -> Option<bool> {
-    let label = ui.label(name);
+    let label = ui.label(name).on_hover_text(key_hint(key));
     // `Edits`: an out-of-range value from the config file only gets
     // clamped once the user moves the slider, not by merely showing it.
     let slider = egui::Slider::new(value, range)
         .step_by(step)
         .show_value(false)
         .clamping(egui::SliderClamping::Edits);
-    let response = ui.add(slider).on_hover_text(key_hint(key));
+    let response = ui.add(slider);
     let color = if ui.is_enabled() { theme::TEXT_WEAK } else { theme::BORDER };
     ui.painter().text(
         pos2(response.rect.right(), label.rect.center().y),
@@ -239,5 +270,62 @@ mod tests {
             .drop_without_applying_deltas();
         }
         assert!(actions.is_empty());
+    }
+
+    /// Texts egui painted in a pass, with where.
+    fn texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, egui::Rect)> {
+        shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some((text.galley.text().to_owned(), text.visual_bounding_rect())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Hover the font size's name, then run passes only when egui asks
+    /// for one -- like `app.rs` does -- until its key shows up.
+    #[test]
+    fn hovering_a_setting_name_shows_its_key() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx);
+        let shell = InstalledShell::new("/bin/bash");
+        let config = Config::default();
+        let mut panel = SettingsPanel::default();
+        let mut actions = Vec::new();
+        let mut pass = |time: f64, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 900.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            // Placed like `app.rs` does: right of the sidebar, below the tab bar.
+            let page = egui::Rect::from_min_max(pos2(300.0, 36.0), pos2(1000.0, 900.0));
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+                    panel.show_tab(ui, &config, std::slice::from_ref(&shell), &shell, [1000.0, 650.0], &mut actions)
+                });
+            });
+            let shapes = std::mem::take(&mut output.shapes);
+            let delay = output.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.repaint_delay);
+            output.drop_without_applying_deltas();
+            (texts(&shapes), delay)
+        };
+        let (shown, _) = pass(0.0, Vec::new());
+        let label = shown.iter().find(|(text, _)| text == &t!("settings-font-size")).expect("label").1;
+
+        let mut time = 1.0;
+        let (mut shown, mut delay) = pass(time, vec![egui::Event::PointerMoved(label.center())]);
+        // The tooltip waits for the mouse to rest; well within 2 s.
+        while time < 3.0 {
+            if shown.iter().any(|(text, _)| text == &key_hint("font_size")) {
+                return;
+            }
+            let Some(wait) = delay.filter(|d| d.as_secs() < 3600) else { break };
+            time += wait.as_secs_f64().max(1.0 / 60.0);
+            (shown, delay) = pass(time, Vec::new());
+        }
+        panic!("no tooltip; stopped at {time:.3} with delay {delay:?}");
     }
 }

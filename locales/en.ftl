@@ -93,7 +93,7 @@ settings-window-size-current = Use current
 settings-window-size-current-hint = Takes the window's current size ({ $width } × { $height })
 settings-startup-note = Takes effect the next time Terminaal starts.
 settings-key-hint = config.toml: { $key }
-settings-note = Changes apply right away and are saved to ~/.config/terminaal/config.toml, keeping its comments and formatting. The tooltip names the key.
+settings-note = Changes apply right away and are saved to ~/.config/terminaal/config.toml, keeping its comments and formatting. Hover a setting's name to see its key.
 
 ## Sidebar: shells, aliases and functions
 

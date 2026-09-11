@@ -93,7 +93,7 @@ settings-window-size-current = Aktuelle übernehmen
 settings-window-size-current-hint = Übernimmt die jetzige Fenstergröße ({ $width } × { $height })
 settings-startup-note = Wirkt ab dem nächsten Start.
 settings-key-hint = config.toml: { $key }
-settings-note = Änderungen gelten sofort und werden in ~/.config/terminaal/config.toml gespeichert; Kommentare und Formatierung darin bleiben erhalten. Welcher Schlüssel es ist, zeigt der Tooltip.
+settings-note = Änderungen gelten sofort und werden in ~/.config/terminaal/config.toml gespeichert; Kommentare und Formatierung darin bleiben erhalten. Welcher Schlüssel es ist, zeigt der Tooltip am Namen der Einstellung.
 
 ## Seitenleiste: Shells, Aliase und Funktionen
 

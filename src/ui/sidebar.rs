@@ -1,6 +1,7 @@
 //! The sidebar left of the console. Its header switches between sections:
-//! shell management (here), SSH (`ui::ssh_panel`), keys
-//! (`ui::keys_panel`) and settings (`ui::settings_panel`).
+//! shell management (here), SSH (`ui::ssh_panel`) and keys
+//! (`ui::keys_panel`); the gear at its end opens the settings tab
+//! (`ui::settings_panel`).
 //!
 //! Shells: pick among the installed shells (open a tab with one, make one
 //! the default for new tabs) and edit each shell's aliases and functions
@@ -21,7 +22,6 @@ use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
 use crate::ssh::SshTarget;
 use crate::ui::keys_panel::KeysPanel;
-use crate::ui::settings_panel::SettingsPanel;
 use crate::ui::ssh_panel::{SshData, SshPanel};
 use crate::ui::theme;
 use crate::ui::widgets::{Status, list_row, section_title, tilde, weak};
@@ -40,6 +40,8 @@ pub enum SidebarAction {
     /// Apply a config option; with `save`, also persist it. Sliders send
     /// this on every step while dragged, and with `save` once let go.
     ChangeSetting { setting: Setting, save: bool },
+    /// Switch to the settings tab, opening it if needed.
+    OpenSettings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,7 +49,6 @@ enum Section {
     Shells,
     Ssh,
     Keys,
-    Settings,
 }
 
 pub struct Sidebar {
@@ -56,7 +57,6 @@ pub struct Sidebar {
     data: SshData,
     ssh: SshPanel,
     keys: KeysPanel,
-    settings: SettingsPanel,
 
     shells: Vec<InstalledShell>,
     selected: usize,
@@ -113,7 +113,6 @@ impl Sidebar {
             section: Section::Shells,
             ssh: SshPanel::new(&data),
             keys: KeysPanel::new(),
-            settings: SettingsPanel::default(),
             data,
             shells,
             selected,
@@ -134,8 +133,12 @@ impl Sidebar {
             Section::Shells => self.status = Some(Status::from_result(result)),
             Section::Ssh => self.ssh.report(result),
             Section::Keys => self.keys.report(result),
-            Section::Settings => self.settings.report(result),
         }
+    }
+
+    /// The installed shells (plus the default, if not among them).
+    pub fn shells(&self) -> &[InstalledShell] {
+        &self.shells
     }
 
     /// Lay the sidebar out as a left panel of the configured width inside
@@ -149,7 +152,6 @@ impl Sidebar {
         ui: &mut Ui,
         default: &InstalledShell,
         config: &Config,
-        window_size: [f64; 2],
         header_height: f32,
     ) -> (f32, Vec<SidebarAction>) {
         let mut actions = Vec::new();
@@ -158,15 +160,12 @@ impl Sidebar {
             .resizable(false)
             .frame(Frame::new().fill(theme::BG))
             .show(ui, |ui| {
-                header(ui, &mut self.section, header_height);
+                header(ui, &mut self.section, header_height, &mut actions);
                 ScrollArea::vertical().id_salt(self.section).auto_shrink([false; 2]).show(ui, |ui| {
                     Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| match self.section {
                         Section::Shells => self.shells_section(ui, default, &mut actions),
                         Section::Ssh => self.ssh.show(ui, &mut self.data, &mut actions),
                         Section::Keys => self.keys.show(ui, &mut self.data),
-                        Section::Settings => {
-                            self.settings.show(ui, config, &self.shells, default, window_size, &mut actions)
-                        }
                     });
                 });
             });
@@ -498,18 +497,19 @@ impl Sidebar {
 
 /// Top strip with one tab per section -- as high as the tab bar next to
 /// it, with the same bottom border -- the active one underlined in the
-/// accent color. Settings is a narrow gear at the end.
-fn header(ui: &mut Ui, section: &mut Section, height: f32) {
+/// accent color. At the end, a narrow gear opens the settings tab.
+fn header(ui: &mut Ui, section: &mut Section, height: f32, actions: &mut Vec<SidebarAction>) {
     const TAB_WIDTH: f32 = 72.0;
     const ICON_TAB_WIDTH: f32 = 40.0;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, theme::BORDER));
     let keys = t!("sidebar-keys");
+    // `None` is the gear: a button for the settings tab, not a section.
     let tabs = [
-        (Section::Shells, "Shells", TAB_WIDTH),
-        (Section::Ssh, "SSH", TAB_WIDTH),
-        (Section::Keys, keys.as_str(), TAB_WIDTH),
-        (Section::Settings, "⚙", ICON_TAB_WIDTH),
+        (Some(Section::Shells), "Shells", TAB_WIDTH),
+        (Some(Section::Ssh), "SSH", TAB_WIDTH),
+        (Some(Section::Keys), keys.as_str(), TAB_WIDTH),
+        (None, "⚙", ICON_TAB_WIDTH),
     ];
     let mut left = rect.left() + 4.0;
     for (i, (tab, label, width)) in tabs.into_iter().enumerate() {
@@ -518,13 +518,16 @@ fn header(ui: &mut Ui, section: &mut Section, height: f32) {
         let mut response = ui
             .interact(tab_rect, ui.id().with(("sidebar-section", i)), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-        if tab == Section::Settings {
+        if tab.is_none() {
             response = response.on_hover_text(t!("sidebar-settings"));
         }
         if response.clicked() {
-            *section = tab;
+            match tab {
+                Some(tab) => *section = tab,
+                None => actions.push(SidebarAction::OpenSettings),
+            }
         }
-        let active = *section == tab;
+        let active = tab == Some(*section);
         let painter = ui.painter();
         if response.hovered() && !active {
             painter.rect_filled(tab_rect.shrink2(vec2(2.0, 6.0)), CornerRadius::same(4), theme::HOVER_BG);
