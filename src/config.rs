@@ -7,10 +7,9 @@
 //! file is never fatal -- we log why and start with defaults, since a
 //! typo in the config shouldn't stop the terminal from opening.
 //!
-//! The only things ever written back are the default shell, the UI
-//! language and the scroll speed (all picked in the sidebar), via
-//! `toml_edit` so the rest of
-//! the file -- comments, ordering, formatting -- stays exactly as the user
+//! Every option can also be changed in the sidebar (⚙). Such a change is
+//! written back via `toml_edit`, one key at a time, so the rest of the
+//! file -- comments, ordering, formatting -- stays exactly as the user
 //! wrote it.
 
 use serde::Deserialize;
@@ -134,7 +133,7 @@ impl Config {
     /// Set the default shell and persist it to the config file, creating
     /// the file if needed. The error is meant for display in the UI.
     pub fn save_shell(&mut self, shell: &Path) -> Result<(), String> {
-        Self::edit(|doc| doc["shell"] = toml_edit::value(shell.to_string_lossy().as_ref()))?;
+        Self::edit(|doc| set_value(doc, "shell", shell.to_string_lossy().as_ref()))?;
         self.shell = Some(shell.to_path_buf());
         Ok(())
     }
@@ -142,7 +141,7 @@ impl Config {
     /// Set the UI language (`None`: follow the locale) and persist it.
     pub fn save_language(&mut self, language: Option<Language>) -> Result<(), String> {
         Self::edit(|doc| match language {
-            Some(language) => doc["language"] = toml_edit::value(language.code()),
+            Some(language) => set_value(doc, "language", language.code()),
             None => drop(doc.remove("language")),
         })?;
         self.language = language.map(|language| language.code().to_string());
@@ -159,10 +158,28 @@ impl Config {
         }
     }
 
-    /// Set the lines per mouse-wheel notch and persist them.
-    pub fn save_scroll_lines(&mut self, lines: f32) -> Result<(), String> {
-        Self::edit(|doc| doc["scroll_lines"] = toml_edit::value(f64::from(lines)))?;
-        self.scroll_lines = lines;
+    /// Take over `setting` in memory only.
+    pub fn set(&mut self, setting: Setting) {
+        match setting {
+            Setting::FontSize(size) => self.font_size = size,
+            Setting::LineHeight(factor) => self.line_height_factor = factor,
+            Setting::Padding(padding) => self.padding = padding,
+            Setting::ScrollbackLines(lines) => self.scrollback_lines = lines,
+            Setting::ScrollLines(lines) => self.scroll_lines = lines,
+            Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
+            Setting::CursorBlink(on) => self.cursor_blink = on,
+            Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
+            Setting::TabBar(on) => self.tab_bar = on,
+            Setting::Sidebar(on) => self.sidebar = on,
+            Setting::SidebarWidth(width) => self.sidebar_width = width,
+            Setting::Splash(on) => self.splash = on,
+        }
+    }
+
+    /// Take over `setting` and persist it.
+    pub fn save(&mut self, setting: Setting) -> Result<(), String> {
+        Self::edit(|doc| setting.write(doc))?;
+        self.set(setting);
         Ok(())
     }
 
@@ -186,9 +203,92 @@ impl Config {
     }
 }
 
+/// One option changed in the sidebar, with its new value. Shell and
+/// language have their own savers ([`Config::save_shell`],
+/// [`Config::save_language`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Setting {
+    FontSize(f32),
+    LineHeight(f32),
+    Padding(f32),
+    ScrollbackLines(usize),
+    ScrollLines(f32),
+    /// Window size at start; both keys at once.
+    WindowSize { width: f64, height: f64 },
+    CursorBlink(bool),
+    CursorBlinkInterval(u64),
+    TabBar(bool),
+    /// Show the sidebar at start.
+    Sidebar(bool),
+    SidebarWidth(f32),
+    Splash(bool),
+}
+
+impl Setting {
+    /// Write the value to its key(s) in `doc`, leaving everything else be.
+    fn write(self, doc: &mut toml_edit::DocumentMut) {
+        // Sliders hand over f32s; 1.3 would come out as 1.2999999523162842.
+        let float = |value: f64| (value * 1000.0).round() / 1000.0;
+        let int = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+        match self {
+            Self::FontSize(size) => set_value(doc, "font_size", float(size.into())),
+            Self::LineHeight(factor) => set_value(doc, "line_height_factor", float(factor.into())),
+            Self::Padding(padding) => set_value(doc, "padding", float(padding.into())),
+            Self::ScrollbackLines(lines) => set_value(doc, "scrollback_lines", int(lines as u64)),
+            Self::ScrollLines(lines) => set_value(doc, "scroll_lines", float(lines.into())),
+            Self::WindowSize { width, height } => {
+                set_value(doc, "default_width", float(width.round()));
+                set_value(doc, "default_height", float(height.round()));
+            }
+            Self::CursorBlink(on) => set_value(doc, "cursor_blink", on),
+            Self::CursorBlinkInterval(ms) => set_value(doc, "cursor_blink_interval_ms", int(ms)),
+            Self::TabBar(on) => set_value(doc, "tab_bar", on),
+            Self::Sidebar(on) => set_value(doc, "sidebar", on),
+            Self::SidebarWidth(width) => set_value(doc, "sidebar_width", float(width.into())),
+            Self::Splash(on) => set_value(doc, "splash", on),
+        }
+    }
+}
+
+/// Set `key` to `value`. A comment after the old value stays, spacing
+/// included -- assigning a fresh item would drop it.
+fn set_value(doc: &mut toml_edit::DocumentMut, key: &str, value: impl Into<toml_edit::Value>) {
+    let mut value = value.into();
+    if let Some(old) = doc.get(key).and_then(toml_edit::Item::as_value) {
+        *value.decor_mut() = old.decor().clone();
+    }
+    doc[key] = toml_edit::Item::Value(value);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::{Config, Setting};
+
+    #[test]
+    fn settings_are_written_in_place_and_read_back() {
+        let mut doc: toml_edit::DocumentMut = "# mine\nfont_size = 12 # small\ntab_bar = true\n".parse().unwrap();
+        for setting in [
+            Setting::FontSize(14.0),
+            Setting::LineHeight(1.3),
+            Setting::ScrollbackLines(20_000),
+            Setting::WindowSize { width: 1200.4, height: 700.0 },
+            Setting::TabBar(false),
+            Setting::CursorBlinkInterval(450),
+        ] {
+            setting.write(&mut doc);
+        }
+        let text = doc.to_string();
+        assert!(text.starts_with("# mine\nfont_size = 14.0 # small\ntab_bar = false\n"), "{text}");
+        assert!(text.contains("line_height_factor = 1.3\n"), "{text}");
+
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.font_size, 14.0);
+        assert_eq!(config.line_height_factor, 1.3);
+        assert_eq!(config.scrollback_lines, 20_000);
+        assert_eq!((config.default_width, config.default_height), (1200.0, 700.0));
+        assert!(!config.tab_bar);
+        assert_eq!(config.cursor_blink_interval_ms, 450);
+    }
 
     #[test]
     fn scroll_lines_accepts_integers_and_rejects_nonsense() {

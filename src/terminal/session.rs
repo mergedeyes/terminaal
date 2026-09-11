@@ -117,11 +117,20 @@ impl TerminalSession {
             Backend::Ssh(handle) => handle.resize(window_size),
         }
     }
+
+    /// Keep this many lines of scrollback from now on; fewer than before
+    /// drops the oldest.
+    pub fn set_scrollback(&self, lines: usize) {
+        self.term.lock().set_options(term_config(lines));
+    }
+}
+
+fn term_config(scrollback: usize) -> TermConfig {
+    TermConfig { scrolling_history: scrollback, ..TermConfig::default() }
 }
 
 fn new_term(listener: &EventProxyListener, size: GridSize, scrollback: usize) -> Arc<FairMutex<Term<EventProxyListener>>> {
-    let config = TermConfig { scrolling_history: scrollback, ..TermConfig::default() };
-    Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())))
+    Arc::new(FairMutex::new(Term::new(term_config(scrollback), &size, listener.clone())))
 }
 
 fn window_size(size: GridSize, cell_width: f32, cell_height: f32) -> WindowSize {

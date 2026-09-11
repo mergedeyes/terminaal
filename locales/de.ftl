@@ -59,13 +59,41 @@ sidebar-settings = Einstellungen
 settings-language = Sprache
 settings-language-auto = Automatisch · { $language }
 settings-language-auto-hint = Folgt der Systemsprache (LANG): Deutsch bei deutscher Locale, sonst Englisch
-settings-language-note = Gilt sofort. Gespeichert als „language“ in ~/.config/terminaal/config.toml.
-settings-scroll = Scrollgeschwindigkeit
+settings-appearance = Darstellung
+settings-font-size = Schriftgröße
+settings-line-height = Zeilenhöhe
+settings-line-height-value = { $factor } ×
+settings-padding = Innenabstand
+settings-pixels = { $px } px
+settings-tab-bar = Tab-Leiste anzeigen
+settings-sidebar-width = Breite der Seitenleiste
+settings-cursor = Cursor
+settings-cursor-blink = Cursor blinkt
+settings-cursor-interval = Blinkintervall
+settings-milliseconds = { $ms } ms
+settings-scroll = Scrollen
+settings-scroll-speed = Mausrad
 settings-scroll-lines = { $lines ->
-    [one] { $lines } Zeile je Mausrad-Raste
-   *[other] { $lines } Zeilen je Mausrad-Raste
+    [one] { $lines } Zeile je Raste
+   *[other] { $lines } Zeilen je Raste
 }
-settings-scroll-note = Standard 3. Touchpads scrollen stufenlos. Gespeichert als „scroll_lines“ in ~/.config/terminaal/config.toml.
+settings-scroll-speed-hint = Standard 3. Touchpads scrollen stufenlos.
+settings-scrollback = Scrollback
+settings-scrollback-lines = { $lines ->
+    [one] { $lines } Zeile
+   *[other] { $lines } Zeilen
+}
+settings-scrollback-note = Gilt nach dem Loslassen für alle Tabs; kleiner gestellt, verwirft er die ältesten Zeilen.
+settings-shell = Standard-Shell
+settings-startup = Beim Start
+settings-startup-sidebar = Seitenleiste anzeigen
+settings-startup-splash = Startanimation
+settings-window-size = Fenstergröße
+settings-window-size-current = Aktuelle übernehmen
+settings-window-size-current-hint = Übernimmt die jetzige Fenstergröße ({ $width } × { $height })
+settings-startup-note = Wirkt ab dem nächsten Start.
+settings-key-hint = config.toml: { $key }
+settings-note = Änderungen gelten sofort und werden in ~/.config/terminaal/config.toml gespeichert; Kommentare und Formatierung darin bleiben erhalten. Welcher Schlüssel es ist, zeigt der Tooltip.
 
 ## Seitenleiste: Shells, Aliase und Funktionen
 

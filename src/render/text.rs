@@ -53,6 +53,13 @@ impl TextRendererState {
         Self { font_system, swash_cache, viewport, atlas, renderer, cell, metrics }
     }
 
+    /// Switch to another font size or line height. Buffers shaped with
+    /// the old metrics are stale afterwards.
+    pub fn set_font(&mut self, font_size: f32, line_height_factor: f32) {
+        self.metrics = metrics(font_size, line_height_factor);
+        self.cell = measure_cell(&mut self.font_system, self.metrics);
+    }
+
     /// Default text attributes: monospace family at our configured metrics.
     pub fn default_attrs(&self) -> Attrs<'static> {
         Attrs::new().family(Family::Monospace).metrics(self.metrics)

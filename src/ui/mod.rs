@@ -8,6 +8,7 @@
 
 pub mod context_menu;
 pub mod keys_panel;
+pub mod settings_panel;
 pub mod sidebar;
 pub mod splash;
 pub mod ssh_panel;

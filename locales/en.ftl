@@ -59,13 +59,41 @@ sidebar-settings = Settings
 settings-language = Language
 settings-language-auto = Automatic · { $language }
 settings-language-auto-hint = Follows the system locale (LANG): German for a German locale, English otherwise
-settings-language-note = Applies right away. Saved as “language” in ~/.config/terminaal/config.toml.
-settings-scroll = Scroll speed
+settings-appearance = Appearance
+settings-font-size = Font size
+settings-line-height = Line height
+settings-line-height-value = { $factor } ×
+settings-padding = Padding
+settings-pixels = { $px } px
+settings-tab-bar = Show tab bar
+settings-sidebar-width = Sidebar width
+settings-cursor = Cursor
+settings-cursor-blink = Blinking cursor
+settings-cursor-interval = Blink interval
+settings-milliseconds = { $ms } ms
+settings-scroll = Scrolling
+settings-scroll-speed = Mouse wheel
 settings-scroll-lines = { $lines ->
-    [one] { $lines } line per mouse-wheel notch
-   *[other] { $lines } lines per mouse-wheel notch
+    [one] { $lines } line per notch
+   *[other] { $lines } lines per notch
 }
-settings-scroll-note = Default 3. Touchpads scroll smoothly. Saved as “scroll_lines” in ~/.config/terminaal/config.toml.
+settings-scroll-speed-hint = Default 3. Touchpads scroll smoothly.
+settings-scrollback = Scrollback
+settings-scrollback-lines = { $lines ->
+    [one] { $lines } line
+   *[other] { $lines } lines
+}
+settings-scrollback-note = Applies to all tabs once released; set lower, it drops the oldest lines.
+settings-shell = Default shell
+settings-startup = At start
+settings-startup-sidebar = Show sidebar
+settings-startup-splash = Start-up animation
+settings-window-size = Window size
+settings-window-size-current = Use current
+settings-window-size-current-hint = Takes the window's current size ({ $width } × { $height })
+settings-startup-note = Takes effect the next time Terminaal starts.
+settings-key-hint = config.toml: { $key }
+settings-note = Changes apply right away and are saved to ~/.config/terminaal/config.toml, keeping its comments and formatting. The tooltip names the key.
 
 ## Sidebar: shells, aliases and functions
 

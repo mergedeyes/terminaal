@@ -1,12 +1,10 @@
 //! The sidebar left of the console. Its header switches between sections:
 //! shell management (here), SSH (`ui::ssh_panel`), keys
-//! (`ui::keys_panel`) and settings (here).
+//! (`ui::keys_panel`) and settings (`ui::settings_panel`).
 //!
 //! Shells: pick among the installed shells (open a tab with one, make one
 //! the default for new tabs) and edit each shell's aliases and functions
 //! (`shells::managed`).
-//!
-//! Settings: the UI language, the mouse-wheel scroll speed.
 //!
 //! Plain egui immediate-mode UI. Anything that needs the rest of the app
 //! -- spawning a tab, writing the config -- is handed back as a
@@ -17,11 +15,13 @@ use egui::{
     TextStyle, Ui, pos2, vec2,
 };
 
+use crate::config::{Config, Setting};
 use crate::i18n::{Language, t};
 use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
 use crate::ssh::SshTarget;
 use crate::ui::keys_panel::KeysPanel;
+use crate::ui::settings_panel::SettingsPanel;
 use crate::ui::ssh_panel::{SshData, SshPanel};
 use crate::ui::theme;
 use crate::ui::widgets::{Status, list_row, section_title, tilde, weak};
@@ -37,9 +37,9 @@ pub enum SidebarAction {
     /// Switch the UI language -- `None`: follow the locale -- and persist
     /// that in the config.
     SetLanguage(Option<Language>),
-    /// Scroll this many lines per mouse-wheel notch; with `save`, also
-    /// persist it (sent live while the slider is dragged, saved on release).
-    SetScrollLines { lines: f32, save: bool },
+    /// Apply a config option; with `save`, also persist it. Sliders send
+    /// this on every step while dragged, and with `save` once let go.
+    ChangeSetting { setting: Setting, save: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -56,6 +56,7 @@ pub struct Sidebar {
     data: SshData,
     ssh: SshPanel,
     keys: KeysPanel,
+    settings: SettingsPanel,
 
     shells: Vec<InstalledShell>,
     selected: usize,
@@ -68,7 +69,6 @@ pub struct Sidebar {
     /// Entry whose delete button was clicked once; a second click confirms.
     confirm_delete: Option<(EntryKind, String)>,
     status: Option<Status>,
-    settings_status: Option<Status>,
 }
 
 struct Editor {
@@ -113,6 +113,7 @@ impl Sidebar {
             section: Section::Shells,
             ssh: SshPanel::new(&data),
             keys: KeysPanel::new(),
+            settings: SettingsPanel::default(),
             data,
             shells,
             selected,
@@ -121,7 +122,6 @@ impl Sidebar {
             editor: None,
             confirm_delete: None,
             status: None,
-            settings_status: None,
         };
         sidebar.load_entries();
         sidebar
@@ -134,29 +134,27 @@ impl Sidebar {
             Section::Shells => self.status = Some(Status::from_result(result)),
             Section::Ssh => self.ssh.report(result),
             Section::Keys => self.keys.report(result),
-            Section::Settings => self.settings_status = Some(Status::from_result(result)),
+            Section::Settings => self.settings.report(result),
         }
     }
 
-    /// Lay the sidebar out as a fixed-width left panel inside `ui` (egui's
-    /// root UI, covering the whole window). `width` and `header_height`
-    /// are in points; the header lines up with the tab bar next to it.
-    /// `language` is the one chosen in the config (`None`: automatic),
-    /// `scroll_lines` the lines per mouse-wheel notch.
+    /// Lay the sidebar out as a left panel of the configured width inside
+    /// `ui` (egui's root UI, covering the whole window). `header_height`
+    /// is in points; the header lines up with the tab bar next to it.
+    /// `window_size` is the window's size in logical pixels.
     /// Returns where the panel's right edge ended up (in points) -- the
     /// console starts there -- plus any actions for the app.
     pub fn show(
         &mut self,
         ui: &mut Ui,
         default: &InstalledShell,
-        language: Option<Language>,
-        scroll_lines: f32,
-        width: f32,
+        config: &Config,
+        window_size: [f64; 2],
         header_height: f32,
     ) -> (f32, Vec<SidebarAction>) {
         let mut actions = Vec::new();
         let panel = egui::Panel::left("sidebar")
-            .exact_size(width)
+            .exact_size(config.sidebar_width)
             .resizable(false)
             .frame(Frame::new().fill(theme::BG))
             .show(ui, |ui| {
@@ -166,7 +164,9 @@ impl Sidebar {
                         Section::Shells => self.shells_section(ui, default, &mut actions),
                         Section::Ssh => self.ssh.show(ui, &mut self.data, &mut actions),
                         Section::Keys => self.keys.show(ui, &mut self.data),
-                        Section::Settings => self.settings_section(ui, language, scroll_lines, &mut actions),
+                        Section::Settings => {
+                            self.settings.show(ui, config, &self.shells, default, window_size, &mut actions)
+                        }
                     });
                 });
             });
@@ -178,46 +178,6 @@ impl Sidebar {
         ui.add_space(18.0);
         self.managed_section(ui);
         if let Some(status) = &self.status {
-            ui.add_space(8.0);
-            status.show(ui);
-        }
-    }
-
-    fn settings_section(
-        &mut self,
-        ui: &mut Ui,
-        language: Option<Language>,
-        scroll_lines: f32,
-        actions: &mut Vec<SidebarAction>,
-    ) {
-        section_title(ui, &t!("settings-language"));
-        let mut choice = language;
-        let auto = t!("settings-language-auto", language = Language::from_locale().native_name());
-        ui.radio_value(&mut choice, None, auto).on_hover_text(t!("settings-language-auto-hint"));
-        for option in Language::ALL {
-            ui.radio_value(&mut choice, Some(option), option.native_name());
-        }
-        if choice != language {
-            actions.push(SidebarAction::SetLanguage(choice));
-            self.settings_status = None;
-        }
-        ui.add_space(4.0);
-        ui.label(weak(t!("settings-language-note")).size(11.0));
-
-        ui.add_space(18.0);
-        section_title(ui, &t!("settings-scroll"));
-        let mut lines = scroll_lines;
-        let slider = ui.add(egui::Slider::new(&mut lines, 1.0..=20.0).step_by(1.0).show_value(false));
-        ui.label(t!("settings-scroll-lines", lines = f64::from(lines)));
-        let save = slider.drag_stopped() || (slider.changed() && !slider.dragged());
-        if slider.changed() || save {
-            actions.push(SidebarAction::SetScrollLines { lines, save });
-            self.settings_status = None;
-        }
-        ui.add_space(4.0);
-        ui.label(weak(t!("settings-scroll-note")).size(11.0));
-
-        if let Some(status) = &self.settings_status {
             ui.add_space(8.0);
             status.show(ui);
         }

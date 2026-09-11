@@ -46,7 +46,7 @@ fn window_icon() -> Option<Icon> {
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
 }
 
-use crate::config::Config;
+use crate::config::{Config, Setting};
 use crate::i18n::{self, t};
 use crate::gpu::GpuState;
 use crate::input;
@@ -194,7 +194,7 @@ impl AppState {
         let ui = UiLayer::new(&window, &gpu.device, gpu.format);
 
         let padding = config.padding * scale_factor;
-        let tab_bar_height = if config.tab_bar { tab_bar::bar_height(text.cell, scale_factor) } else { 0.0 };
+        let tab_bar_height = tab_bar_height(&config, text.cell, scale_factor);
         // A first guess; the first UI pass measures the real width.
         let sidebar_width = if config.sidebar { config.sidebar_width * scale_factor } else { 0.0 };
         let size = window.inner_size();
@@ -741,6 +741,17 @@ impl AppState {
         if lines == 0 {
             return;
         }
+        // Full-screen programs (less, htop, ...) may want the wheel
+        // themselves, as arrow keys or mouse reports.
+        let (x, y) = self.last_cursor_pos;
+        let (col, row, _) = pixel_to_cell(x, y, self.grid_origin(), self.text.cell, self.cols, self.rows);
+        let mode = *self.current_tab().terminal.term.lock().mode();
+        if let Some(bytes) = input::wheel_to_bytes(lines, mode, (col, row), self.modifiers) {
+            if !bytes.is_empty() {
+                self.current_tab().terminal.send_input(bytes);
+            }
+            return;
+        }
         // Sign convention (positive = further into scrollback) matches
         // `Scroll::Delta`'s own doc; flip this if it turns out inverted
         // on your setup.
@@ -792,10 +803,9 @@ impl AppState {
         let scale_factor = self.window.scale_factor() as f32;
         let default_shell = self.default_shell();
         let visible = self.sidebar_visible;
-        let width = self.config.sidebar_width;
         let header_height = if self.tab_bar_height > 0.0 { self.tab_bar_height / scale_factor } else { 36.0 };
-        let language = self.config.chosen_language();
-        let scroll_lines = self.config.scroll_lines();
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let window_size = [size.width, size.height];
 
         // Focus egui picked up without the user clicking into the sidebar
         // doesn't count; see `keyboard_to_ui`.
@@ -812,7 +822,7 @@ impl AppState {
             // egui may run this more than once per frame; only the last
             // pass counts.
             (right_edge, actions) = if visible {
-                self.sidebar.show(ui, &default_shell, language, scroll_lines, width, header_height)
+                self.sidebar.show(ui, &default_shell, &self.config, window_size, header_height)
             } else {
                 (0.0, Vec::new())
             };
@@ -895,15 +905,59 @@ impl AppState {
                 self.sidebar.report(result);
                 self.window.request_redraw();
             }
-            // Applies right away, also while the slider is being dragged;
-            // written to the config only once it's let go.
-            SidebarAction::SetScrollLines { lines, save } => {
-                self.config.scroll_lines = lines;
-                if save && let Err(err) = self.config.save_scroll_lines(lines) {
-                    self.sidebar.report(Err(err));
+            SidebarAction::ChangeSetting { setting, save } => self.change_setting(setting, save),
+        }
+    }
+
+    /// An option changed under ⚙: applied right away where it can be,
+    /// persisted with `save`. Sliders send one of these per step while
+    /// dragged and a saving one once let go.
+    fn change_setting(&mut self, setting: Setting, save: bool) {
+        self.config.set(setting);
+        match setting {
+            Setting::FontSize(_) | Setting::LineHeight(_) => self.update_font(),
+            Setting::Padding(_) => self.relayout(),
+            Setting::TabBar(_) => {
+                self.tab_bar_height = tab_bar_height(&self.config, self.text.cell, self.window.scale_factor() as f32);
+                self.set_hovered(None);
+                self.relayout();
+            }
+            // The panel gets the new width in the next UI pass, and
+            // `run_ui` moves the console along.
+            Setting::SidebarWidth(_) => {}
+            Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
+            // Only once let go: dragging down and back up would have
+            // dropped the oldest lines on the way.
+            Setting::ScrollbackLines(lines) if save => {
+                for tab in &self.tabs {
+                    tab.terminal.set_scrollback(lines);
                 }
             }
+            // Read where they're used, or only at the next start.
+            Setting::ScrollbackLines(_)
+            | Setting::ScrollLines(_)
+            | Setting::WindowSize { .. }
+            | Setting::Sidebar(_)
+            | Setting::Splash(_) => {}
         }
+        if save && let Err(err) = self.config.save(setting) {
+            self.sidebar.report(Err(err));
+        }
+        self.window.request_redraw();
+    }
+
+    /// Font size or line height changed: new cell metrics, so everything
+    /// shaped with the old ones goes, and the grid is laid out anew.
+    fn update_font(&mut self) {
+        let scale_factor = self.window.scale_factor() as f32;
+        self.text.set_font(self.config.font_size * scale_factor, self.config.line_height_factor);
+        self.grid_text = GridText::default();
+        self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background));
+        self.tab_bar_height = tab_bar_height(&self.config, self.text.cell, scale_factor);
+        // Forces the resize: the shells learn the new cell size even if
+        // the grid keeps its columns and rows.
+        self.cols = 0;
+        self.relayout();
     }
 
     fn redraw(&mut self) {
@@ -1086,6 +1140,11 @@ fn spawn_splash_decoder(proxy: EventLoopProxy<UserEvent>, scale_factor: f32) -> 
             None
         }
     }
+}
+
+/// Physical-pixel height of the tab bar; 0 when it's turned off.
+fn tab_bar_height(config: &Config, cell: CellMetrics, scale_factor: f32) -> f32 {
+    if config.tab_bar { tab_bar::bar_height(cell, scale_factor) } else { 0.0 }
 }
 
 /// `left`/`top` is space reserved beside/above the grid's own padding

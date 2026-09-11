@@ -30,6 +30,9 @@ in a sidebar, and never have secrets written to disk.
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
 - Scrollback with the mouse wheel (speed adjustable under **⚙**), mouse selection,
   clipboard copy and paste
+- Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
+  reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
+  hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
 - Right-click menu in the terminal: copy, paste, and paste and run
 - Optional start-up animation
 
@@ -151,8 +154,11 @@ splash = true                 # start-up animation
 # language = "en"             # "en" or "de" (default: from your locale)
 ```
 
-`shell`, `language` and `scroll_lines` can also be set from the sidebar. When they are,
-Terminaal edits just that line and keeps your comments and formatting.
+Every option can also be set in the sidebar under **⚙** (hover a control to
+see its key). Font, padding, tab bar, sidebar width, cursor and scrolling
+apply right away; window size, sidebar and animation at the next start. When you
+change something there, Terminaal edits just that line and keeps your comments and
+formatting.
 
 Next to it, Terminaal keeps its own files. None of them holds anything secret:
 
