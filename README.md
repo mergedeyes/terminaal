@@ -79,7 +79,7 @@ Terminaal is built from source.
 **Install for the current user**
 
 ```sh
-git clone <this repository> terminaal
+git clone https://github.com/mergedeyes/terminaal terminaal
 cd terminaal
 ./install.sh
 ```
