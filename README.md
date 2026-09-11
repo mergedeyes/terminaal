@@ -5,7 +5,7 @@
 <h1 align="center">Terminaal</h1>
 
 <p align="center">
-  A GPU-rendered terminal emulator for Linux with a built-in SSH manager.<br>
+  A GPU-rendered terminal emulator for COSMIC with a built-in SSH manager.<br>
   Written in Rust. English and German UI.
 </p>
 
@@ -53,7 +53,10 @@ in a sidebar, and never have secrets written to disk.
   copied over to edit. Supports `Include`, `Match`, `%` tokens and more
 - **Several logins per host** (user + key), with one as the default
 - **ProxyJump** chains and **ProxyCommand**
-- **Port forwarding** (`LocalForward`, `RemoteForward`)
+- **Port forwarding**: `LocalForward`, `RemoteForward` and `DynamicForward`
+  (a SOCKS 4/4a/5 proxy; a `RemoteForward` with only a port runs one on the
+  server). Unix socket paths work on either side, except for the server
+  listening on one
 - Per-host options, grouped in the form with their `ssh_config` keyword:
   timeouts, keepalives, compression, address family, authentication order,
   `StrictHostKeyChecking`, `RemoteCommand`, `SetEnv`/`SendEnv`, and the
@@ -211,8 +214,8 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 ## Known limitations
 
 - Linux only for now
-- SSH is based on libssh2, which can't do agent forwarding (`ForwardAgent`).
-  `DynamicForward` (SOCKS), Unix-socket forwarding and `ControlMaster` aren't
+- SSH is based on libssh2, which can't do agent forwarding (`ForwardAgent`)
+  or have the server listen on a Unix socket. `ControlMaster` isn't
   supported either
 - Only Ed25519 keys can be generated. Existing RSA/ECDSA keys work
 - `Match exec` in `~/.ssh/config` is never evaluated, on purpose

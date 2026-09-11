@@ -14,6 +14,7 @@
 
 pub mod connection;
 mod forward;
+mod socks;
 pub mod keys;
 pub mod options;
 
@@ -599,6 +600,7 @@ fn resolve_config_host(blocks: &[Block], alias: &str) -> Host {
                 "sendenv" => options.send_env.extend(words(raw).into_iter().filter(|w| !w.starts_with('-'))),
                 "localforward" => options.local_forward.push(words(raw).join(" ")),
                 "remoteforward" => options.remote_forward.push(words(raw).join(" ")),
+                "dynamicforward" => options.dynamic_forward.push(words(raw).join(" ")),
                 "kexalgorithms" => set(&mut options.kex_algorithms),
                 "hostkeyalgorithms" => set(&mut options.host_key_algorithms),
                 "ciphers" => set(&mut options.ciphers),
@@ -965,7 +967,7 @@ Host *
             "Host a\n  ProxyCommand nc %h %p\n  ProxyJump ignored\n  Compression yes\n  ServerAliveInterval 15\n  \
              StrictHostKeyChecking no\n  UserKnownHostsFile ~/.ssh/kh_%n /dev/null\n  SetEnv FOO=1 \"BAR=a b\"\n  \
              SetEnv FOO=2\n  SendEnv LANG LC_*\n  LocalForward 8080 localhost:80\n  LocalForward=\"8443 localhost:443\"\n  \
-             RemoteForward 9000 localhost:9000\n  Ciphers ^aes256-ctr\n  AddressFamily inet\n  RemoteCommand tmux attach -t %n\n\
+             RemoteForward 9000 localhost:9000\n  DynamicForward 1080\n  Ciphers ^aes256-ctr\n  AddressFamily inet\n  RemoteCommand tmux attach -t %n\n\
              Host b\n  ProxyJump a\n  ProxyCommand ignored\n  IdentityFile \"~/.ssh/my key\"\n",
         );
         let a = &hosts[0];
@@ -980,6 +982,7 @@ Host *
         assert_eq!(o.send_env, ["LANG", "LC_*"]);
         assert_eq!(o.local_forward, ["8080 localhost:80", "8443 localhost:443"]);
         assert_eq!(o.remote_forward, ["9000 localhost:9000"]);
+        assert_eq!(o.dynamic_forward, ["1080"]);
         assert_eq!(o.ciphers.as_deref(), Some("^aes256-ctr"));
 
         let b = &hosts[1];

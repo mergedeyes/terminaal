@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, TextEdit, Ui};
 
 use crate::i18n::t;
-use crate::ssh::options::{AddressFamily, Forward, HostKeyCheck, Options};
+use crate::ssh::options::{AddressFamily, Forward, ForwardKind, HostKeyCheck, Options, Target};
 use crate::ssh::{self, Catalog, Host, Login, keys};
 use crate::ui::sidebar::SidebarAction;
 use crate::ui::theme;
@@ -88,38 +88,111 @@ pub struct SshPanel {
     status: Option<Status>,
 }
 
+/// What a forward row in the form is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RowKind {
+    #[default]
+    Local,
+    Remote,
+    /// `DynamicForward`: a SOCKS proxy here.
+    Dynamic,
+    /// `RemoteForward` without a target: a SOCKS proxy on the server.
+    RemoteDynamic,
+}
+
+impl RowKind {
+    const ALL: [RowKind; 4] = [RowKind::Local, RowKind::Remote, RowKind::Dynamic, RowKind::RemoteDynamic];
+
+    fn of(forward: &Forward) -> Self {
+        match (forward.kind(), &forward.target) {
+            (ForwardKind::Local, _) => Self::Local,
+            (ForwardKind::Dynamic, _) => Self::Dynamic,
+            (ForwardKind::Remote, Some(_)) => Self::Remote,
+            (ForwardKind::Remote, None) => Self::RemoteDynamic,
+        }
+    }
+
+    /// The keyword it's saved under.
+    fn forward_kind(self) -> ForwardKind {
+        match self {
+            Self::Local => ForwardKind::Local,
+            Self::Remote | Self::RemoteDynamic => ForwardKind::Remote,
+            Self::Dynamic => ForwardKind::Dynamic,
+        }
+    }
+
+    fn has_target(self) -> bool {
+        matches!(self, Self::Local | Self::Remote)
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::Local => t!("host-forward-local"),
+            Self::Remote => t!("host-forward-remote"),
+            Self::Dynamic => t!("host-forward-dynamic"),
+            Self::RemoteDynamic => t!("host-forward-remote-dynamic"),
+        }
+    }
+
+    fn hint(self) -> String {
+        match self {
+            Self::Local => t!("host-forward-local-hint"),
+            Self::Remote => t!("host-forward-remote-hint"),
+            Self::Dynamic => t!("host-forward-dynamic-hint"),
+            Self::RemoteDynamic => t!("host-forward-remote-dynamic-hint"),
+        }
+    }
+
+    fn listen_hint(self) -> String {
+        match self {
+            Self::Local => t!("host-local-listen-hint"),
+            Self::Remote => t!("host-remote-listen-hint"),
+            Self::Dynamic => t!("host-dynamic-listen-hint"),
+            Self::RemoteDynamic => t!("host-remote-dynamic-listen-hint"),
+        }
+    }
+}
+
 /// A port forward as typed into the form.
 #[derive(Clone, Default)]
 struct ForwardRow {
-    remote: bool,
-    /// `[bind:]port`.
+    kind: RowKind,
+    /// `[bind:]port` or a socket path.
     listen: String,
-    /// `host:port`.
+    /// `host:port` or a socket path; unused without a target.
     target: String,
 }
 
 impl ForwardRow {
-    fn from_spec(remote: bool, spec: &str) -> Self {
-        match Forward::parse(spec, remote) {
-            Ok(forward) => {
-                let listen = match &forward.bind {
-                    Some(bind) if bind.contains(':') => format!("[{bind}]:{}", forward.port),
-                    Some(bind) => format!("{bind}:{}", forward.port),
-                    None => forward.port.to_string(),
-                };
-                Self { remote, listen, target: forward.target_label() }
-            }
+    fn from_spec(kind: ForwardKind, spec: &str) -> Self {
+        match Forward::parse(spec, kind) {
+            Ok(forward) => Self {
+                kind: RowKind::of(&forward),
+                listen: forward.listen_spec(),
+                target: forward.target.as_ref().map(Target::spec).unwrap_or_default(),
+            },
             // Keep what's there, so saving reports what's wrong with it.
             Err(_) => {
                 let spec = spec.trim();
                 let (listen, target) = spec.split_once(char::is_whitespace).unwrap_or((spec, ""));
-                Self { remote, listen: listen.to_string(), target: target.trim().to_string() }
+                let kind = match kind {
+                    ForwardKind::Local => RowKind::Local,
+                    ForwardKind::Dynamic => RowKind::Dynamic,
+                    ForwardKind::Remote if target.trim().is_empty() => RowKind::RemoteDynamic,
+                    ForwardKind::Remote => RowKind::Remote,
+                };
+                Self { kind, listen: listen.to_string(), target: target.trim().to_string() }
             }
         }
     }
 
+    /// The target as it counts: none for the SOCKS kinds.
+    fn target(&self) -> &str {
+        if self.kind.has_target() { self.target.trim() } else { "" }
+    }
+
     fn is_blank(&self) -> bool {
-        self.listen.trim().is_empty() && self.target.trim().is_empty()
+        self.listen.trim().is_empty() && self.target().is_empty()
     }
 }
 
@@ -232,12 +305,14 @@ impl HostEditor {
     fn from_host(host: &Host, original: Option<usize>) -> Self {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let options = &host.options;
-        let forwards = options
-            .local_forward
-            .iter()
-            .map(|spec| ForwardRow::from_spec(false, spec))
-            .chain(options.remote_forward.iter().map(|spec| ForwardRow::from_spec(true, spec)))
-            .collect();
+        let forwards = [
+            (ForwardKind::Local, &options.local_forward),
+            (ForwardKind::Remote, &options.remote_forward),
+            (ForwardKind::Dynamic, &options.dynamic_forward),
+        ]
+        .into_iter()
+        .flat_map(|(kind, specs)| specs.iter().map(move |spec| ForwardRow::from_spec(kind, spec)))
+        .collect();
         Self {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             original,
@@ -295,20 +370,25 @@ impl HostEditor {
             return Err(t!("host-jump-and-proxy"));
         }
 
-        let mut forwards = (Vec::new(), Vec::new());
+        let (mut local_forward, mut remote_forward, mut dynamic_forward) = (Vec::new(), Vec::new(), Vec::new());
         for (i, row) in self.forwards.iter().enumerate().filter(|(_, row)| !row.is_blank()) {
-            let (listen, target) = (row.listen.trim(), row.target.trim());
-            if listen.is_empty() || target.is_empty() {
-                return Err(if listen.is_empty() {
-                    t!("host-forward-missing-port", row = i + 1)
-                } else {
-                    t!("host-forward-missing-target", row = i + 1)
-                });
+            let (listen, target) = (row.listen.trim(), row.target());
+            if listen.is_empty() {
+                return Err(t!("host-forward-missing-port", row = i + 1));
             }
-            let spec = format!("{listen} {target}");
+            if row.kind.has_target() && target.is_empty() {
+                return Err(t!("host-forward-missing-target", row = i + 1));
+            }
+            let spec = if target.is_empty() { listen.to_string() } else { format!("{listen} {target}") };
+            let kind = row.kind.forward_kind();
             // Checked here already, so the message names the row.
-            Forward::parse(&spec, row.remote).map_err(|err| t!("host-forward-invalid", row = i + 1, err = err))?;
-            if row.remote { &mut forwards.1 } else { &mut forwards.0 }.push(spec);
+            Forward::parse(&spec, kind).map_err(|err| t!("host-forward-invalid", row = i + 1, err = err))?;
+            match kind {
+                ForwardKind::Local => &mut local_forward,
+                ForwardKind::Remote => &mut remote_forward,
+                ForwardKind::Dynamic => &mut dynamic_forward,
+            }
+            .push(spec);
         }
 
         let options = Options {
@@ -324,8 +404,9 @@ impl HostEditor {
             remote_command: text(&advanced.remote_command),
             set_env: lines(&advanced.set_env),
             send_env: advanced.send_env.split_whitespace().map(str::to_string).collect(),
-            local_forward: forwards.0,
-            remote_forward: forwards.1,
+            local_forward,
+            remote_forward,
+            dynamic_forward,
             kex_algorithms: text(&advanced.kex),
             host_key_algorithms: text(&advanced.host_key_algorithms),
             ciphers: text(&advanced.ciphers),
@@ -750,13 +831,12 @@ fn forwards_ui(ui: &mut Ui, editor: &mut HostEditor) {
         for (i, row) in editor.forwards.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ComboBox::from_id_salt(("ssh-forward-kind", id, i))
-                    .width(100.0)
-                    .selected_text(if row.remote { t!("host-forward-remote") } else { t!("host-forward-local") })
+                    .width(140.0)
+                    .selected_text(row.kind.label())
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut row.remote, false, t!("host-forward-local"))
-                            .on_hover_text(t!("host-forward-local-hint"));
-                        ui.selectable_value(&mut row.remote, true, t!("host-forward-remote"))
-                            .on_hover_text(t!("host-forward-remote-hint"));
+                        for kind in RowKind::ALL {
+                            ui.selectable_value(&mut row.kind, kind, kind.label()).on_hover_text(kind.hint());
+                        }
                     });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("🗑").on_hover_text(t!("host-remove-forward")).clicked() {
@@ -764,13 +844,12 @@ fn forwards_ui(ui: &mut Ui, editor: &mut HostEditor) {
                     }
                 });
             });
-            let (listen_hint, target_hint) = if row.remote {
-                (t!("host-remote-listen-hint"), t!("host-remote-target-hint"))
-            } else {
-                (t!("host-local-listen-hint"), t!("host-local-target-hint"))
-            };
-            ui.add(TextEdit::singleline(&mut row.listen).desired_width(f32::INFINITY).hint_text(listen_hint));
-            ui.add(TextEdit::singleline(&mut row.target).desired_width(f32::INFINITY).hint_text(target_hint));
+            ui.add(TextEdit::singleline(&mut row.listen).desired_width(f32::INFINITY).hint_text(row.kind.listen_hint()));
+            if row.kind.has_target() {
+                let target_hint =
+                    if row.kind == RowKind::Remote { t!("host-remote-target-hint") } else { t!("host-local-target-hint") };
+                ui.add(TextEdit::singleline(&mut row.target).desired_width(f32::INFINITY).hint_text(target_hint));
+            }
             ui.add_space(4.0);
         }
         if let Some(i) = remove {
@@ -947,8 +1026,9 @@ mod tests {
             remote_command: Some("tmux attach".into()),
             set_env: vec!["A=1".into(), "B=x y".into()],
             send_env: vec!["LANG".into(), "LC_*".into()],
-            local_forward: vec!["127.0.0.1:8080 localhost:80".into()],
-            remote_forward: vec!["9000 [::1]:9000".into()],
+            local_forward: vec!["127.0.0.1:8080 localhost:80".into(), "~/db.sock /run/pg.sock".into()],
+            remote_forward: vec!["9000 [::1]:9000".into(), "*:1080".into(), "9001 ~/app.sock".into()],
+            dynamic_forward: vec!["[::1]:1080".into()],
             kex_algorithms: Some("-diffie-hellman-group1-sha1".into()),
             host_key_algorithms: Some("^ssh-ed25519".into()),
             ciphers: Some("aes256-ctr".into()),
@@ -971,7 +1051,7 @@ mod tests {
             panel.editor = Some(editor);
             panel.commit(&mut data)
         };
-        let forward = |listen: &str, target: &str| ForwardRow { remote: false, listen: listen.into(), target: target.into() };
+        let forward = |listen: &str, target: &str| ForwardRow { kind: RowKind::Local, listen: listen.into(), target: target.into() };
 
         assert!(try_commit(&|e| e.jump = "b.example".into()).unwrap_err().contains("sich selbst"));
         assert!(try_commit(&|e| e.port = "0".into()).unwrap_err().contains("Port"));

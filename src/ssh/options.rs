@@ -65,12 +65,17 @@ pub struct Options {
     /// `SendEnv`: names of local variables to pass on; `*`/`?` allowed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub send_env: Vec<String>,
-    /// `LocalForward`: `[bind:]port host:hostport` each.
+    /// `LocalForward`: `[bind:]port host:hostport` each; either side may
+    /// be a Unix socket path instead.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub local_forward: Vec<String>,
-    /// `RemoteForward`: same syntax, the other way round.
+    /// `RemoteForward`: same syntax, the other way round (the server side
+    /// can't be a socket). Just `[bind:]port`: a SOCKS proxy on the server.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remote_forward: Vec<String>,
+    /// `DynamicForward`: `[bind:]port` each, a SOCKS proxy here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dynamic_forward: Vec<String>,
     /// `KexAlgorithms`, `HostKeyAlgorithms`, `Ciphers`, `MACs`: lists in
     /// ssh's syntax, including the `+`/`-`/`^` prefixes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -264,70 +269,174 @@ pub fn algorithm_list(spec: &str, supported: &[&str]) -> Result<String, String> 
     Ok(result.join(","))
 }
 
-/// A `LocalForward` or `RemoteForward`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForwardKind {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+impl ForwardKind {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Local => "LocalForward",
+            Self::Remote => "RemoteForward",
+            Self::Dynamic => "DynamicForward",
+        }
+    }
+}
+
+/// Where a forward listens.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Listen {
+    /// Unset address: loopback only (locally), `localhost` (remotely);
+    /// `*` or empty: all interfaces. Port 0 lets the server choose
+    /// (remote only).
+    Port { bind: Option<String>, port: u16 },
+    /// A Unix socket; local only -- libssh2 can't ask the server to
+    /// listen on one (`streamlocal-forward@openssh.com`).
+    Unix(String),
+}
+
+/// Where a forward's connections go: seen from the server for a local
+/// forward, from here for a remote one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    Tcp { host: String, port: u16 },
+    Unix(String),
+}
+
+/// A `LocalForward`, `RemoteForward` or `DynamicForward`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Forward {
     /// `RemoteForward`: the server listens, connections come back here.
     pub remote: bool,
-    /// Address to listen on. Unset: loopback only (locally), `localhost`
-    /// (remotely); `*` or empty: all interfaces.
-    pub bind: Option<String>,
-    /// Port to listen on; 0 lets the server choose (remote only).
-    pub port: u16,
-    /// Where connections go: seen from the server for a local forward,
-    /// from here for a remote one.
-    pub host: String,
-    pub host_port: u16,
+    pub listen: Listen,
+    /// `None`: dynamic -- each connection names its target via SOCKS.
+    pub target: Option<Target>,
 }
 
 impl Forward {
-    /// `[bind:]port host:hostport` -- or all of it joined by `:`, as with
-    /// `ssh -L`. IPv6 addresses go in brackets.
-    pub fn parse(spec: &str, remote: bool) -> Result<Self, String> {
-        let keyword = if remote { "RemoteForward" } else { "LocalForward" };
-        let invalid = |reason: String| t!("opt-forward-invalid", keyword = keyword, spec = spec, reason = reason);
+    /// `listen target` -- or both joined by `:`, as with `ssh -L`. Each
+    /// side is `[bind:]port`/`host:port` or a Unix socket path (anything
+    /// with a `/`); IPv6 addresses go in brackets. Dynamic forwards, and
+    /// remote ones meant as a SOCKS proxy, have no target.
+    pub fn parse(spec: &str, kind: ForwardKind) -> Result<Self, String> {
+        let invalid = |reason: String| t!("opt-forward-invalid", keyword = kind.keyword(), spec = spec, reason = reason);
+        let syntax = || {
+            invalid(if kind == ForwardKind::Dynamic { t!("opt-forward-dynamic-syntax") } else { t!("opt-forward-syntax") })
+        };
         let spec = spec.trim();
-        if spec.contains('/') {
-            return Err(invalid(t!("opt-forward-unix")));
-        }
-        let joined = match spec.split_once(char::is_whitespace) {
-            Some((listen, target)) => format!("{listen}:{}", target.trim()),
-            None => spec.to_string(),
+        let remote = kind == ForwardKind::Remote;
+        let (listen, target) = match spec.split_once(char::is_whitespace) {
+            Some((listen, target)) => (split_endpoint(listen), split_endpoint(target.trim())),
+            None => {
+                let mut parts = split_colons(spec);
+                // The target is at the end: a socket path is one part,
+                // `host:port` two; without one, it's all listen address.
+                let target_len = match (kind, parts.as_slice()) {
+                    (ForwardKind::Dynamic, _) | (_, [_]) => 0,
+                    (_, [.., last]) if is_path(last) => 1,
+                    (ForwardKind::Remote, [_, _]) => 0,
+                    _ => 2,
+                };
+                let target = parts.split_off(parts.len() - target_len);
+                (parts, target)
+            }
         };
-        let parts = split_colons(&joined);
-        let (bind, port, host, host_port) = match parts.as_slice() {
-            [port, host, host_port] => (None, port, host, host_port),
-            [bind, port, host, host_port] => (Some(bind.clone()), port, host, host_port),
-            [_] if remote => return Err(invalid(t!("opt-forward-socks"))),
-            _ => return Err(invalid(t!("opt-forward-syntax"))),
+
+        let port = |text: &str| text.parse::<u16>().map_err(|_| invalid(t!("opt-forward-port")));
+        let listen = match listen.as_slice() {
+            [path] if is_path(path) && remote => return Err(invalid(t!("opt-forward-remote-unix"))),
+            [path] if is_path(path) => Listen::Unix(path.clone()),
+            [text] => Listen::Port { bind: None, port: port(text)? },
+            [bind, text] => Listen::Port { bind: Some(bind.clone()), port: port(text)? },
+            _ => return Err(syntax()),
         };
-        let port: u16 = port.parse().map_err(|_| invalid(t!("opt-forward-port")))?;
-        if port == 0 && !remote {
+        if matches!(listen, Listen::Port { port: 0, .. }) && !remote {
             return Err(invalid(t!("opt-forward-port-zero")));
         }
-        let host_port =
-            host_port.parse::<u16>().ok().filter(|&p| p > 0).ok_or_else(|| invalid(t!("opt-forward-target-port")))?;
-        if host.is_empty() {
-            return Err(invalid(t!("opt-forward-target-missing")));
-        }
-        Ok(Self { remote, bind, port, host: host.clone(), host_port })
+
+        let target = match target.as_slice() {
+            [] if kind == ForwardKind::Local => return Err(invalid(t!("opt-forward-local-no-target"))),
+            [] => None,
+            _ if kind == ForwardKind::Dynamic => return Err(syntax()),
+            [path] if is_path(path) => Some(Target::Unix(path.clone())),
+            [host, text] => {
+                let port = text.parse::<u16>().ok().filter(|&p| p > 0).ok_or_else(|| invalid(t!("opt-forward-target-port")))?;
+                if host.is_empty() {
+                    return Err(invalid(t!("opt-forward-target-missing")));
+                }
+                Some(Target::Tcp { host: host.clone(), port })
+            }
+            _ => return Err(syntax()),
+        };
+        Ok(Self { remote, listen, target })
     }
 
-    /// Where it listens, e.g. `localhost:8080` or `Server:8080`.
+    /// Which keyword this is written with.
+    pub fn kind(&self) -> ForwardKind {
+        match (self.remote, &self.target) {
+            (true, _) => ForwardKind::Remote,
+            (false, None) => ForwardKind::Dynamic,
+            (false, Some(_)) => ForwardKind::Local,
+        }
+    }
+
+    /// Where it listens, e.g. `localhost:8080`, `Server:8080` or a path.
     pub fn listen_label(&self) -> String {
-        let bind = match self.bind.as_deref() {
+        let (bind, port) = match &self.listen {
+            Listen::Unix(path) => return path.clone(),
+            Listen::Port { bind, port } => (bind.as_deref(), port),
+        };
+        let bind = match bind {
             None => if self.remote { "Server" } else { "localhost" }.to_string(),
             Some("" | "*") => if self.remote { "Server:*" } else { "*" }.to_string(),
             Some(bind) if self.remote => format!("Server:{bind}"),
             Some(bind) => bind.to_string(),
         };
-        format!("{bind}:{}", self.port)
+        format!("{bind}:{port}")
     }
 
-    /// Where connections end up, e.g. `db.internal:5432`.
+    /// Where connections end up, e.g. `db.internal:5432`, a socket path
+    /// or `SOCKS`.
     pub fn target_label(&self) -> String {
-        if self.host.contains(':') { format!("[{}]:{}", self.host, self.host_port) } else { format!("{}:{}", self.host, self.host_port) }
+        match &self.target {
+            None => "SOCKS".to_string(),
+            Some(target) => target.spec(),
+        }
     }
+
+    /// The listen side as written in a spec: `[bind:]port` or the path.
+    pub fn listen_spec(&self) -> String {
+        match &self.listen {
+            Listen::Unix(path) => path.clone(),
+            Listen::Port { bind: Some(bind), port } if bind.contains(':') => format!("[{bind}]:{port}"),
+            Listen::Port { bind: Some(bind), port } => format!("{bind}:{port}"),
+            Listen::Port { bind: None, port } => port.to_string(),
+        }
+    }
+}
+
+impl Target {
+    /// As written in a spec: `host:port` or the path.
+    pub fn spec(&self) -> String {
+        match self {
+            Target::Unix(path) => path.clone(),
+            Target::Tcp { host, port } if host.contains(':') => format!("[{host}]:{port}"),
+            Target::Tcp { host, port } => format!("{host}:{port}"),
+        }
+    }
+}
+
+/// Socket paths are told apart from addresses by their `/`, as by ssh.
+fn is_path(text: &str) -> bool {
+    text.contains('/')
+}
+
+/// One side of a forward: a path stays whole (it may contain `:`).
+fn split_endpoint(text: &str) -> Vec<String> {
+    if is_path(text) { vec![text.to_string()] } else { split_colons(text) }
 }
 
 /// Split on `:` outside of `[…]`, dropping the brackets.
@@ -428,11 +537,14 @@ impl Options {
         }
 
         let mut forwards = Vec::new();
-        for spec in &self.local_forward {
-            forwards.push(Forward::parse(spec, false)?);
-        }
-        for spec in &self.remote_forward {
-            forwards.push(Forward::parse(spec, true)?);
+        for (kind, specs) in [
+            (ForwardKind::Local, &self.local_forward),
+            (ForwardKind::Remote, &self.remote_forward),
+            (ForwardKind::Dynamic, &self.dynamic_forward),
+        ] {
+            for spec in specs {
+                forwards.push(Forward::parse(spec, kind)?);
+            }
         }
 
         let mut algorithms = Vec::new();
@@ -498,25 +610,65 @@ mod tests {
         value.to_string()
     }
 
+    fn port(bind: Option<&str>, port: u16) -> Listen {
+        Listen::Port { bind: bind.map(str::to_string), port }
+    }
+
+    fn tcp(host: &str, port: u16) -> Target {
+        Target::Tcp { host: host.into(), port }
+    }
+
     #[test]
     fn parses_forwards_like_ssh() {
-        let f = Forward::parse("8080 db.internal:5432", false).unwrap();
-        assert_eq!((f.bind.as_deref(), f.port, f.host.as_str(), f.host_port), (None, 8080, "db.internal", 5432));
+        use ForwardKind::{Local, Remote};
+        let f = Forward::parse("8080 db.internal:5432", Local).unwrap();
+        assert_eq!((&f.listen, &f.target), (&port(None, 8080), &Some(tcp("db.internal", 5432))));
         assert_eq!((f.listen_label().as_str(), f.target_label().as_str()), ("localhost:8080", "db.internal:5432"));
 
-        let f = Forward::parse("[::1]:2222:[2001:db8::5]:22", false).unwrap();
-        assert_eq!((f.bind.as_deref(), f.port, f.host.as_str()), (Some("::1"), 2222, "2001:db8::5"));
-        assert_eq!(f.target_label(), "[2001:db8::5]:22");
+        let f = Forward::parse("[::1]:2222:[2001:db8::5]:22", Local).unwrap();
+        assert_eq!((&f.listen, &f.target), (&port(Some("::1"), 2222), &Some(tcp("2001:db8::5", 22))));
+        assert_eq!((f.listen_spec().as_str(), f.target_label().as_str()), ("[::1]:2222", "[2001:db8::5]:22"));
 
-        let f = Forward::parse("*:0   localhost:3000", true).unwrap();
-        assert_eq!((f.bind.as_deref(), f.port), (Some("*"), 0));
+        let f = Forward::parse("*:0   localhost:3000", Remote).unwrap();
+        assert_eq!(f.listen, port(Some("*"), 0));
         assert_eq!(f.listen_label(), "Server:*:0");
 
-        assert!(Forward::parse("0 localhost:80", false).unwrap_err().contains("Port 0"));
-        assert!(Forward::parse("8080", true).unwrap_err().contains("SOCKS"));
-        assert!(Forward::parse("8080 /run/x.sock", false).unwrap_err().contains("Unix"));
-        assert!(Forward::parse("8080 host:0", false).is_err());
-        assert!(Forward::parse("x host:80", false).is_err());
+        assert!(Forward::parse("0 localhost:80", Local).unwrap_err().contains("Port 0"));
+        assert!(Forward::parse("8080 host:0", Local).is_err());
+        assert!(Forward::parse("x host:80", Local).is_err());
+    }
+
+    #[test]
+    fn parses_unix_socket_forwards() {
+        let unix = |path: &str| path.to_string();
+        for (spec, listen, target) in [
+            ("8080 /run/app.sock", port(None, 8080), Target::Unix(unix("/run/app.sock"))),
+            ("127.0.0.1:8080:/run/app.sock", port(Some("127.0.0.1"), 8080), Target::Unix(unix("/run/app.sock"))),
+            ("~/db.sock localhost:5432", Listen::Unix(unix("~/db.sock")), tcp("localhost", 5432)),
+            ("/tmp/a.sock:db:5432", Listen::Unix(unix("/tmp/a.sock")), tcp("db", 5432)),
+            ("/tmp/a.sock:/run/b.sock", Listen::Unix(unix("/tmp/a.sock")), Target::Unix(unix("/run/b.sock"))),
+        ] {
+            let f = Forward::parse(spec, ForwardKind::Local).unwrap();
+            assert_eq!((f.listen, f.target), (listen, Some(target)), "{spec}");
+        }
+        // The server forwards to a socket here, but can't listen on one.
+        let f = Forward::parse("9000 /run/user/1000/app.sock", ForwardKind::Remote).unwrap();
+        assert_eq!(f.target_label(), "/run/user/1000/app.sock");
+        assert!(Forward::parse("/tmp/x.sock localhost:80", ForwardKind::Remote).unwrap_err().contains("Unix"));
+    }
+
+    #[test]
+    fn parses_dynamic_forwards() {
+        use ForwardKind::{Dynamic, Local, Remote};
+        let f = Forward::parse("1080", Dynamic).unwrap();
+        assert_eq!((f.listen_label().as_str(), f.target_label().as_str(), f.kind()), ("localhost:1080", "SOCKS", Dynamic));
+        assert_eq!(Forward::parse("[::1]:1080", Dynamic).unwrap().listen, port(Some("::1"), 1080));
+        // `RemoteForward` with only a port: a SOCKS proxy on the server.
+        let f = Forward::parse("*:1080", Remote).unwrap();
+        assert_eq!((&f.listen, &f.target, f.kind()), (&port(Some("*"), 1080), &None, Remote));
+        assert!(Forward::parse("1080", Local).unwrap_err().contains("DynamicForward"));
+        assert!(Forward::parse("1080 host:80", Dynamic).is_err());
+        assert!(Forward::parse("0", Dynamic).unwrap_err().contains("Port 0"));
     }
 
     #[test]
@@ -545,6 +697,7 @@ mod tests {
             set_env: vec!["TERM=xterm".into(), "LANG=de_DE.UTF-8".into()],
             local_forward: vec!["8080 localhost:80".into()],
             remote_forward: vec!["9000 localhost:9000".into()],
+            dynamic_forward: vec!["1080".into()],
             ciphers: Some("^aes256-gcm@openssh.com".into()),
             ..Options::default()
         };
@@ -556,7 +709,8 @@ mod tests {
         assert_eq!(settings.proxy_command.as_deref(), Some("nc example.org 22"));
         assert_eq!(settings.term, "xterm");
         assert_eq!(settings.env, [("LANG".to_string(), "de_DE.UTF-8".to_string())]);
-        assert_eq!(settings.forwards.iter().map(|f| f.remote).collect::<Vec<_>>(), [false, true]);
+        let kinds: Vec<ForwardKind> = settings.forwards.iter().map(Forward::kind).collect();
+        assert_eq!(kinds, [ForwardKind::Local, ForwardKind::Remote, ForwardKind::Dynamic]);
         assert_eq!(settings.algorithms, [(AlgorithmKind::Cipher, "^aes256-gcm@openssh.com".to_string())]);
 
         let defaults = Options::default().settings(&no_expand).unwrap();
