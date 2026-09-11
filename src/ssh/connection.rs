@@ -47,9 +47,10 @@ use ssh2::{
 };
 
 use crate::i18n::t;
+use crate::ssh::agent_forward::AgentForwarding;
 use crate::ssh::forward::Forwards;
-use crate::ssh::options::{AlgorithmKind, AuthMethod, HostKeyCheck, algorithm_list};
-use crate::ssh::{AgentSocket, AuthPlan, SshTarget, default_key_files, display_path, ssh_dir};
+use crate::ssh::options::{AlgorithmKind, AuthMethod, ForwardAgent, HostKeyCheck, algorithm_list};
+use crate::ssh::{AgentSocket, AuthPlan, SshTarget, default_key_files, display_path, expand_tilde, ssh_dir};
 use crate::terminal::listener::EventProxyListener;
 
 /// For the blocking phase (handshake, auth); the pump loop is non-blocking.
@@ -300,6 +301,9 @@ impl Worker {
                 log::debug!("{}: {name} not accepted: {err}", self.target.label);
             }
         }
+        if settings.forward_agent != ForwardAgent::Off {
+            self.forward_agent(&session, &mut channel, &mut forwards);
+        }
         match &settings.remote_command {
             Some(command) => channel.exec(command)?,
             None => channel.shell()?,
@@ -319,6 +323,57 @@ impl Worker {
         // listeners would wait for the server one by one.
         drop(forwards);
         Ok(end)
+    }
+
+    /// `ForwardAgent`: ask the server to forward the agent, and say in the
+    /// tab how that went. The agent's channels are handled with the
+    /// forwards.
+    fn forward_agent(&mut self, session: &Session, channel: &mut Channel, forwards: &mut Forwards) {
+        let socket = match self.agent_socket() {
+            Ok(socket) => socket,
+            Err(reason) => {
+                self.print(&format!("\x1b[33m{}\x1b[0m\n", t!("conn-agent-forward-failed", err = reason)));
+                return;
+            }
+        };
+        // Accepting before asking: the server may use it right away.
+        let forwarding = AgentForwarding::enable(session, socket);
+        match channel.request_auth_agent_forwarding() {
+            Ok(()) => {
+                let socket = display_path(forwarding.socket());
+                self.print(&format!("\x1b[2m{}\x1b[0m\n", t!("conn-agent-forward-up", socket = socket)));
+                forwards.forward_agent(forwarding);
+            }
+            Err(err) => {
+                log::debug!("{}: agent forwarding refused: {err}", self.target.label);
+                let reason = t!("conn-agent-forward-refused");
+                self.print(&format!("\x1b[33m{}\x1b[0m\n", t!("conn-agent-forward-failed", err = reason)));
+            }
+        }
+    }
+
+    /// The agent to forward: `ForwardAgent`'s own socket, or the one used
+    /// to log in. `Err` says why there's none.
+    fn agent_socket(&self) -> Result<PathBuf, String> {
+        let from_env = |var: &str| {
+            std::env::var_os(var)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .ok_or_else(|| t!("conn-agent-forward-unset", var = var))
+        };
+        let socket = match (&self.target.settings.forward_agent, &self.target.auth.agent) {
+            (ForwardAgent::Socket(spec), _) => match spec.strip_prefix('$') {
+                Some(var) => from_env(var)?,
+                None => expand_tilde(spec),
+            },
+            (_, AgentSocket::Path(path)) => path.clone(),
+            (_, AgentSocket::Env) => from_env("SSH_AUTH_SOCK")?,
+            (_, AgentSocket::Off) => return Err(t!("conn-agent-forward-off")),
+        };
+        if !socket.exists() {
+            return Err(t!("conn-agent-forward-missing", socket = display_path(&socket)));
+        }
+        Ok(socket)
     }
 
     fn connect_tcp(&self, hop: &SshTarget) -> Result<TcpStream, Stop> {

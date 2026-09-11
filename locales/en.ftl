@@ -301,6 +301,9 @@ adv-identities-only = Offer only configured keys
 adv-identities-only-hint = IdentitiesOnly – no other keys from the agent
 adv-agent-socket = Agent socket
 adv-agent-socket-hint = $SSH_AUTH_SOCK · none = no agent
+adv-forward-agent = Forward the agent to the server
+adv-forward-agent-hint = ForwardAgent – programs on the server can sign with the agent's keys while connected. Only for servers you trust. Forwards the agent socket above, otherwise $SSH_AUTH_SOCK.
+adv-forward-agent-socket = Forwards { $socket }
 adv-methods = Methods in this order
 adv-host-key = Host key
 adv-unknown-host-keys = Unknown host keys
@@ -463,6 +466,12 @@ conn-wrong-passphrase = Wrong passphrase.
 conn-passphrase-prompt = Passphrase for { $path }:
 conn-keepalive-dead = Connection lost: { $target } stopped responding ({ $count } keepalives unanswered).
 conn-lost = Connection lost: { $err }
+conn-agent-forward-up = Forwarding the agent at { $socket }
+conn-agent-forward-failed = Can't forward the agent: { $err }
+conn-agent-forward-refused = the server doesn't allow it (AllowAgentForwarding)
+conn-agent-forward-unset = { $var } isn't set
+conn-agent-forward-off = IdentityAgent is none
+conn-agent-forward-missing = no agent at { $socket }
 conn-algorithms-failed = { $keyword } for { $hop }: { $err }
 conn-unknown-key-type = unknown key type
 

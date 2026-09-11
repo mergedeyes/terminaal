@@ -12,7 +12,9 @@
 //! ([`super::socks`]). Remote: the server listens (TCP only -- libssh2
 //! has no `streamlocal-forward`); each connection it reports is connected
 //! to its local target here, or without one, is a SOCKS request that says
-//! where to connect.
+//! where to connect. Agent forwarding: the server opens a channel for each
+//! use of the agent ([`super::agent_forward`]), tied here to a new
+//! connection to the local agent's socket.
 //!
 //! libssh2 reads packets for *all* channels whenever it reads for one, so
 //! data can end up buffered for a channel that was already serviced in
@@ -30,6 +32,7 @@ use std::time::Duration;
 
 use ssh2::{Channel, ErrorCode, ExtendedData, Listener, Session};
 
+use super::agent_forward::{AgentChannel, AgentForwarding};
 use super::expand_tilde;
 use super::options::{Forward, Listen, Target};
 use super::socks::{self, Handshake, Step, Version};
@@ -181,6 +184,52 @@ impl Conn for Channel {
     }
 }
 
+/// The server's side of a tunnel: a channel, or one libssh2 opened for the
+/// forwarded agent.
+trait Remote: Read + Write {
+    fn eof(&self) -> bool;
+    fn send_eof(&mut self) -> Result<(), ssh2::Error>;
+    fn close(&mut self) -> Result<(), ssh2::Error>;
+    /// libssh2 already holds data for it.
+    fn has_data(&self) -> bool;
+}
+
+impl Remote for Channel {
+    fn eof(&self) -> bool {
+        Channel::eof(self)
+    }
+
+    fn send_eof(&mut self) -> Result<(), ssh2::Error> {
+        Channel::send_eof(self)
+    }
+
+    fn close(&mut self) -> Result<(), ssh2::Error> {
+        Channel::close(self)
+    }
+
+    fn has_data(&self) -> bool {
+        self.read_window().available > 0
+    }
+}
+
+impl Remote for AgentChannel {
+    fn eof(&self) -> bool {
+        AgentChannel::eof(self)
+    }
+
+    fn send_eof(&mut self) -> Result<(), ssh2::Error> {
+        AgentChannel::send_eof(self)
+    }
+
+    fn close(&mut self) -> Result<(), ssh2::Error> {
+        AgentChannel::close(self)
+    }
+
+    fn has_data(&self) -> bool {
+        self.available()
+    }
+}
+
 /// A connection to a dynamic forward, in its SOCKS handshake.
 struct Negotiation<C> {
     conn: C,
@@ -248,7 +297,7 @@ impl<C: Conn> Negotiation<C> {
 
 /// One forwarded connection: a channel and the local socket it's tied to.
 struct Tunnel {
-    channel: Channel,
+    channel: Box<dyn Remote>,
     /// `None` for a channel that had nowhere to go and is only being closed.
     stream: Option<Stream>,
     to_local: Vec<u8>,
@@ -273,6 +322,7 @@ pub struct Forwards {
     socks_remote: Vec<Negotiation<Channel>>,
     pending: VecDeque<Pending>,
     tunnels: Vec<Tunnel>,
+    agent: Option<AgentForwarding>,
 }
 
 impl Forwards {
@@ -450,12 +500,29 @@ impl Forwards {
                 }
             }
         }
+        // Last: the accepts above may have read an agent request.
+        if let Some(agent) = &self.agent {
+            for channel in agent.take() {
+                match UnixStream::connect(agent.socket()) {
+                    Ok(stream) => self.tunnels.push(Tunnel::over(Box::new(channel), Stream::Unix(stream))),
+                    Err(err) => {
+                        log::debug!("agent {}: {err}", agent.socket().display());
+                        self.tunnels.push(Tunnel::closing(channel));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tie the server's agent channels to the local agent from now on.
+    pub fn forward_agent(&mut self, forwarding: AgentForwarding) {
+        self.agent = Some(forwarding);
     }
 
     /// Some channel has data waiting inside libssh2 that the next round
     /// would pick up -- don't sleep.
     pub fn buffered(&self) -> bool {
-        self.tunnels.iter().any(|t| !t.closing && t.to_local.len() < MAX_BUFFER && t.channel.read_window().available > 0)
+        self.tunnels.iter().any(|t| !t.closing && t.to_local.len() < MAX_BUFFER && t.channel.has_data())
             || self.socks_remote.iter().any(|n| !n.refused && n.conn.read_window().available > 0)
     }
 
@@ -509,8 +576,11 @@ fn flush(conn: &mut impl Write, out: &mut Vec<u8>) -> io::Result<()> {
 
 impl Tunnel {
     fn new(channel: Channel, stream: Stream) -> Self {
+        Self::over(Box::new(merge_stderr(channel)), stream)
+    }
+
+    fn over(channel: Box<dyn Remote>, stream: Stream) -> Self {
         let _ = stream.set_nonblocking();
-        let channel = merge_stderr(channel);
         Self {
             channel,
             stream: Some(stream),
@@ -524,9 +594,9 @@ impl Tunnel {
     }
 
     /// A channel with nothing to connect it to: close it right away.
-    fn closing(channel: Channel) -> Self {
+    fn closing(channel: impl Remote + 'static) -> Self {
         Self {
-            channel,
+            channel: Box::new(channel),
             stream: None,
             to_local: Vec::new(),
             to_remote: Vec::new(),

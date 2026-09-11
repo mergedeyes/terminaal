@@ -12,6 +12,7 @@
 //! default. Everything else a host can be configured with lives in
 //! [`options`].
 
+mod agent_forward;
 pub mod connection;
 mod forward;
 mod socks;
@@ -587,6 +588,7 @@ fn resolve_config_host(blocks: &[Block], alias: &str) -> Host {
                 "stricthostkeychecking" if strict.is_none() => strict = HostKeyCheck::parse(&value),
                 "userknownhostsfile" if known_hosts.is_none() => known_hosts = words(raw).into_iter().next(),
                 "preferredauthentications" => set(&mut options.preferred_authentications),
+                "forwardagent" => set(&mut options.forward_agent),
                 "remotecommand" => set(&mut options.remote_command),
                 // Per variable, the first value wins.
                 "setenv" => {
@@ -622,6 +624,8 @@ fn resolve_config_host(blocks: &[Block], alias: &str) -> Host {
     // connection is resolved ([`Catalog::target`]), as for saved hosts.
     options.proxy_command = proxy_command;
     options.compression = compression.unwrap_or(false);
+    // A first `no` has won as well; unset is the same.
+    options.forward_agent = options.forward_agent.take().filter(|value| !value.eq_ignore_ascii_case("no"));
     options.address_family = family.unwrap_or_default();
     options.strict_host_key_checking = strict.unwrap_or_default();
     options.user_known_hosts_file = known_hosts.map(|file| expand(&file));
@@ -964,11 +968,11 @@ Host *
     #[test]
     fn reads_connection_options_from_ssh_config() {
         let hosts = parse(
-            "Host a\n  ProxyCommand nc %h %p\n  ProxyJump ignored\n  Compression yes\n  ServerAliveInterval 15\n  \
+            "Host a\n  ProxyCommand nc %h %p\n  ProxyJump ignored\n  Compression yes\n  ForwardAgent yes\n  ServerAliveInterval 15\n  \
              StrictHostKeyChecking no\n  UserKnownHostsFile ~/.ssh/kh_%n /dev/null\n  SetEnv FOO=1 \"BAR=a b\"\n  \
              SetEnv FOO=2\n  SendEnv LANG LC_*\n  LocalForward 8080 localhost:80\n  LocalForward=\"8443 localhost:443\"\n  \
              RemoteForward 9000 localhost:9000\n  DynamicForward 1080\n  Ciphers ^aes256-ctr\n  AddressFamily inet\n  RemoteCommand tmux attach -t %n\n\
-             Host b\n  ProxyJump a\n  ProxyCommand ignored\n  IdentityFile \"~/.ssh/my key\"\n",
+             Host b\n  ProxyJump a\n  ProxyCommand ignored\n  IdentityFile \"~/.ssh/my key\"\n  ForwardAgent no\n  ForwardAgent yes\n",
         );
         let a = &hosts[0];
         assert!(a.proxy_jump.is_none());
@@ -984,22 +988,27 @@ Host *
         assert_eq!(o.remote_forward, ["9000 localhost:9000"]);
         assert_eq!(o.dynamic_forward, ["1080"]);
         assert_eq!(o.ciphers.as_deref(), Some("^aes256-ctr"));
+        assert_eq!(o.forward_agent.as_deref(), Some("yes"));
 
         let b = &hosts[1];
         assert_eq!(b.proxy_jump.as_deref(), Some("a"));
         assert!(b.options.proxy_command.is_none());
         assert_eq!(b.identities, ["~/.ssh/my key"]);
+        // The first value wins, a `no` as well.
+        assert!(b.options.forward_agent.is_none());
 
         // Tokens in ProxyCommand/RemoteCommand are expanded per connection;
         // a jump host keeps its ProxyCommand but loses what only the
-        // target does (forwards, command, environment).
+        // target does (forwards, agent, command, environment).
         let catalog = Catalog { config: hosts.clone(), ..Catalog::default() };
         let target = catalog.target(a).unwrap();
         assert_eq!(target.settings.proxy_command.as_deref(), Some("nc a 22"));
         assert_eq!(target.settings.remote_command.as_deref(), Some("tmux attach -t a"));
+        assert_eq!(target.settings.forward_agent, options::ForwardAgent::Login);
         let via = catalog.target(b).unwrap();
         let hop = &via.jumps[0].settings;
         assert!(hop.proxy_command.is_some() && hop.forwards.is_empty() && hop.remote_command.is_none());
+        assert_eq!(hop.forward_agent, options::ForwardAgent::Off);
 
         let mut both = Host::new("both", "both.example");
         both.proxy_jump = Some("a".into());

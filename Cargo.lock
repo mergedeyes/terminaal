@@ -3669,6 +3669,7 @@ dependencies = [
  "glyphon",
  "image",
  "libc",
+ "libssh2-sys",
  "log",
  "png",
  "pollster",

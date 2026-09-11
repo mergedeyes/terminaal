@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, TextEdit, Ui};
 
 use crate::i18n::t;
-use crate::ssh::options::{AddressFamily, Forward, ForwardKind, HostKeyCheck, Options, Target};
+use crate::ssh::options::{AddressFamily, Forward, ForwardAgent, ForwardKind, HostKeyCheck, Options, Target};
 use crate::ssh::{self, Catalog, Host, Login, keys};
 use crate::ui::sidebar::SidebarAction;
 use crate::ui::theme;
@@ -209,6 +209,10 @@ struct Advanced {
     identities: String,
     identities_only: bool,
     identity_agent: String,
+    forward_agent: bool,
+    /// `ForwardAgent`'s own socket (not `yes`), kept while the box stays
+    /// ticked.
+    forward_agent_socket: Option<String>,
     preferred_auth: String,
     host_key_check: HostKeyCheck,
     known_hosts: String,
@@ -228,6 +232,7 @@ impl Advanced {
         let options = &host.options;
         let number = |value: Option<u32>| value.map(|n| n.to_string()).unwrap_or_default();
         let text = |value: &Option<String>| value.clone().unwrap_or_default();
+        let forward_agent = ForwardAgent::parse(options.forward_agent.as_deref());
         Self {
             connect_timeout: number(options.connect_timeout),
             alive_interval: number(options.server_alive_interval),
@@ -238,6 +243,11 @@ impl Advanced {
             identities: host.identities.join("\n"),
             identities_only: host.identities_only,
             identity_agent: text(&host.identity_agent),
+            forward_agent: forward_agent != ForwardAgent::Off,
+            forward_agent_socket: match forward_agent {
+                ForwardAgent::Socket(socket) => Some(socket),
+                _ => None,
+            },
             preferred_auth: text(&options.preferred_authentications),
             host_key_check: options.strict_host_key_checking,
             known_hosts: text(&options.user_known_hosts_file),
@@ -273,6 +283,7 @@ impl Advanced {
         texts.iter().filter(|text| !text.trim().is_empty()).count()
             + usize::from(self.compression)
             + usize::from(self.identities_only)
+            + usize::from(self.forward_agent)
             + usize::from(self.address_family != AddressFamily::Any)
             + usize::from(self.host_key_check != HostKeyCheck::Ask)
     }
@@ -399,6 +410,9 @@ impl HostEditor {
             address_family: advanced.address_family,
             proxy_command: text(&advanced.proxy_command),
             preferred_authentications: text(&advanced.preferred_auth),
+            forward_agent: advanced
+                .forward_agent
+                .then(|| advanced.forward_agent_socket.clone().unwrap_or_else(|| "yes".into())),
             strict_host_key_checking: advanced.host_key_check,
             user_known_hosts_file: text(&advanced.known_hosts),
             remote_command: text(&advanced.remote_command),
@@ -892,6 +906,10 @@ fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor) {
         ui.label(weak(t!("adv-identity-files-note")).size(11.0));
         ui.checkbox(&mut a.identities_only, t!("adv-identities-only")).on_hover_text(t!("adv-identities-only-hint"));
         option_field(ui, &t!("adv-agent-socket"), "IdentityAgent", &mut a.identity_agent, &t!("adv-agent-socket-hint"));
+        ui.checkbox(&mut a.forward_agent, t!("adv-forward-agent")).on_hover_text(t!("adv-forward-agent-hint"));
+        if let Some(socket) = a.forward_agent_socket.as_ref().filter(|_| a.forward_agent) {
+            ui.label(weak(t!("adv-forward-agent-socket", socket = socket)).size(11.0));
+        }
         option_field(
             ui,
             &t!("adv-methods"),
@@ -1021,6 +1039,7 @@ mod tests {
             compression: true,
             address_family: AddressFamily::Inet,
             preferred_authentications: Some("publickey".into()),
+            forward_agent: Some("$OTHER_AGENT".into()),
             strict_host_key_checking: HostKeyCheck::Yes,
             user_known_hosts_file: Some("~/.ssh/kh".into()),
             remote_command: Some("tmux attach".into()),

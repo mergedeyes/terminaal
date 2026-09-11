@@ -59,7 +59,7 @@ in a sidebar, and never have secrets written to disk.
   listening on one
 - Per-host options, grouped in the form with their `ssh_config` keyword:
   timeouts, keepalives, compression, address family, authentication order,
-  `StrictHostKeyChecking`, `RemoteCommand`, `SetEnv`/`SendEnv`, and the
+  agent forwarding (`ForwardAgent`), `StrictHostKeyChecking`, `RemoteCommand`, `SetEnv`/`SendEnv`, and the
   algorithm lists (kex, host key, ciphers, MACs)
 - Host keys are checked against `~/.ssh/known_hosts`, and new entries are appended,
   never rewritten
@@ -214,9 +214,8 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 ## Known limitations
 
 - Linux only for now
-- SSH is based on libssh2, which can't do agent forwarding (`ForwardAgent`)
-  or have the server listen on a Unix socket. `ControlMaster` isn't
-  supported either
+- SSH is based on libssh2, which can't have the server listen on a Unix
+  socket. `ControlMaster` isn't supported either
 - Only Ed25519 keys can be generated. Existing RSA/ECDSA keys work
 - `Match exec` in `~/.ssh/config` is never evaluated, on purpose
 

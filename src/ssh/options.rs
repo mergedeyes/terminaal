@@ -50,6 +50,10 @@ pub struct Options {
     /// `PreferredAuthentications`: comma-separated, in order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_authentications: Option<String>,
+    /// `ForwardAgent`: `yes`, a socket path, or `$VAR` naming the variable
+    /// that holds one; unset or `no`: off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forward_agent: Option<String>,
     /// `StrictHostKeyChecking`.
     #[serde(skip_serializing_if = "HostKeyCheck::is_ask")]
     pub strict_host_key_checking: HostKeyCheck,
@@ -475,6 +479,7 @@ pub struct Settings {
     /// Variables to set in the remote session, in order.
     pub env: Vec<(String, String)>,
     pub forwards: Vec<Forward>,
+    pub forward_agent: ForwardAgent,
     pub algorithms: Vec<(AlgorithmKind, String)>,
 }
 
@@ -493,20 +498,45 @@ impl Default for Settings {
             term: "xterm-256color".into(),
             env: Vec::new(),
             forwards: Vec::new(),
+            forward_agent: ForwardAgent::Off,
             algorithms: Vec::new(),
         }
     }
 }
 
 impl Settings {
-    /// What applies to a host used as a jump host: no forwards, no
-    /// command, no environment -- as with OpenSSH, whose jump
+    /// What applies to a host used as a jump host: no forwards, no agent,
+    /// no command, no environment -- as with OpenSSH, whose jump
     /// connections only tunnel.
     pub fn for_jump(mut self) -> Self {
         self.remote_command = None;
         self.env.clear();
         self.forwards.clear();
+        self.forward_agent = ForwardAgent::Off;
         self
+    }
+}
+
+/// `ForwardAgent`, read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ForwardAgent {
+    #[default]
+    Off,
+    /// `yes`: the agent used to log in (`IdentityAgent`, else
+    /// `SSH_AUTH_SOCK`).
+    Login,
+    /// A socket path, or `$VAR` naming the variable that holds one.
+    Socket(String),
+}
+
+impl ForwardAgent {
+    pub fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim).filter(|v| !v.is_empty()) {
+            None => Self::Off,
+            Some(v) if v.eq_ignore_ascii_case("no") => Self::Off,
+            Some(v) if v.eq_ignore_ascii_case("yes") => Self::Login,
+            Some(socket) => Self::Socket(socket.to_string()),
+        }
     }
 }
 
@@ -581,6 +611,7 @@ impl Options {
             term,
             env,
             forwards,
+            forward_agent: ForwardAgent::parse(self.forward_agent.as_deref()),
             algorithms,
         })
     }
@@ -699,6 +730,7 @@ mod tests {
             remote_forward: vec!["9000 localhost:9000".into()],
             dynamic_forward: vec!["1080".into()],
             ciphers: Some("^aes256-gcm@openssh.com".into()),
+            forward_agent: Some("$MY_AGENT".into()),
             ..Options::default()
         };
         let expand = |value: &str| value.replace("%h", "example.org").replace("%p", "22");
@@ -712,11 +744,17 @@ mod tests {
         let kinds: Vec<ForwardKind> = settings.forwards.iter().map(Forward::kind).collect();
         assert_eq!(kinds, [ForwardKind::Local, ForwardKind::Remote, ForwardKind::Dynamic]);
         assert_eq!(settings.algorithms, [(AlgorithmKind::Cipher, "^aes256-gcm@openssh.com".to_string())]);
+        assert_eq!(settings.forward_agent, ForwardAgent::Socket("$MY_AGENT".into()));
+        assert_eq!(settings.for_jump().forward_agent, ForwardAgent::Off);
 
         let defaults = Options::default().settings(&no_expand).unwrap();
         assert_eq!(defaults.keepalive, Some((DEFAULT_ALIVE_INTERVAL, DEFAULT_ALIVE_COUNT_MAX)));
         assert_eq!(defaults.auth_methods, AuthMethod::DEFAULT);
         assert!(defaults.proxy_command.is_none() && defaults.forwards.is_empty());
+        assert_eq!(defaults.forward_agent, ForwardAgent::Off);
+        for (value, parsed) in [("Yes", ForwardAgent::Login), (" no ", ForwardAgent::Off), ("", ForwardAgent::Off)] {
+            assert_eq!(ForwardAgent::parse(Some(value)), parsed, "{value:?}");
+        }
 
         let bad = |options: Options| options.settings(&no_expand).unwrap_err();
         assert!(bad(Options { set_env: vec!["1X=y".into()], ..Options::default() }).contains("Variablenname"));
