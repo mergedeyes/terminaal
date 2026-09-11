@@ -20,6 +20,9 @@ in a sidebar, and never have secrets written to disk.
 
 > **DISCLAIMER:** This project is coded mostly by Claude Code, I do make all decisions though; every feature was planned by me.
 
+**SCREENSHOTS:**
+<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/8b66f2ea-c9c3-42c5-9f1c-5429d2435855" />
+
 ## Features
 
 ### Terminal
