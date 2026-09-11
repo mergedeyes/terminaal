@@ -5,6 +5,7 @@ mod i18n;
 mod input;
 mod render;
 mod shells;
+mod shortcuts;
 mod ssh;
 mod terminal;
 mod ui;

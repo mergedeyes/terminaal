@@ -7,15 +7,21 @@
 //! file is never fatal -- we log why and start with defaults, since a
 //! typo in the config shouldn't stop the terminal from opening.
 //!
-//! Every option can also be changed in the sidebar (⚙). Such a change is
-//! written back via `toml_edit`, one key at a time, so the rest of the
-//! file -- comments, ordering, formatting -- stays exactly as the user
-//! wrote it.
+//! Every option can also be changed in the settings tab (⚙). Such a
+//! change is written back via `toml_edit`, one key at a time, so the rest
+//! of the file -- comments, ordering, formatting -- stays exactly as the
+//! user wrote it.
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use crate::i18n::{Language, t};
+use crate::shortcuts::{Action, Bindings, KeyCombo};
+
+/// Font sizes the settings and zooming by shortcut allow.
+pub const FONT_SIZES: RangeInclusive<f32> = 6.0..=36.0;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -51,6 +57,9 @@ pub struct Config {
     /// UI language, `de` or `en`. Unset (or `auto`): German for a German
     /// locale, English otherwise. See [`Config::language`].
     pub language: Option<String>,
+    /// Keyboard shortcuts that differ from the defaults, by action name
+    /// (`[shortcuts]`); see `shortcuts`.
+    pub shortcuts: BTreeMap<String, Bindings>,
 }
 
 impl Default for Config {
@@ -72,6 +81,7 @@ impl Default for Config {
             sidebar_width: 300.0,
             splash: true,
             language: None,
+            shortcuts: BTreeMap::new(),
         }
     }
 }
@@ -145,6 +155,19 @@ impl Config {
             None => drop(doc.remove("language")),
         })?;
         self.language = language.map(|language| language.code().to_string());
+        Ok(())
+    }
+
+    /// Bind `action` to `combos` and persist that under `[shortcuts]`. Its
+    /// defaults remove the entry instead.
+    pub fn save_shortcut(&mut self, action: Action, combos: &[KeyCombo]) -> Result<(), String> {
+        let name = action.name();
+        let custom = (combos != action.defaults().as_slice()).then(|| Bindings::of(combos));
+        Self::edit(|doc| write_shortcut(doc, &name, custom.as_ref()))?;
+        match custom {
+            Some(bindings) => self.shortcuts.insert(name.into_owned(), bindings),
+            None => self.shortcuts.remove(name.as_ref()),
+        };
         Ok(())
     }
 
@@ -260,9 +283,59 @@ fn set_value(doc: &mut toml_edit::DocumentMut, key: &str, value: impl Into<toml_
     doc[key] = toml_edit::Item::Value(value);
 }
 
+/// Set `name` under `[shortcuts]` -- or with `None` remove it, and the
+/// table with its last entry. A comment after the old value stays.
+fn write_shortcut(doc: &mut toml_edit::DocumentMut, name: &str, bindings: Option<&Bindings>) {
+    let item = doc.entry("shortcuts").or_insert(toml_edit::table());
+    if item.as_table_like().is_none() {
+        *item = toml_edit::table();
+    }
+    let Some(table) = item.as_table_like_mut() else { return };
+    match bindings {
+        Some(bindings) => {
+            let mut value = match bindings {
+                Bindings::One(text) => toml_edit::Value::from(text.as_str()),
+                Bindings::Many(texts) => toml_edit::Value::Array(texts.iter().map(String::as_str).collect()),
+                Bindings::Other(_) => return,
+            };
+            if let Some(old) = table.get(name).and_then(toml_edit::Item::as_value) {
+                *value.decor_mut() = old.decor().clone();
+            }
+            table.insert(name, toml_edit::Item::Value(value));
+        }
+        None => drop(table.remove(name)),
+    }
+    if table.is_empty() {
+        doc.remove("shortcuts");
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Config, Setting};
+    use super::{Config, Setting, write_shortcut};
+    use crate::shortcuts::Bindings;
+
+    #[test]
+    fn shortcuts_are_written_to_their_table_and_removed_again() {
+        let mut doc: toml_edit::DocumentMut = "font_size = 12\n".parse().unwrap();
+        write_shortcut(&mut doc, "new_tab", Some(&Bindings::One("Ctrl+Alt+N".into())));
+        write_shortcut(&mut doc, "copy", Some(&Bindings::Many(vec!["Ctrl+Insert".into(), "Ctrl+Shift+C".into()])));
+        write_shortcut(&mut doc, "paste", Some(&Bindings::Many(Vec::new())));
+        let text = doc.to_string();
+        assert!(text.starts_with("font_size = 12\n"), "{text}");
+        assert!(text.contains("[shortcuts]\n"), "{text}");
+
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.font_size, 12.0);
+        assert_eq!(config.shortcuts["new_tab"], Bindings::One("Ctrl+Alt+N".into()));
+        assert_eq!(config.shortcuts["copy"], Bindings::Many(vec!["Ctrl+Insert".into(), "Ctrl+Shift+C".into()]));
+        assert_eq!(config.shortcuts["paste"], Bindings::Many(Vec::new()));
+
+        for name in ["new_tab", "copy", "paste"] {
+            write_shortcut(&mut doc, name, None);
+        }
+        assert_eq!(doc.to_string().trim(), "font_size = 12");
+    }
 
     #[test]
     fn settings_are_written_in_place_and_read_back() {

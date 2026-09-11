@@ -25,15 +25,18 @@ pub struct ContextMenu {
     pos: Pos2,
     can_copy: bool,
     can_paste: bool,
+    /// The shortcuts shown beside copy, paste and paste-and-run.
+    shortcuts: [Option<String>; 3],
     /// Where the menu ended up in the last pass, in points.
     rect: Option<Rect>,
 }
 
 impl ContextMenu {
     /// `can_copy`: there's a selection; `can_paste`: the clipboard holds
-    /// text. Both are decided once, when the menu opens.
-    pub fn new(pos: Pos2, can_copy: bool, can_paste: bool) -> Self {
-        Self { pos, can_copy, can_paste, rect: None }
+    /// text. Both are decided once, when the menu opens. `shortcuts`:
+    /// the combinations for copy, paste and paste-and-run, where bound.
+    pub fn new(pos: Pos2, can_copy: bool, can_paste: bool, shortcuts: [Option<String>; 3]) -> Self {
+        Self { pos, can_copy, can_paste, shortcuts, rect: None }
     }
 
     /// `pos` (points) lies on the menu as last shown.
@@ -43,10 +46,11 @@ impl ContextMenu {
 
     /// Show the menu; returns the entry clicked in this pass, if any.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<MenuAction> {
+        let [copy, paste, paste_and_run] = self.shortcuts.clone();
         let items = [
-            (MenuAction::Copy, t!("menu-copy"), Some(t!("menu-shortcut-copy")), self.can_copy),
-            (MenuAction::Paste, t!("menu-paste"), Some(t!("menu-shortcut-paste")), self.can_paste),
-            (MenuAction::PasteAndRun, t!("menu-paste-run"), None, self.can_paste),
+            (MenuAction::Copy, t!("menu-copy"), copy, self.can_copy),
+            (MenuAction::Paste, t!("menu-paste"), paste, self.can_paste),
+            (MenuAction::PasteAndRun, t!("menu-paste-run"), paste_and_run, self.can_paste),
         ];
         let mut picked = None;
         let response = Area::new(Id::new("context_menu"))
@@ -101,7 +105,7 @@ mod tests {
     /// of the menu's height from its top.
     fn click(can_copy: bool, can_paste: bool, at: f32) -> Option<MenuAction> {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(100.0, 100.0), can_copy, can_paste);
+        let mut menu = ContextMenu::new(pos2(100.0, 100.0), can_copy, can_paste, Default::default());
         for _ in 0..3 {
             pass(&ctx, &mut menu, Vec::new());
         }
@@ -135,7 +139,7 @@ mod tests {
     #[test]
     fn contains_follows_the_shown_menu() {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(100.0, 100.0), true, true);
+        let mut menu = ContextMenu::new(pos2(100.0, 100.0), true, true, Default::default());
         assert!(!menu.contains(pos2(110.0, 110.0)), "nothing shown yet");
         pass(&ctx, &mut menu, Vec::new());
         assert!(menu.contains(pos2(110.0, 110.0)));
@@ -145,7 +149,7 @@ mod tests {
     #[test]
     fn stays_on_screen_near_the_corner() {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(790.0, 590.0), true, true);
+        let mut menu = ContextMenu::new(pos2(790.0, 590.0), true, true, Default::default());
         for _ in 0..3 {
             pass(&ctx, &mut menu, Vec::new());
         }

@@ -35,6 +35,7 @@ in a sidebar, and never have secrets written to disk.
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
 - Right-click menu in the terminal: copy, paste, and paste and run
 - A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
+- **Configurable keyboard shortcuts** for every action, several per action if you like
 - Optional start-up animation
 
 ### Shells
@@ -118,9 +119,19 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | New tab with the default shell |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close tab |
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
+| <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> | Go to tab 1 … 9 |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Move the tab left / right |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
+| <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
+| <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
+| <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
+
+Every shortcut can be changed, removed or given more key combinations in the
+settings tab under **Shortcuts** (click **+** and press the keys), or in
+`config.toml` (see below). "Paste and run" has no default. In full-screen
+programs such as `less` or `vim`, the scrolling keys go to the program.
 
 Tabs can also be closed with a middle click; the ☰ button in the tab bar
 toggles the sidebar as well.
@@ -154,7 +165,21 @@ sidebar_width = 300.0
 splash = true                 # start-up animation
 # shell = "/usr/bin/fish"     # default shell for new tabs (default: $SHELL)
 # language = "en"             # "en" or "de" (default: from your locale)
+
+[shortcuts]                   # only what differs from the defaults
+new_tab = "Ctrl+Alt+N"
+copy = ["Ctrl+Shift+C", "Ctrl+Insert"]
+paste_and_run = "Ctrl+Shift+Enter"
+tab_9 = []                    # no shortcut
 ```
+
+Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
+`close_tab`, `next_tab`, `previous_tab`, `tab_1` … `tab_9`, `move_tab_left`,
+`move_tab_right`, `toggle_sidebar`, `open_settings`, `copy`, `paste`,
+`paste_and_run`, `scroll_page_up`, `scroll_page_down`, `scroll_to_top`,
+`scroll_to_bottom`, `font_bigger`, `font_smaller`, `font_reset`). Key
+combinations are modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) plus one key,
+joined by `+`; write `Plus` and `Minus` for those keys.
 
 Every option can also be set in the settings tab (**⚙** in the sidebar, or
 <kbd>Ctrl</kbd>+<kbd>,</kbd>; hover a setting's name to see its key). Font,
@@ -194,7 +219,7 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Local terminal core, tabs and sessions
 - [x] Shell management with per-shell aliases and functions
 - [x] SSH sessions, host manager, keys, per-host options
-- [ ] Configurable keyboard shortcuts for every action
+- [x] Configurable keyboard shortcuts for every action
 - [ ] Appearance: translucency, COSMIC theme sync, font choice, themes
 
 ## Development

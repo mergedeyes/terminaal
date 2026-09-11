@@ -1,17 +1,25 @@
-//! The settings tab (⚙ in the sidebar, Ctrl+,): every option in config.toml.
+//! The settings tab (⚙ in the sidebar, Ctrl+,): every option in
+//! config.toml, on pages by topic -- general, appearance, terminal, shell
+//! and keyboard shortcuts.
 //!
 //! Changes apply right away -- sliders already while being dragged, but
 //! they're only written to the config once let go. Both are `app.rs`'s job
-//! ([`SidebarAction::ChangeSetting`]); this only lays out the widgets.
+//! ([`SidebarAction::ChangeSetting`]); this only lays out the widgets. So
+//! is recording a shortcut: the page marks which action waits for a key
+//! ([`SettingsPanel::recording`]), and `app.rs` catches the next one.
 
 use std::ops::RangeInclusive;
 
 use egui::emath::Numeric;
-use egui::{Align2, CornerRadius, DragValue, Frame, Margin, Response, ScrollArea, TextStyle, Ui, pos2};
+use egui::{
+    Align2, Button, CornerRadius, DragValue, Frame, Margin, Rect, Response, RichText, ScrollArea, Stroke, TextStyle, Ui,
+    pos2, vec2,
+};
 
-use crate::config::{Config, Setting};
+use crate::config::{self, Config, Setting};
 use crate::i18n::{Language, t};
 use crate::shells::InstalledShell;
+use crate::shortcuts::{Action, Group, KeyCombo, Keymap};
 use crate::ui::sidebar::SidebarAction;
 use crate::ui::theme;
 use crate::ui::widgets::{Status, section_title, weak};
@@ -20,13 +28,51 @@ use crate::ui::widgets::{Status, section_title, weak};
 const SLIDER_WIDTH: f32 = 200.0;
 const SECTION_GAP: f32 = 18.0;
 
+/// What the pages show, lent by `app.rs` for one pass.
+pub struct SettingsView<'a> {
+    pub config: &'a Config,
+    pub shells: &'a [InstalledShell],
+    /// The default shell.
+    pub default: &'a InstalledShell,
+    /// The window's current size in logical pixels.
+    pub window_size: [f64; 2],
+    pub keymap: &'a Keymap,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+enum Page {
+    #[default]
+    General,
+    Appearance,
+    Terminal,
+    Shell,
+    Shortcuts,
+}
+
+impl Page {
+    const ALL: [Page; 5] = [Page::General, Page::Appearance, Page::Terminal, Page::Shell, Page::Shortcuts];
+
+    fn label(self) -> String {
+        match self {
+            Page::General => t!("settings-page-general"),
+            Page::Appearance => t!("settings-appearance"),
+            Page::Terminal => t!("settings-page-terminal"),
+            Page::Shell => t!("settings-page-shell"),
+            Page::Shortcuts => t!("settings-page-shortcuts"),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SettingsPanel {
+    page: Page,
     status: Option<Status>,
     /// The sidebar width while its slider is dragged. Only applied once
     /// let go: the tab sits right of the sidebar, so a live change would
     /// move the slider away under the mouse.
     sidebar_width: Option<f32>,
+    /// The action the next key press becomes a shortcut for.
+    recording: Option<Action>,
 }
 
 impl SettingsPanel {
@@ -34,60 +80,71 @@ impl SettingsPanel {
         self.status = Some(Status::from_result(result));
     }
 
+    /// Waiting for a key to bind to this action.
+    pub fn recording(&self) -> Option<Action> {
+        self.recording
+    }
+
+    /// Stop waiting for a key; returns which action it was for.
+    pub fn stop_recording(&mut self) -> Option<Action> {
+        self.recording.take()
+    }
+
     /// The whole tab: fills `ui`'s max rect (below the tab bar, right of
-    /// the sidebar) and scrolls when the settings don't fit.
-    pub fn show_tab(
-        &mut self,
-        ui: &mut Ui,
-        config: &Config,
-        shells: &[InstalledShell],
-        default: &InstalledShell,
-        window_size: [f64; 2],
-        actions: &mut Vec<SidebarAction>,
-    ) {
+    /// the sidebar) -- the page tabs on top, the page below them, which
+    /// scrolls when it doesn't fit.
+    pub fn show_tab(&mut self, ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
         ui.painter().rect_filled(ui.max_rect(), CornerRadius::ZERO, theme::BG);
-        ScrollArea::vertical().id_salt("settings-tab").auto_shrink([false; 2]).show(ui, |ui| {
-            Frame::new().inner_margin(Margin::symmetric(24, 16)).show(ui, |ui| {
-                self.show(ui, config, shells, default, window_size, actions);
-            });
+        Frame::new().inner_margin(Margin { left: 24, right: 24, top: 4, bottom: 0 }).show(ui, |ui| {
+            if let Some(page) = page_tabs(ui, self.page) {
+                self.page = page;
+                self.status = None;
+                self.recording = None;
+            }
+        });
+        ScrollArea::vertical().id_salt(("settings-page", self.page)).auto_shrink([false; 2]).show(ui, |ui| {
+            Frame::new().inner_margin(Margin::symmetric(24, 16)).show(ui, |ui| self.show(ui, view, actions));
         });
     }
 
-    /// `window_size` is the window's current size in logical pixels.
-    pub fn show(
-        &mut self,
-        ui: &mut Ui,
-        config: &Config,
-        shells: &[InstalledShell],
-        default: &InstalledShell,
-        window_size: [f64; 2],
-        actions: &mut Vec<SidebarAction>,
-    ) {
+    /// The current page.
+    fn show(&mut self, ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
         let before = actions.len();
         ui.spacing_mut().slider_width = SLIDER_WIDTH;
-
-        section_title(ui, &t!("settings-language"));
-        let language = config.chosen_language();
-        let mut choice = language;
-        let auto = t!("settings-language-auto", language = Language::from_locale().native_name());
-        ui.radio_value(&mut choice, None, auto).on_hover_text(t!("settings-language-auto-hint"));
-        for option in Language::ALL {
-            ui.radio_value(&mut choice, Some(option), option.native_name());
-        }
-        if choice != language {
-            actions.push(SidebarAction::SetLanguage(choice));
+        match self.page {
+            Page::General => general(ui, view, actions),
+            Page::Appearance => self.appearance(ui, view.config, actions),
+            Page::Terminal => terminal(ui, view.config, actions),
+            Page::Shell => shell(ui, view, actions),
+            Page::Shortcuts => self.shortcuts(ui, view.keymap, actions),
         }
 
         ui.add_space(SECTION_GAP);
-        section_title(ui, &t!("settings-appearance"));
+        let note = if self.page == Page::Shortcuts { t!("shortcuts-note") } else { t!("settings-note") };
+        ui.label(weak(note).size(11.0));
+
+        if actions.len() > before {
+            self.status = None;
+        }
+        if let Some(status) = &self.status {
+            ui.add_space(8.0);
+            status.show(ui);
+        }
+    }
+
+    fn appearance(&mut self, ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
+        section_title(ui, &t!("settings-font"));
         let mut size = config.font_size;
-        let moved = slider(ui, &t!("settings-font-size"), "font_size", &mut size, 6.0..=36.0, 1.0, pixels);
+        let moved = slider(ui, &t!("settings-font-size"), "font_size", &mut size, config::FONT_SIZES, 1.0, pixels);
         change(actions, moved, Setting::FontSize(size));
         let mut factor = config.line_height_factor;
         let moved = slider(ui, &t!("settings-line-height"), "line_height_factor", &mut factor, 1.0..=2.0, 0.05, |f| {
             t!("settings-line-height-value", factor = format!("{f:.2}"))
         });
         change(actions, moved, Setting::LineHeight(factor));
+
+        ui.add_space(SECTION_GAP);
+        section_title(ui, &t!("settings-layout"));
         let mut padding = config.padding;
         let moved = slider(ui, &t!("settings-padding"), "padding", &mut padding, 0.0..=40.0, 1.0, pixels);
         change(actions, moved, Setting::Padding(padding));
@@ -119,78 +176,188 @@ impl SettingsPanel {
             })
             .inner;
         change(actions, moved, Setting::CursorBlinkInterval(interval));
+    }
 
-        ui.add_space(SECTION_GAP);
-        section_title(ui, &t!("settings-scroll"));
-        let mut lines = config.scroll_lines();
-        let moved = slider(ui, &t!("settings-scroll-speed"), "scroll_lines", &mut lines, 1.0..=20.0, 1.0, |lines| {
-            t!("settings-scroll-lines", lines = f64::from(lines))
-        });
-        change(actions, moved, Setting::ScrollLines(lines));
-        ui.label(weak(t!("settings-scroll-speed-hint")).size(11.0));
-        ui.add_space(4.0);
-        let mut scrollback = config.scrollback_lines;
-        let moved = slider(ui, &t!("settings-scrollback"), "scrollback_lines", &mut scrollback, 0..=100_000, 1000.0, |lines| {
-            t!("settings-scrollback-lines", lines = lines)
-        });
-        change(actions, moved, Setting::ScrollbackLines(scrollback));
-        ui.label(weak(t!("settings-scrollback-note")).size(11.0));
-
-        ui.add_space(SECTION_GAP);
-        section_title(ui, &t!("settings-shell"));
-        let hint = format!("{}\n{}", t!("shells-make-default-hint"), key_hint("shell"));
-        egui::ComboBox::from_id_salt("settings-shell")
-            .width(SLIDER_WIDTH)
-            .selected_text(default.name.as_str())
-            .show_ui(ui, |ui| {
-                for shell in shells {
-                    let row = ui.selectable_label(shell.is(default), &shell.name);
-                    if row.on_hover_text(shell.path.display().to_string()).clicked() && !shell.is(default) {
-                        actions.push(SidebarAction::SetDefaultShell(shell.clone()));
+    fn shortcuts(&mut self, ui: &mut Ui, keymap: &Keymap, actions: &mut Vec<SidebarAction>) {
+        for (i, group) in Group::ALL.into_iter().enumerate() {
+            if i > 0 {
+                ui.add_space(SECTION_GAP);
+            }
+            section_title(ui, &group.label());
+            egui::Grid::new(("shortcuts", i)).num_columns(2).min_col_width(240.0).spacing(vec2(12.0, 6.0)).show(
+                ui,
+                |ui| {
+                    for action in Action::ALL.into_iter().filter(|action| action.group() == group) {
+                        let key = t!("shortcuts-key-hint", key = action.name().into_owned());
+                        ui.label(action.label()).on_hover_text(key);
+                        ui.horizontal(|ui| self.shortcut_combos(ui, keymap, action, actions));
+                        ui.end_row();
                     }
-                }
-            })
-            .response
-            .on_hover_text(hint);
-
-        ui.add_space(SECTION_GAP);
-        section_title(ui, &t!("settings-startup"));
-        let moved = checkbox(ui, t!("settings-startup-sidebar"), "sidebar", config.sidebar);
-        change(actions, moved.map(|_| true), Setting::Sidebar(moved.unwrap_or(config.sidebar)));
-        let moved = checkbox(ui, t!("settings-startup-splash"), "splash", config.splash);
-        change(actions, moved.map(|_| true), Setting::Splash(moved.unwrap_or(config.splash)));
-        ui.add_space(4.0);
-        let keys = format!("{}\n{}", key_hint("default_width"), key_hint("default_height"));
-        ui.label(t!("settings-window-size")).on_hover_text(keys);
-        let (mut width, mut height) = (config.default_width, config.default_height);
-        let mut moved = None;
-        ui.horizontal(|ui| {
-            let drag = |value| DragValue::new(value).range(300.0..=8000.0).speed(5.0).max_decimals(0);
-            let w = ui.add(drag(&mut width));
-            ui.label("×");
-            let h = ui.add(drag(&mut height));
-            moved = [changed(&w), changed(&h)].into_iter().flatten().reduce(|a, b| a || b);
-        });
-        let [current_w, current_h] = window_size.map(f64::round);
-        let current = t!("settings-window-size-current-hint", width = current_w, height = current_h);
-        if ui.button(t!("settings-window-size-current")).on_hover_text(current).clicked() {
-            (width, height) = (current_w, current_h);
-            moved = Some(true);
-        }
-        change(actions, moved, Setting::WindowSize { width, height });
-        ui.label(weak(t!("settings-startup-note")).size(11.0));
-
-        ui.add_space(SECTION_GAP);
-        ui.label(weak(t!("settings-note")).size(11.0));
-
-        if actions.len() > before {
-            self.status = None;
-        }
-        if let Some(status) = &self.status {
-            ui.add_space(8.0);
-            status.show(ui);
+                },
+            );
+            if group == Group::Font {
+                ui.label(weak(t!("shortcuts-font-note")).size(11.0));
+            }
         }
     }
+
+    /// One action's combinations, each with a button to remove it, then
+    /// one to record another and one back to the defaults.
+    fn shortcut_combos(&mut self, ui: &mut Ui, keymap: &Keymap, action: Action, actions: &mut Vec<SidebarAction>) {
+        let combos = keymap.combos(action);
+        let recording = self.recording == Some(action);
+        if combos.is_empty() && !recording {
+            ui.label(weak(t!("shortcuts-none")));
+        }
+        for (i, combo) in combos.iter().enumerate() {
+            // Also bound to an action listed earlier, which gets it.
+            let taken_by = keymap.action(combo).filter(|owner| *owner != action);
+            let mut text = RichText::new(combo.label()).monospace();
+            if taken_by.is_some() {
+                text = text.strikethrough().color(theme::TEXT_WEAK);
+            }
+            let chip = Frame::new()
+                .fill(theme::HOVER_BG)
+                .corner_radius(4)
+                .inner_margin(Margin::symmetric(6, 2))
+                .show(ui, |ui| ui.label(text))
+                .inner;
+            if let Some(owner) = taken_by {
+                let _ = chip.on_hover_text(t!("shortcuts-shadowed", action = owner.label()));
+            }
+            let remove = t!("shortcuts-remove-hint", combo = combo.label());
+            if ui.small_button("×").on_hover_text(remove).clicked() {
+                let mut rest = combos.to_vec();
+                rest.remove(i);
+                actions.push(SidebarAction::SetShortcut(action, rest));
+            }
+        }
+
+        let (text, hint) = if recording {
+            (RichText::new(t!("shortcuts-press")).color(theme::ACCENT), t!("shortcuts-press-hint"))
+        } else {
+            (RichText::new("+"), t!("shortcuts-add-hint"))
+        };
+        if ui.add(Button::new(text).small()).on_hover_text(hint).clicked() {
+            self.recording = if recording { None } else { Some(action) };
+            self.status = None;
+        }
+
+        let defaults = action.defaults();
+        if combos != defaults.as_slice() {
+            let shown = if defaults.is_empty() {
+                t!("shortcuts-none")
+            } else {
+                defaults.iter().map(KeyCombo::label).collect::<Vec<_>>().join(", ")
+            };
+            if ui.small_button("↺").on_hover_text(t!("shortcuts-reset-hint", combos = shown)).clicked() {
+                actions.push(SidebarAction::SetShortcut(action, defaults));
+            }
+        }
+    }
+}
+
+/// The page tabs along the top, underlined like the sidebar's sections.
+/// Returns the page clicked.
+fn page_tabs(ui: &mut Ui, current: Page) -> Option<Page> {
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        for page in Page::ALL {
+            let active = page == current;
+            let color = if active { theme::TEXT } else { theme::TEXT_WEAK };
+            let button = Button::new(RichText::new(page.label()).color(color)).frame(false).min_size(vec2(0.0, 34.0));
+            let response = ui.add(button).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if active {
+                let rect = response.rect;
+                let underline = Rect::from_min_max(pos2(rect.left() + 6.0, rect.bottom() - 2.0), pos2(rect.right() - 6.0, rect.bottom()));
+                ui.painter().rect_filled(underline, CornerRadius::ZERO, theme::ACCENT);
+            }
+            if response.clicked() && !active {
+                picked = Some(page);
+            }
+        }
+    });
+    let bottom = ui.min_rect().bottom();
+    ui.painter().hline(ui.max_rect().x_range(), bottom, Stroke::new(1.0, theme::BORDER));
+    picked
+}
+
+fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
+    let config = view.config;
+    section_title(ui, &t!("settings-language"));
+    let language = config.chosen_language();
+    let mut choice = language;
+    let auto = t!("settings-language-auto", language = Language::from_locale().native_name());
+    ui.radio_value(&mut choice, None, auto).on_hover_text(t!("settings-language-auto-hint"));
+    for option in Language::ALL {
+        ui.radio_value(&mut choice, Some(option), option.native_name());
+    }
+    if choice != language {
+        actions.push(SidebarAction::SetLanguage(choice));
+    }
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-startup"));
+    let moved = checkbox(ui, t!("settings-startup-sidebar"), "sidebar", config.sidebar);
+    change(actions, moved.map(|_| true), Setting::Sidebar(moved.unwrap_or(config.sidebar)));
+    let moved = checkbox(ui, t!("settings-startup-splash"), "splash", config.splash);
+    change(actions, moved.map(|_| true), Setting::Splash(moved.unwrap_or(config.splash)));
+    ui.add_space(4.0);
+    let keys = format!("{}\n{}", key_hint("default_width"), key_hint("default_height"));
+    ui.label(t!("settings-window-size")).on_hover_text(keys);
+    let (mut width, mut height) = (config.default_width, config.default_height);
+    let mut moved = None;
+    ui.horizontal(|ui| {
+        let drag = |value| DragValue::new(value).range(300.0..=8000.0).speed(5.0).max_decimals(0);
+        let w = ui.add(drag(&mut width));
+        ui.label("×");
+        let h = ui.add(drag(&mut height));
+        moved = [changed(&w), changed(&h)].into_iter().flatten().reduce(|a, b| a || b);
+    });
+    let [current_w, current_h] = view.window_size.map(f64::round);
+    let current = t!("settings-window-size-current-hint", width = current_w, height = current_h);
+    if ui.button(t!("settings-window-size-current")).on_hover_text(current).clicked() {
+        (width, height) = (current_w, current_h);
+        moved = Some(true);
+    }
+    change(actions, moved, Setting::WindowSize { width, height });
+    ui.label(weak(t!("settings-startup-note")).size(11.0));
+}
+
+fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
+    section_title(ui, &t!("settings-scroll"));
+    let mut lines = config.scroll_lines();
+    let moved = slider(ui, &t!("settings-scroll-speed"), "scroll_lines", &mut lines, 1.0..=20.0, 1.0, |lines| {
+        t!("settings-scroll-lines", lines = f64::from(lines))
+    });
+    change(actions, moved, Setting::ScrollLines(lines));
+    ui.label(weak(t!("settings-scroll-speed-hint")).size(11.0));
+    ui.add_space(4.0);
+    let mut scrollback = config.scrollback_lines;
+    let moved = slider(ui, &t!("settings-scrollback"), "scrollback_lines", &mut scrollback, 0..=100_000, 1000.0, |lines| {
+        t!("settings-scrollback-lines", lines = lines)
+    });
+    change(actions, moved, Setting::ScrollbackLines(scrollback));
+    ui.label(weak(t!("settings-scrollback-note")).size(11.0));
+}
+
+fn shell(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
+    section_title(ui, &t!("settings-shell"));
+    let hint = format!("{}\n{}", t!("shells-make-default-hint"), key_hint("shell"));
+    egui::ComboBox::from_id_salt("settings-shell")
+        .width(SLIDER_WIDTH)
+        .selected_text(view.default.name.as_str())
+        .show_ui(ui, |ui| {
+            for shell in view.shells {
+                let row = ui.selectable_label(shell.is(view.default), &shell.name);
+                if row.on_hover_text(shell.path.display().to_string()).clicked() && !shell.is(view.default) {
+                    actions.push(SidebarAction::SetDefaultShell(shell.clone()));
+                }
+            }
+        })
+        .response
+        .on_hover_text(hint);
+    ui.label(weak(t!("settings-shell-aliases-hint")).size(11.0));
 }
 
 fn change(actions: &mut Vec<SidebarAction>, moved: Option<bool>, setting: Setting) {
@@ -253,21 +420,32 @@ fn checkbox(ui: &mut Ui, text: String, key: &str, value: bool) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
-    fn renders_headless_without_changing_anything() {
+    fn every_page_renders_headless_without_changing_anything() {
         let ctx = egui::Context::default();
         let shell = InstalledShell::new("/bin/bash");
         // Out of range on purpose: showing must not clamp it into a change.
         let config = Config { font_size: 80.0, cursor_blink: false, ..Config::default() };
+        let keymap = Keymap::new(&BTreeMap::new());
+        let view = SettingsView {
+            config: &config,
+            shells: std::slice::from_ref(&shell),
+            default: &shell,
+            window_size: [1000.0, 650.0],
+            keymap: &keymap,
+        };
         let mut panel = SettingsPanel::default();
         let mut actions = Vec::new();
-        for _ in 0..2 {
-            ctx.run_ui(egui::RawInput::default(), |ui| {
-                panel.show(ui, &config, std::slice::from_ref(&shell), &shell, [1000.0, 650.0], &mut actions)
-            })
-            .drop_without_applying_deltas();
+        for page in Page::ALL {
+            panel.page = page;
+            for _ in 0..2 {
+                ctx.run_ui(egui::RawInput::default(), |ui| panel.show_tab(ui, &view, &mut actions))
+                    .drop_without_applying_deltas();
+            }
         }
         assert!(actions.is_empty());
     }
@@ -291,7 +469,15 @@ mod tests {
         theme::apply(&ctx);
         let shell = InstalledShell::new("/bin/bash");
         let config = Config::default();
-        let mut panel = SettingsPanel::default();
+        let keymap = Keymap::new(&BTreeMap::new());
+        let view = SettingsView {
+            config: &config,
+            shells: std::slice::from_ref(&shell),
+            default: &shell,
+            window_size: [1000.0, 650.0],
+            keymap: &keymap,
+        };
+        let mut panel = SettingsPanel { page: Page::Appearance, ..SettingsPanel::default() };
         let mut actions = Vec::new();
         let mut pass = |time: f64, events: Vec<egui::Event>| {
             let input = egui::RawInput {
@@ -303,9 +489,7 @@ mod tests {
             // Placed like `app.rs` does: right of the sidebar, below the tab bar.
             let page = egui::Rect::from_min_max(pos2(300.0, 36.0), pos2(1000.0, 900.0));
             let mut output = ctx.run_ui(input, |ui| {
-                ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
-                    panel.show_tab(ui, &config, std::slice::from_ref(&shell), &shell, [1000.0, 650.0], &mut actions)
-                });
+                ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| panel.show_tab(ui, &view, &mut actions));
             });
             let shapes = std::mem::take(&mut output.shapes);
             let delay = output.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.repaint_delay);

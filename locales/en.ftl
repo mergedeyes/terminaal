@@ -46,8 +46,21 @@ app-language-changed = Language changed.
 menu-copy = Copy
 menu-paste = Paste
 menu-paste-run = Paste and run
-menu-shortcut-copy = Ctrl+Shift+C
-menu-shortcut-paste = Ctrl+Shift+V
+
+## Key names in shortcuts
+
+key-ctrl = Ctrl
+key-shift = Shift
+key-alt = Alt
+key-super = Super
+key-space = Space
+key-backspace = Backspace
+key-delete = Del
+key-insert = Ins
+key-home = Home
+key-end = End
+key-page-up = PgUp
+key-page-down = PgDn
 
 ## Sidebar
 
@@ -94,6 +107,52 @@ settings-window-size-current-hint = Takes the window's current size ({ $width } 
 settings-startup-note = Takes effect the next time Terminaal starts.
 settings-key-hint = config.toml: { $key }
 settings-note = Changes apply right away and are saved to ~/.config/terminaal/config.toml, keeping its comments and formatting. Hover a setting's name to see its key.
+settings-page-general = General
+settings-page-terminal = Terminal
+settings-page-shell = Shell
+settings-page-shortcuts = Shortcuts
+settings-font = Font
+settings-layout = Window
+settings-shell-aliases-hint = Aliases and functions per shell: sidebar, "Shells" section.
+
+## Settings: keyboard shortcuts
+
+shortcuts-group-tabs = Tabs
+shortcuts-group-window = Window
+shortcuts-group-clipboard = Clipboard
+shortcuts-group-scroll = Scrolling
+shortcuts-group-font = Font size
+shortcut-new-tab = New tab with the default shell
+shortcut-close-tab = Close tab
+shortcut-next-tab = Next tab
+shortcut-previous-tab = Previous tab
+shortcut-select-tab = Tab { $number }
+shortcut-move-tab-left = Move tab left
+shortcut-move-tab-right = Move tab right
+shortcut-toggle-sidebar = Show or hide the sidebar
+shortcut-open-settings = Open settings
+shortcut-copy = Copy
+shortcut-paste = Paste
+shortcut-paste-and-run = Paste and run
+shortcut-scroll-page-up = One page up
+shortcut-scroll-page-down = One page down
+shortcut-scroll-to-top = To the top of the scrollback
+shortcut-scroll-to-bottom = To the bottom
+shortcut-font-bigger = Bigger
+shortcut-font-smaller = Smaller
+shortcut-font-reset = Reset
+shortcuts-none = not set
+shortcuts-add-hint = Record another key combination
+shortcuts-press = Press keys …
+shortcuts-press-hint = Escape or a click here cancels
+shortcuts-remove-hint = Remove { $combo }
+shortcuts-reset-hint = Back to the default: { $combos }
+shortcuts-shadowed = Also bound to "{ $action }", which gets it.
+shortcuts-taken = { $combo } is already bound to "{ $action }"; remove it there first.
+shortcuts-swallows-typing = { $combo } would catch normal typing. Shortcuts need Ctrl, Alt or Super, or are an F key or Shift with PgUp/PgDn, Home, End, Ins, Del or an arrow key.
+shortcuts-key-hint = config.toml: [shortcuts] { $key }
+shortcuts-font-note = Lasts until Terminaal quits; the saved size is under Appearance.
+shortcuts-note = Changes apply right away and are saved under [shortcuts] in ~/.config/terminaal/config.toml. Keyboard scrolling doesn't apply in full-screen programs such as less or vim; they get the key.
 
 ## Sidebar: shells, aliases and functions
 

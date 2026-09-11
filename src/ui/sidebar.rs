@@ -20,6 +20,7 @@ use crate::config::{Config, Setting};
 use crate::i18n::{Language, t};
 use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
+use crate::shortcuts::{Action, KeyCombo};
 use crate::ssh::SshTarget;
 use crate::ui::keys_panel::KeysPanel;
 use crate::ui::ssh_panel::{SshData, SshPanel};
@@ -42,6 +43,8 @@ pub enum SidebarAction {
     ChangeSetting { setting: Setting, save: bool },
     /// Switch to the settings tab, opening it if needed.
     OpenSettings,
+    /// Bind a shortcut action to these combinations (persisted).
+    SetShortcut(Action, Vec<KeyCombo>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

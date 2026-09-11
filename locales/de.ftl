@@ -46,8 +46,21 @@ app-language-changed = Sprache umgestellt.
 menu-copy = Kopieren
 menu-paste = Einfügen
 menu-paste-run = Einfügen und ausführen
-menu-shortcut-copy = Strg+Umschalt+C
-menu-shortcut-paste = Strg+Umschalt+V
+
+## Tastennamen in Tastenkürzeln
+
+key-ctrl = Strg
+key-shift = Umschalt
+key-alt = Alt
+key-super = Super
+key-space = Leertaste
+key-backspace = Rücktaste
+key-delete = Entf
+key-insert = Einfg
+key-home = Pos1
+key-end = Ende
+key-page-up = Bild↑
+key-page-down = Bild↓
 
 ## Seitenleiste
 
@@ -94,6 +107,52 @@ settings-window-size-current-hint = Übernimmt die jetzige Fenstergröße ({ $wi
 settings-startup-note = Wirkt ab dem nächsten Start.
 settings-key-hint = config.toml: { $key }
 settings-note = Änderungen gelten sofort und werden in ~/.config/terminaal/config.toml gespeichert; Kommentare und Formatierung darin bleiben erhalten. Welcher Schlüssel es ist, zeigt der Tooltip am Namen der Einstellung.
+settings-page-general = Allgemein
+settings-page-terminal = Terminal
+settings-page-shell = Shell
+settings-page-shortcuts = Tastenkürzel
+settings-font = Schrift
+settings-layout = Fenster
+settings-shell-aliases-hint = Aliase und Funktionen je Shell: Seitenleiste, Bereich „Shells“.
+
+## Einstellungen: Tastenkürzel
+
+shortcuts-group-tabs = Tabs
+shortcuts-group-window = Fenster
+shortcuts-group-clipboard = Zwischenablage
+shortcuts-group-scroll = Scrollen
+shortcuts-group-font = Schriftgröße
+shortcut-new-tab = Neuer Tab mit der Standard-Shell
+shortcut-close-tab = Tab schließen
+shortcut-next-tab = Nächster Tab
+shortcut-previous-tab = Vorheriger Tab
+shortcut-select-tab = Tab { $number }
+shortcut-move-tab-left = Tab nach links verschieben
+shortcut-move-tab-right = Tab nach rechts verschieben
+shortcut-toggle-sidebar = Seitenleiste ein-/ausblenden
+shortcut-open-settings = Einstellungen öffnen
+shortcut-copy = Kopieren
+shortcut-paste = Einfügen
+shortcut-paste-and-run = Einfügen und ausführen
+shortcut-scroll-page-up = Eine Seite zurück
+shortcut-scroll-page-down = Eine Seite vor
+shortcut-scroll-to-top = Zum Anfang des Scrollbacks
+shortcut-scroll-to-bottom = Zum Ende
+shortcut-font-bigger = Größer
+shortcut-font-smaller = Kleiner
+shortcut-font-reset = Zurücksetzen
+shortcuts-none = nicht belegt
+shortcuts-add-hint = Weitere Tastenkombination aufnehmen
+shortcuts-press = Tasten drücken …
+shortcuts-press-hint = Esc oder ein Klick hier bricht ab
+shortcuts-remove-hint = { $combo } entfernen
+shortcuts-reset-hint = Zurück auf den Standard: { $combos }
+shortcuts-shadowed = Auch „{ $action }“ zugeordnet – dort gilt sie.
+shortcuts-taken = { $combo } ist schon „{ $action }“ zugeordnet und müsste dort erst entfernt werden.
+shortcuts-swallows-typing = { $combo } würde normale Eingaben abfangen. Möglich sind Kombinationen mit Strg, Alt oder Super, F-Tasten sowie Umschalt mit Bild↑/↓, Pos1, Ende, Einfg, Entf oder Pfeiltasten.
+shortcuts-key-hint = config.toml: [shortcuts] { $key }
+shortcuts-font-note = Gilt bis zum Beenden; die gespeicherte Größe steht unter Darstellung.
+shortcuts-note = Änderungen gelten sofort und werden unter [shortcuts] in ~/.config/terminaal/config.toml gespeichert. Scrollen per Tastatur wirkt nicht in Vollbildprogrammen wie less oder vim – dort geht die Taste an das Programm.
 
 ## Seitenleiste: Shells, Aliase und Funktionen
 

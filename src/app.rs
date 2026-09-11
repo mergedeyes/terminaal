@@ -13,6 +13,7 @@ use alacritty_terminal::event::{Event as TermEvent, WindowSize};
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::NamedColor;
 use arboard::Clipboard;
 use winit::application::ApplicationHandler;
@@ -46,7 +47,7 @@ fn window_icon() -> Option<Icon> {
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
 }
 
-use crate::config::{Config, Setting};
+use crate::config::{self, Config, Setting};
 use crate::i18n::{self, t};
 use crate::gpu::GpuState;
 use crate::input;
@@ -56,10 +57,11 @@ use crate::render::quad::{QuadInstance, QuadRenderer};
 use crate::render::tab_bar::{self, TabBar, TabBarHit, TabBarLayout};
 use crate::render::text::{CellMetrics, TextRendererState};
 use crate::shells::{self, launch, InstalledShell};
+use crate::shortcuts::{Action, KeyCombo, Keymap};
 use crate::ssh::SshTarget;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
-use crate::ui::settings_panel::SettingsPanel;
+use crate::ui::settings_panel::{SettingsPanel, SettingsView};
 use crate::ui::sidebar::{Sidebar, SidebarAction};
 use crate::ui::splash::{self, Splash, SplashFrames};
 use crate::ui::UiLayer;
@@ -184,6 +186,11 @@ struct AppState {
     splash_redraw_at: Option<Instant>,
     /// Right-click menu over the grid, while it's open.
     context_menu: Option<ContextMenu>,
+    /// Which key combination does what (`[shortcuts]` in the config).
+    keymap: Keymap,
+    /// Font size change by shortcut, in points on top of the configured
+    /// size; not saved (see `zoom`).
+    font_zoom: f32,
     /// Scrolled distance not yet worth a whole line; see `wheel_lines`.
     scroll_remainder: f32,
 
@@ -270,6 +277,8 @@ impl AppState {
             splash,
             splash_redraw_at: None,
             context_menu: None,
+            keymap: Keymap::new(&config.shortcuts),
+            font_zoom: 0.0,
             scroll_remainder: 0.0,
             config,
             tabs: Vec::new(),
@@ -357,8 +366,10 @@ impl AppState {
 
     /// Another tab is on screen now. The keyboard comes back from egui: a
     /// widget focused in the settings tab mustn't keep it once a shell
-    /// is showing -- and a new shell tab is there to type into.
+    /// is showing -- and a new shell tab is there to type into. Recording
+    /// a shortcut ends with leaving the settings tab.
     fn switched_tab(&mut self) {
+        self.settings.stop_recording();
         self.give_keyboard_to_terminal();
         self.update_window_title();
         self.window.request_redraw();
@@ -627,7 +638,9 @@ impl AppState {
         let Some(terminal) = self.current_terminal() else { return };
         let can_copy = terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
         let can_paste = self.clipboard.as_mut().is_some_and(|c| c.get_text().is_ok_and(|text| !text.is_empty()));
-        self.context_menu = Some(ContextMenu::new(self.to_points(self.last_cursor_pos), can_copy, can_paste));
+        let shortcuts = [Action::Copy, Action::Paste, Action::PasteAndRun].map(|action| self.keymap.label(action));
+        let pos = self.to_points(self.last_cursor_pos);
+        self.context_menu = Some(ContextMenu::new(pos, can_copy, can_paste, shortcuts));
         self.set_hovered(None);
         self.window.request_redraw();
     }
@@ -650,6 +663,11 @@ impl AppState {
         if event.state != ElementState::Pressed {
             return;
         }
+        // The settings page waits for a new shortcut: this key is it.
+        if self.settings.recording().is_some() {
+            self.record_shortcut(&event);
+            return;
+        }
         // A key closes the context menu -- modifiers aside, they may be
         // the start of Ctrl+Shift+C. Escape is used up by that.
         if self.context_menu.is_some() {
@@ -662,60 +680,125 @@ impl AppState {
                 _ => self.close_context_menu(),
             }
         }
-        let ctrl = self.modifiers.control_key();
-        let shift = self.modifiers.shift_key();
-
-        // App-level shortcuts work no matter where the keyboard focus is.
-        match &event.logical_key {
-            Key::Character(c) if ctrl && shift && c.eq_ignore_ascii_case("t") => {
-                self.add_default_tab();
-                return;
-            }
-            Key::Character(c) if ctrl && shift && c.eq_ignore_ascii_case("w") => {
-                self.close_tab(self.active_tab, event_loop);
-                return;
-            }
-            Key::Character(c) if ctrl && shift && c.eq_ignore_ascii_case("b") => {
-                self.toggle_sidebar();
-                return;
-            }
-            Key::Character(c) if ctrl && !shift && c == "," => {
-                self.open_settings();
-                return;
-            }
-            Key::Named(NamedKey::Tab) if ctrl && shift => {
-                self.prev_tab();
-                return;
-            }
-            Key::Named(NamedKey::Tab) if ctrl => {
-                self.next_tab();
-                return;
-            }
-            _ => {}
-        }
-
-        // Everything below is input *for* something. While a widget in the
-        // sidebar or the settings tab has focus it belongs to egui, which
-        // already got the event.
-        if self.ui_has_keyboard() {
+        // Shortcuts. Those acting on the terminal (copy, paste, scrolling)
+        // leave the key to egui while a widget in the sidebar or the
+        // settings tab has focus; the others work wherever the focus is.
+        if let Some(action) = KeyCombo::from_event(&event, self.modifiers).and_then(|combo| self.keymap.action(&combo))
+            && (action.is_global() || !self.ui_has_keyboard())
+            && self.run_shortcut(action, event_loop)
+        {
             return;
         }
 
-        match &event.logical_key {
-            Key::Character(c) if ctrl && shift && c.eq_ignore_ascii_case("c") => {
-                self.copy_selection();
-                return;
-            }
-            Key::Character(c) if ctrl && shift && c.eq_ignore_ascii_case("v") => {
-                self.paste_clipboard(false);
-                return;
-            }
-            _ => {}
+        // Everything below is typing. While a widget in the sidebar or the
+        // settings tab has focus it belongs to egui, which already got the
+        // event.
+        if self.ui_has_keyboard() {
+            return;
         }
 
         if let Some(bytes) = input::key_event_to_bytes(&event, self.modifiers) {
             self.send_typed(bytes);
         }
+    }
+
+    /// Carry out a shortcut. `false` if it doesn't apply right now and the
+    /// key goes on to the terminal instead: keyboard scrolling while a
+    /// full-screen program (less, vim) has the screen.
+    fn run_shortcut(&mut self, action: Action, event_loop: &ActiveEventLoop) -> bool {
+        match action {
+            Action::NewTab => self.add_default_tab(),
+            Action::CloseTab => self.close_tab(self.active_tab, event_loop),
+            Action::NextTab => self.next_tab(),
+            Action::PreviousTab => self.prev_tab(),
+            Action::SelectTab(number) => self.select_tab(usize::from(number).saturating_sub(1)),
+            Action::MoveTabLeft => self.move_tab(-1),
+            Action::MoveTabRight => self.move_tab(1),
+            Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::OpenSettings => self.open_settings(),
+            Action::Copy => self.copy_selection(),
+            Action::Paste => self.paste_clipboard(false),
+            Action::PasteAndRun => self.paste_clipboard(true),
+            Action::ScrollPageUp => return self.scroll_by_key(Scroll::PageUp),
+            Action::ScrollPageDown => return self.scroll_by_key(Scroll::PageDown),
+            Action::ScrollToTop => return self.scroll_by_key(Scroll::Top),
+            Action::ScrollToBottom => return self.scroll_by_key(Scroll::Bottom),
+            Action::FontBigger => self.zoom(1.0),
+            Action::FontSmaller => self.zoom(-1.0),
+            Action::FontReset => {
+                self.font_zoom = 0.0;
+                self.update_font();
+            }
+        }
+        true
+    }
+
+    /// Scroll the scrollback from the keyboard. Not on the settings tab,
+    /// and not in the alternate screen: a full-screen program has no
+    /// scrollback and wants such keys itself.
+    fn scroll_by_key(&self, scroll: Scroll) -> bool {
+        let Some(terminal) = self.current_terminal() else { return false };
+        {
+            let mut term = terminal.term.lock();
+            if term.mode().contains(TermMode::ALT_SCREEN) {
+                return false;
+            }
+            term.scroll_display(scroll);
+        }
+        self.window.request_redraw();
+        true
+    }
+
+    /// Move the active tab one place left (`-1`) or right (`1`).
+    fn move_tab(&mut self, by: isize) {
+        let Some(to) = self.active_tab.checked_add_signed(by).filter(|&to| to < self.tabs.len()) else { return };
+        self.tabs.swap(self.active_tab, to);
+        self.active_tab = to;
+        self.update_window_title();
+        self.window.request_redraw();
+    }
+
+    /// Font size by shortcut, `by` points at a time on top of the
+    /// configured size -- not saved, like zooming in a browser.
+    fn zoom(&mut self, by: f32) {
+        let size = (self.font_size() + by).clamp(*config::FONT_SIZES.start(), *config::FONT_SIZES.end());
+        self.font_zoom = size - self.config.font_size;
+        self.update_font();
+    }
+
+    /// A key pressed while the settings page records a shortcut: bound to
+    /// the action, unless it's taken, would swallow typing, or is Escape
+    /// (cancels).
+    fn record_shortcut(&mut self, event: &KeyEvent) {
+        // A modifier on its own is only the start of the combination.
+        let Some(combo) = KeyCombo::from_event(event, self.modifiers) else { return };
+        let Some(action) = self.settings.stop_recording() else { return };
+        self.window.request_redraw();
+        if combo == KeyCombo::ESCAPE {
+            return;
+        }
+        let label = combo.label();
+        if !combo.leaves_typing_alone() {
+            self.settings.report(Err(t!("shortcuts-swallows-typing", combo = &label)));
+            return;
+        }
+        match self.keymap.action(&combo) {
+            Some(owner) if owner == action => {}
+            Some(owner) => self.settings.report(Err(t!("shortcuts-taken", combo = &label, action = owner.label()))),
+            None => {
+                let mut combos = self.keymap.combos(action).to_vec();
+                combos.push(combo);
+                self.set_shortcut(action, combos, Origin::Settings);
+            }
+        }
+    }
+
+    fn set_shortcut(&mut self, action: Action, combos: Vec<KeyCombo>, origin: Origin) {
+        match self.config.save_shortcut(action, &combos) {
+            Ok(()) => self.keymap = Keymap::new(&self.config.shortcuts),
+            Err(err) => self.report(origin, Err(err)),
+        }
+        self.window.request_redraw();
     }
 
     fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
@@ -924,8 +1007,14 @@ impl AppState {
                 settings_actions.clear();
                 let page = egui::Rect::from_min_max(egui::pos2(right_edge, page_top), ui.max_rect().max);
                 ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
-                    let shells = self.sidebar.shells();
-                    self.settings.show_tab(ui, &self.config, shells, &default_shell, window_size, &mut settings_actions);
+                    let view = SettingsView {
+                        config: &self.config,
+                        shells: self.sidebar.shells(),
+                        default: &default_shell,
+                        window_size,
+                        keymap: &self.keymap,
+                    };
+                    self.settings.show_tab(ui, &view, &mut settings_actions);
                 });
             }
             // A click only registers in the pass that saw it, so keep it
@@ -1015,6 +1104,7 @@ impl AppState {
             }
             SidebarAction::ChangeSetting { setting, save } => self.change_setting(setting, save),
             SidebarAction::OpenSettings => self.open_settings(),
+            SidebarAction::SetShortcut(action, combos) => self.set_shortcut(action, combos, origin),
         }
     }
 
@@ -1032,7 +1122,12 @@ impl AppState {
     fn change_setting(&mut self, setting: Setting, save: bool) {
         self.config.set(setting);
         match setting {
-            Setting::FontSize(_) | Setting::LineHeight(_) => self.update_font(),
+            // A size picked in the settings replaces any zoom.
+            Setting::FontSize(_) => {
+                self.font_zoom = 0.0;
+                self.update_font();
+            }
+            Setting::LineHeight(_) => self.update_font(),
             Setting::Padding(_) => self.relayout(),
             Setting::TabBar(_) => {
                 self.tab_bar_height = tab_bar_height(&self.config, self.text.cell, self.window.scale_factor() as f32);
@@ -1063,11 +1158,16 @@ impl AppState {
         self.window.request_redraw();
     }
 
+    /// The font size in use: the configured one plus any zoom.
+    fn font_size(&self) -> f32 {
+        self.config.font_size + self.font_zoom
+    }
+
     /// Font size or line height changed: new cell metrics, so everything
     /// shaped with the old ones goes, and the grid is laid out anew.
     fn update_font(&mut self) {
         let scale_factor = self.window.scale_factor() as f32;
-        self.text.set_font(self.config.font_size * scale_factor, self.config.line_height_factor);
+        self.text.set_font(self.font_size() * scale_factor, self.config.line_height_factor);
         self.grid_text = GridText::default();
         self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background));
         self.tab_bar_height = tab_bar_height(&self.config, self.text.cell, scale_factor);
