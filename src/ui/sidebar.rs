@@ -6,7 +6,7 @@
 //! the default for new tabs) and edit each shell's aliases and functions
 //! (`shells::managed`).
 //!
-//! Settings: the UI language.
+//! Settings: the UI language, the mouse-wheel scroll speed.
 //!
 //! Plain egui immediate-mode UI. Anything that needs the rest of the app
 //! -- spawning a tab, writing the config -- is handed back as a
@@ -37,6 +37,9 @@ pub enum SidebarAction {
     /// Switch the UI language -- `None`: follow the locale -- and persist
     /// that in the config.
     SetLanguage(Option<Language>),
+    /// Scroll this many lines per mouse-wheel notch; with `save`, also
+    /// persist it (sent live while the slider is dragged, saved on release).
+    SetScrollLines { lines: f32, save: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -138,7 +141,8 @@ impl Sidebar {
     /// Lay the sidebar out as a fixed-width left panel inside `ui` (egui's
     /// root UI, covering the whole window). `width` and `header_height`
     /// are in points; the header lines up with the tab bar next to it.
-    /// `language` is the one chosen in the config (`None`: automatic).
+    /// `language` is the one chosen in the config (`None`: automatic),
+    /// `scroll_lines` the lines per mouse-wheel notch.
     /// Returns where the panel's right edge ended up (in points) -- the
     /// console starts there -- plus any actions for the app.
     pub fn show(
@@ -146,6 +150,7 @@ impl Sidebar {
         ui: &mut Ui,
         default: &InstalledShell,
         language: Option<Language>,
+        scroll_lines: f32,
         width: f32,
         header_height: f32,
     ) -> (f32, Vec<SidebarAction>) {
@@ -161,7 +166,7 @@ impl Sidebar {
                         Section::Shells => self.shells_section(ui, default, &mut actions),
                         Section::Ssh => self.ssh.show(ui, &mut self.data, &mut actions),
                         Section::Keys => self.keys.show(ui, &mut self.data),
-                        Section::Settings => self.settings_section(ui, language, &mut actions),
+                        Section::Settings => self.settings_section(ui, language, scroll_lines, &mut actions),
                     });
                 });
             });
@@ -178,7 +183,13 @@ impl Sidebar {
         }
     }
 
-    fn settings_section(&mut self, ui: &mut Ui, language: Option<Language>, actions: &mut Vec<SidebarAction>) {
+    fn settings_section(
+        &mut self,
+        ui: &mut Ui,
+        language: Option<Language>,
+        scroll_lines: f32,
+        actions: &mut Vec<SidebarAction>,
+    ) {
         section_title(ui, &t!("settings-language"));
         let mut choice = language;
         let auto = t!("settings-language-auto", language = Language::from_locale().native_name());
@@ -192,6 +203,20 @@ impl Sidebar {
         }
         ui.add_space(4.0);
         ui.label(weak(t!("settings-language-note")).size(11.0));
+
+        ui.add_space(18.0);
+        section_title(ui, &t!("settings-scroll"));
+        let mut lines = scroll_lines;
+        let slider = ui.add(egui::Slider::new(&mut lines, 1.0..=20.0).step_by(1.0).show_value(false));
+        ui.label(t!("settings-scroll-lines", lines = f64::from(lines)));
+        let save = slider.drag_stopped() || (slider.changed() && !slider.dragged());
+        if slider.changed() || save {
+            actions.push(SidebarAction::SetScrollLines { lines, save });
+            self.settings_status = None;
+        }
+        ui.add_space(4.0);
+        ui.label(weak(t!("settings-scroll-note")).size(11.0));
+
         if let Some(status) = &self.settings_status {
             ui.add_space(8.0);
             status.show(ui);

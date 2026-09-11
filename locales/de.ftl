@@ -41,6 +41,14 @@ app-ssh-tab-failed = SSH-Tab für { $target } konnte nicht geöffnet werden: { $
 app-default-shell-set = { $shell } ist jetzt die Standard-Shell für neue Tabs.
 app-language-changed = Sprache umgestellt.
 
+## Kontextmenü (Rechtsklick ins Terminal)
+
+menu-copy = Kopieren
+menu-paste = Einfügen
+menu-paste-run = Einfügen und ausführen
+menu-shortcut-copy = Strg+Umschalt+C
+menu-shortcut-paste = Strg+Umschalt+V
+
 ## Seitenleiste
 
 sidebar-keys = Schlüssel
@@ -52,6 +60,12 @@ settings-language = Sprache
 settings-language-auto = Automatisch · { $language }
 settings-language-auto-hint = Folgt der Systemsprache (LANG): Deutsch bei deutscher Locale, sonst Englisch
 settings-language-note = Gilt sofort. Gespeichert als „language“ in ~/.config/terminaal/config.toml.
+settings-scroll = Scrollgeschwindigkeit
+settings-scroll-lines = { $lines ->
+    [one] { $lines } Zeile je Mausrad-Raste
+   *[other] { $lines } Zeilen je Mausrad-Raste
+}
+settings-scroll-note = Standard 3. Touchpads scrollen stufenlos. Gespeichert als „scroll_lines“ in ~/.config/terminaal/config.toml.
 
 ## Seitenleiste: Shells, Aliase und Funktionen
 

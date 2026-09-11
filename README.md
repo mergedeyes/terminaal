@@ -26,7 +26,9 @@ in a sidebar, and never have secrets written to disk.
 - Redraws only when something changes (output, input, cursor blink), so it stays
   idle when you do
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
-- Scrollback with the mouse wheel, mouse selection, clipboard copy and paste
+- Scrollback with the mouse wheel (speed adjustable under **⚙**), mouse selection,
+  clipboard copy and paste
+- Right-click menu in the terminal: copy, paste, and paste and run
 - Optional start-up animation
 
 ### Shells
@@ -134,6 +136,7 @@ font_size = 15.0              # logical pixels
 line_height_factor = 1.25
 padding = 8.0                 # around the terminal grid
 scrollback_lines = 10000
+scroll_lines = 3.0            # lines per mouse-wheel notch
 default_width = 1000.0        # window size at start
 default_height = 650.0
 cursor_blink = true
@@ -146,7 +149,7 @@ splash = true                 # start-up animation
 # language = "en"             # "en" or "de" (default: from your locale)
 ```
 
-`shell` and `language` can also be set from the sidebar. When they are,
+`shell`, `language` and `scroll_lines` can also be set from the sidebar. When they are,
 Terminaal edits just that line and keeps your comments and formatting.
 
 Next to it, Terminaal keeps its own files. None of them holds anything secret:

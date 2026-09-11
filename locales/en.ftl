@@ -41,6 +41,14 @@ app-ssh-tab-failed = Could not open an SSH tab for { $target }: { $err }
 app-default-shell-set = { $shell } is now the default shell for new tabs.
 app-language-changed = Language changed.
 
+## Context menu (right-click into the terminal)
+
+menu-copy = Copy
+menu-paste = Paste
+menu-paste-run = Paste and run
+menu-shortcut-copy = Ctrl+Shift+C
+menu-shortcut-paste = Ctrl+Shift+V
+
 ## Sidebar
 
 sidebar-keys = Keys
@@ -52,6 +60,12 @@ settings-language = Language
 settings-language-auto = Automatic · { $language }
 settings-language-auto-hint = Follows the system locale (LANG): German for a German locale, English otherwise
 settings-language-note = Applies right away. Saved as “language” in ~/.config/terminaal/config.toml.
+settings-scroll = Scroll speed
+settings-scroll-lines = { $lines ->
+    [one] { $lines } line per mouse-wheel notch
+   *[other] { $lines } lines per mouse-wheel notch
+}
+settings-scroll-note = Default 3. Touchpads scroll smoothly. Saved as “scroll_lines” in ~/.config/terminaal/config.toml.
 
 ## Sidebar: shells, aliases and functions
 

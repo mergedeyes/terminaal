@@ -7,8 +7,9 @@
 //! file is never fatal -- we log why and start with defaults, since a
 //! typo in the config shouldn't stop the terminal from opening.
 //!
-//! The only things ever written back are the default shell and the UI
-//! language (both picked in the sidebar), via `toml_edit` so the rest of
+//! The only things ever written back are the default shell, the UI
+//! language and the scroll speed (all picked in the sidebar), via
+//! `toml_edit` so the rest of
 //! the file -- comments, ordering, formatting -- stays exactly as the user
 //! wrote it.
 
@@ -28,6 +29,9 @@ pub struct Config {
     pub padding: f32,
     /// Scrollback size, in lines.
     pub scrollback_lines: usize,
+    /// Lines scrolled per mouse-wheel notch; touchpads scroll by their
+    /// pixels instead. Read through [`Config::scroll_lines`].
+    pub scroll_lines: f32,
     /// Default window size (logical pixels).
     pub default_width: f64,
     pub default_height: f64,
@@ -57,6 +61,8 @@ impl Default for Config {
             line_height_factor: 1.25,
             padding: 8.0,
             scrollback_lines: 10_000,
+            // Like Alacritty and most desktops.
+            scroll_lines: 3.0,
             default_width: 1000.0,
             default_height: 650.0,
             cursor_blink: true,
@@ -143,6 +149,23 @@ impl Config {
         Ok(())
     }
 
+    /// Lines per mouse-wheel notch. Zero, negative or not a number counts
+    /// as the default rather than breaking scrolling.
+    pub fn scroll_lines(&self) -> f32 {
+        if self.scroll_lines.is_finite() && self.scroll_lines > 0.0 {
+            self.scroll_lines
+        } else {
+            Self::default().scroll_lines
+        }
+    }
+
+    /// Set the lines per mouse-wheel notch and persist them.
+    pub fn save_scroll_lines(&mut self, lines: f32) -> Result<(), String> {
+        Self::edit(|doc| doc["scroll_lines"] = toml_edit::value(f64::from(lines)))?;
+        self.scroll_lines = lines;
+        Ok(())
+    }
+
     /// Change the config file in place, creating it if needed.
     fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut)) -> Result<(), String> {
         let path = Self::path().ok_or_else(|| t!("common-home-unset"))?;
@@ -160,5 +183,21 @@ impl Config {
             std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
         }
         std::fs::write(&path, doc.to_string()).map_err(|err| format!("{}: {err}", path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn scroll_lines_accepts_integers_and_rejects_nonsense() {
+        let parse = |text| toml::from_str::<Config>(text).unwrap().scroll_lines();
+        assert_eq!(parse(""), 3.0);
+        assert_eq!(parse("scroll_lines = 5"), 5.0);
+        assert_eq!(parse("scroll_lines = 1.5"), 1.5);
+        assert_eq!(parse("scroll_lines = 0"), 3.0);
+        assert_eq!(parse("scroll_lines = -2.0"), 3.0);
+        assert_eq!(parse("scroll_lines = nan"), 3.0);
     }
 }

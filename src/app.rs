@@ -58,6 +58,7 @@ use crate::render::text::{CellMetrics, TextRendererState};
 use crate::shells::{self, launch, InstalledShell};
 use crate::ssh::SshTarget;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
+use crate::ui::context_menu::{ContextMenu, MenuAction};
 use crate::ui::sidebar::{Sidebar, SidebarAction};
 use crate::ui::splash::{self, Splash, SplashFrames};
 use crate::ui::UiLayer;
@@ -143,6 +144,10 @@ struct AppState {
     splash: Option<Splash>,
     /// When the splash's picture changes next (GIF frame, fade step).
     splash_redraw_at: Option<Instant>,
+    /// Right-click menu over the grid, while it's open.
+    context_menu: Option<ContextMenu>,
+    /// Scrolled distance not yet worth a whole line; see `wheel_lines`.
+    scroll_remainder: f32,
 
     tabs: Vec<Tab>,
     active_tab: usize,
@@ -225,6 +230,8 @@ impl AppState {
             ui_repaint_at: None,
             splash,
             splash_redraw_at: None,
+            context_menu: None,
+            scroll_remainder: 0.0,
             config,
             tabs: Vec::new(),
             active_tab: 0,
@@ -372,6 +379,21 @@ impl AppState {
         self.sidebar_visible && x < self.sidebar_width as f64
     }
 
+    /// A physical-pixel position in egui points.
+    fn to_points(&self, (x, y): (f64, f64)) -> egui::Pos2 {
+        let ppp = self.ui.ctx.pixels_per_point();
+        egui::pos2(x as f32 / ppp, y as f32 / ppp)
+    }
+
+    fn over_context_menu(&self, pos: (f64, f64)) -> bool {
+        self.context_menu.as_ref().is_some_and(|menu| menu.contains(self.to_points(pos)))
+    }
+
+    /// egui owns the mouse at `pos`: the sidebar or the open context menu.
+    fn over_ui(&self, pos: (f64, f64)) -> bool {
+        self.over_sidebar(pos.0) || self.over_context_menu(pos)
+    }
+
     /// Key presses go to the sidebar rather than the terminal: the user
     /// clicked into it and a widget there has focus.
     fn sidebar_has_keyboard(&self) -> bool {
@@ -480,7 +502,10 @@ impl AppState {
         }
     }
 
-    fn paste_clipboard(&mut self) {
+    /// Type the clipboard's text into the terminal. With `run`, followed
+    /// by exactly one Enter, whether or not the text already ended in a
+    /// line break.
+    fn paste_clipboard(&mut self, run: bool) {
         let Some(clipboard) = self.clipboard.as_mut() else { return };
         match clipboard.get_text() {
             // Bracketed-paste wrapping would need to check whether the
@@ -490,16 +515,73 @@ impl AppState {
             // strip ESC/Ctrl-C so pasted text can't smuggle in escape
             // sequences or prematurely signal the shell.
             Ok(text) => {
-                let filtered: String = text.chars().filter(|&c| c != '\x1b' && c != '\x03').collect();
-                self.current_tab().terminal.send_input(filtered.into_bytes());
+                let mut filtered: String = text.chars().filter(|&c| c != '\x1b' && c != '\x03').collect();
+                if run {
+                    filtered.truncate(filtered.trim_end_matches(['\r', '\n']).len());
+                    if filtered.is_empty() {
+                        return;
+                    }
+                    filtered.push('\r');
+                }
+                self.send_typed(filtered.into_bytes());
             }
             Err(err) => log::warn!("failed to read clipboard: {err}"),
+        }
+    }
+
+    /// Input the user typed or pasted. Snaps the view back to the bottom
+    /// if they had scrolled into history, and resets the blink cycle so
+    /// the cursor doesn't look like it vanished mid-keystroke.
+    fn send_typed(&mut self, bytes: Vec<u8>) {
+        {
+            let mut term = self.current_tab().terminal.term.lock();
+            if term.renderable_content().display_offset != 0 {
+                term.scroll_display(Scroll::Bottom);
+            }
+        }
+        self.reset_cursor_blink();
+        self.current_tab().terminal.send_input(bytes);
+    }
+
+    /// Open the context menu at the mouse. Whether copying and pasting
+    /// are possible is decided now, not while it's open.
+    fn open_context_menu(&mut self) {
+        let can_copy = self.current_tab().terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
+        let can_paste = self.clipboard.as_mut().is_some_and(|c| c.get_text().is_ok_and(|text| !text.is_empty()));
+        self.context_menu = Some(ContextMenu::new(self.to_points(self.last_cursor_pos), can_copy, can_paste));
+        self.set_hovered(None);
+        self.window.request_redraw();
+    }
+
+    fn close_context_menu(&mut self) {
+        if self.context_menu.take().is_some() {
+            self.window.request_redraw();
+        }
+    }
+
+    fn apply_menu_action(&mut self, action: MenuAction) {
+        match action {
+            MenuAction::Copy => self.copy_selection(),
+            MenuAction::Paste => self.paste_clipboard(false),
+            MenuAction::PasteAndRun => self.paste_clipboard(true),
         }
     }
 
     fn handle_keyboard_input(&mut self, event: KeyEvent, event_loop: &ActiveEventLoop) {
         if event.state != ElementState::Pressed {
             return;
+        }
+        // A key closes the context menu -- modifiers aside, they may be
+        // the start of Ctrl+Shift+C. Escape is used up by that.
+        if self.context_menu.is_some() {
+            match &event.logical_key {
+                Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super) => {}
+                Key::Named(NamedKey::Escape) => {
+                    self.close_context_menu();
+                    return;
+                }
+                _ => self.close_context_menu(),
+            }
         }
         let ctrl = self.modifiers.control_key();
         let shift = self.modifiers.shift_key();
@@ -541,32 +623,22 @@ impl AppState {
                 return;
             }
             Key::Character(c) if ctrl && shift && c.eq_ignore_ascii_case("v") => {
-                self.paste_clipboard();
+                self.paste_clipboard(false);
                 return;
             }
             _ => {}
         }
 
         if let Some(bytes) = input::key_event_to_bytes(&event, self.modifiers) {
-            // Typing snaps the view back to the bottom if the user had
-            // scrolled into history, and resets the blink cycle so the
-            // cursor doesn't look like it vanished mid-keystroke.
-            {
-                let mut term = self.current_tab().terminal.term.lock();
-                if term.renderable_content().display_offset != 0 {
-                    term.scroll_display(Scroll::Bottom);
-                }
-            }
-            self.reset_cursor_blink();
-            self.current_tab().terminal.send_input(bytes);
+            self.send_typed(bytes);
         }
     }
 
     fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.last_cursor_pos = (position.x, position.y);
         if !self.left_button_down {
-            // Over the sidebar, egui does the hovering.
-            let hit = if self.over_sidebar(position.x) { None } else { self.tab_bar_hit(position.x, position.y) };
+            // Over the sidebar or the context menu, egui does the hovering.
+            let hit = if self.over_ui(self.last_cursor_pos) { None } else { self.tab_bar_hit(position.x, position.y) };
             self.set_hovered(hit);
             return;
         }
@@ -612,6 +684,18 @@ impl AppState {
 
     fn on_mouse_input(&mut self, button: MouseButton, button_state: ElementState, event_loop: &ActiveEventLoop) {
         if button_state == ElementState::Pressed {
+            // Presses on the open context menu are egui's; one anywhere
+            // else just closes it -- unless it's a right-click, which
+            // goes on to open the menu anew there.
+            if self.context_menu.is_some() {
+                if self.over_context_menu(self.last_cursor_pos) {
+                    return;
+                }
+                self.close_context_menu();
+                if button != MouseButton::Right {
+                    return;
+                }
+            }
             // Presses on the sidebar are egui's alone; with them the
             // keyboard moves over too, and back with a press anywhere else.
             if self.over_sidebar(self.last_cursor_pos.0) {
@@ -620,6 +704,10 @@ impl AppState {
             }
             self.give_keyboard_to_terminal();
             if self.on_tab_bar_click(button, event_loop) {
+                return;
+            }
+            if button == MouseButton::Right {
+                self.open_context_menu();
                 return;
             }
         }
@@ -646,16 +734,10 @@ impl AppState {
     }
 
     fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
-        if self.over_sidebar(self.last_cursor_pos.0) {
+        if self.over_ui(self.last_cursor_pos) {
             return;
         }
-        let lines = match delta {
-            MouseScrollDelta::LineDelta(_, y) => y.round() as i32,
-            MouseScrollDelta::PixelDelta(pos) => {
-                let cell_h = self.text.cell.height.max(1.0);
-                (pos.y as f32 / cell_h).round() as i32
-            }
-        };
+        let lines = wheel_lines(delta, self.config.scroll_lines(), self.text.cell.height, &mut self.scroll_remainder);
         if lines == 0 {
             return;
         }
@@ -713,6 +795,7 @@ impl AppState {
         let width = self.config.sidebar_width;
         let header_height = if self.tab_bar_height > 0.0 { self.tab_bar_height / scale_factor } else { 36.0 };
         let language = self.config.chosen_language();
+        let scroll_lines = self.config.scroll_lines();
 
         // Focus egui picked up without the user clicking into the sidebar
         // doesn't count; see `keyboard_to_ui`.
@@ -723,11 +806,21 @@ impl AppState {
         let mut actions = Vec::new();
         let splash = self.splash.as_ref();
         let mut splash_next = None;
+        let context_menu = &mut self.context_menu;
+        let mut menu_action = None;
         let repaint = self.ui.run(&self.window, &self.gpu.device, &self.gpu.queue, |ui| {
             // egui may run this more than once per frame; only the last
             // pass counts.
-            (right_edge, actions) =
-                if visible { self.sidebar.show(ui, &default_shell, language, width, header_height) } else { (0.0, Vec::new()) };
+            (right_edge, actions) = if visible {
+                self.sidebar.show(ui, &default_shell, language, scroll_lines, width, header_height)
+            } else {
+                (0.0, Vec::new())
+            };
+            // A click only registers in the pass that saw it, so keep it
+            // over a later one.
+            if let Some(menu) = context_menu.as_mut() {
+                menu_action = menu.show(ui.ctx()).or(menu_action);
+            }
             // Painted last, on egui's foreground layer: over the sidebar
             // as well as the grid and tab bar drawn before egui.
             if let Some(splash) = splash {
@@ -755,6 +848,11 @@ impl AppState {
 
         for action in actions {
             self.apply_sidebar_action(action);
+        }
+        // The menu is in this frame already; the redraw takes it away.
+        if let Some(action) = menu_action {
+            self.close_context_menu();
+            self.apply_menu_action(action);
         }
 
         // egui just set the cursor for its own widgets; the tab bar isn't
@@ -796,6 +894,14 @@ impl AppState {
                 });
                 self.sidebar.report(result);
                 self.window.request_redraw();
+            }
+            // Applies right away, also while the slider is being dragged;
+            // written to the config only once it's let go.
+            SidebarAction::SetScrollLines { lines, save } => {
+                self.config.scroll_lines = lines;
+                if save && let Err(err) = self.config.save_scroll_lines(lines) {
+                    self.sidebar.report(Err(err));
+                }
             }
         }
     }
@@ -1014,6 +1120,21 @@ fn pixel_to_cell(
     (col, row, side)
 }
 
+/// Lines to scroll for one wheel event (positive: into the scrollback).
+/// A mouse wheel moves `lines_per_step` per notch, a touchpad follows its
+/// pixels. Fractions add up in `remainder` rather than getting lost --
+/// rounded one by one, a touchpad's small steps would never scroll at all.
+fn wheel_lines(delta: MouseScrollDelta, lines_per_step: f32, cell_height: f32, remainder: &mut f32) -> i32 {
+    let lines = *remainder
+        + match delta {
+            MouseScrollDelta::LineDelta(_, y) => y * lines_per_step,
+            MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / cell_height.max(1.0),
+        };
+    let whole = lines.trunc();
+    *remainder = lines - whole;
+    whole as i32
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
@@ -1082,7 +1203,8 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         // egui sees every event first. A mouse move only needs a redraw
-        // for egui if it's over (or just left) the sidebar -- otherwise
+        // for egui if it's over (or just left) the sidebar or the context
+        // menu -- otherwise
         // every twitch over the terminal would redraw for nothing.
         // egui-winit also flags `RedrawRequested` itself as wanting a
         // repaint; honouring that would schedule the next frame from
@@ -1099,7 +1221,7 @@ impl ApplicationHandler<UserEvent> for App {
         if for_ui && state.ui.on_window_event(&state.window, &event).repaint {
             let relevant = match &event {
                 WindowEvent::CursorMoved { position, .. } => {
-                    state.over_sidebar(position.x) || state.over_sidebar(state.last_cursor_pos.0)
+                    state.over_ui((position.x, position.y)) || state.over_ui(state.last_cursor_pos)
                 }
                 WindowEvent::RedrawRequested => false,
                 _ => true,
@@ -1230,5 +1352,26 @@ mod tests {
     #[test]
     fn embedded_window_icon_decodes() {
         assert!(super::window_icon().is_some());
+    }
+
+    #[test]
+    fn wheel_scrolls_lines_per_notch_and_touchpad_adds_up() {
+        use super::wheel_lines;
+        use winit::dpi::PhysicalPosition;
+        use winit::event::MouseScrollDelta::{LineDelta, PixelDelta};
+
+        let mut rest = 0.0;
+        assert_eq!(wheel_lines(LineDelta(0.0, 1.0), 3.0, 20.0, &mut rest), 3);
+        assert_eq!(wheel_lines(LineDelta(0.0, -2.0), 3.0, 20.0, &mut rest), -6);
+
+        // 2.5 lines per notch: the half lines carry over.
+        assert_eq!(wheel_lines(LineDelta(0.0, 1.0), 2.5, 20.0, &mut rest), 2);
+        assert_eq!(wheel_lines(LineDelta(0.0, 1.0), 2.5, 20.0, &mut rest), 3);
+
+        // 5 px steps on 20 px cells: every fourth one scrolls a line.
+        let mut rest = 0.0;
+        let steps: Vec<i32> =
+            (0..8).map(|_| wheel_lines(PixelDelta(PhysicalPosition::new(0.0, 5.0)), 3.0, 20.0, &mut rest)).collect();
+        assert_eq!(steps, [0, 0, 0, 1, 0, 0, 0, 1]);
     }
 }

@@ -1,10 +1,12 @@
-//! egui, for the app's chrome -- the sidebar and the startup splash. The terminal
+//! egui, for the app's chrome -- the sidebar, the terminal's right-click menu
+//! and the startup splash. The terminal
 //! grid and the tab bar stay on the hand-rolled renderer in `render/`;
 //! egui draws in its own render pass on top of them.
 //!
 //! Every winit event goes through [`UiLayer::on_window_event`] first;
 //! `app.rs` then decides whether the terminal should see it as well.
 
+pub mod context_menu;
 pub mod keys_panel;
 pub mod sidebar;
 pub mod splash;
