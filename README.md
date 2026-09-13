@@ -39,23 +39,27 @@ in a sidebar, and never have secrets written to disk.
   between them
 - Bracketed paste: pasted text goes to shells and editors as one paste, so a
   multi-line paste isn't run line by line
-- **Shell integration** for fish, bash and zsh, set up by Terminaal itself (other
-  shells work if they send OSC 133/OSC 7, as fish 4 does):
+- **Shell integration** for fish, bash and zsh, set up by Terminaal itself
+  (any other shell that sends OSC 7 and OSC 133 works too, and so do remote
+  shells over SSH that send them – fish 4 does on its own):
   - tab titles show the working directory, and a new tab opens in it
   - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump from prompt to prompt
   - a failed command gets its exit code (`✘ 1`) next to its prompt
-  - a desktop notification when a long command finishes in a tab you're not looking at
-- **Your own commands** (snippets) next to the built-in ones, optionally only for
-  one system or one host, kept in `~/.config/terminaal/snippets.toml`
+  - a desktop notification when a long command finishes in a tab you're not
+    looking at (after 10 seconds by default, adjustable)
 - **Broadcast**: put tabs into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
-  or the right-click menu) and what you type in one of them goes to all – with
-  snippets, the same command on ten servers at once. Those tabs are marked red
+  or the right-click menu), and what you type, paste or send with a command
+  button in one of them goes to all of them – the same command on ten servers
+  at once. Tabs in the group are marked red in the tab bar
 - **Clickable links**: hold <kbd>Ctrl</kbd> to underline URLs, hyperlinks
-  (OSC 8) and existing files under the mouse, <kbd>Ctrl</kbd>+click opens them
+  (OSC 8) and existing files under the mouse; <kbd>Ctrl</kbd>+click opens them
+  with your default application. File names count relative to the shell's
+  working directory, and only in local tabs
 - Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
   reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
-- Right-click menu in the terminal: copy, paste, and paste and run
+- Right-click menu in the terminal: copy, paste, paste and run, and joining or
+  leaving the broadcast
 - A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
 - **Themes** for the console and the interface alike: seven built in, and your
   own in Alacritty's format (its themes work as they are)
@@ -82,6 +86,9 @@ in a sidebar, and never have secrets written to disk.
   the settings and per host. Confirmation prompts are left alone unless you
   turn that off (`commands_assume_yes`), and the first click explains that
   commands go straight to the shell
+- **Your own commands** (snippets) as buttons next to the built-in ones: a
+  name and a command of one or more lines, optionally only for one system or
+  one host. Add, edit and delete them under **Manage**
 
 ### SSH
 - Saved hosts plus the hosts from your **`~/.ssh/config`**, read-only or
@@ -100,8 +107,8 @@ in a sidebar, and never have secrets written to disk.
   failed and why – and pauses, starts or retries each while connected
 - Host keys are checked against `~/.ssh/known_hosts`, and new entries are appended.
   If a host's key changed, the tab shows the stored fingerprint next to the new
-  one; **Host key** on the host in the sidebar shows what's stored and removes
-  it after asking – only those lines, the rest of the file stays as it is
+  one. The **Host key** button on a host in the sidebar shows what's stored and
+  removes it after asking – only those lines, the rest of the file stays as it is
 - Host-key prompts, passphrases and passwords are asked **inside the tab**,
   like OpenSSH does. Nothing secret is ever stored
 
@@ -174,7 +181,6 @@ cargo run --release
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Previous / next prompt |
-| <kbd>Ctrl</kbd>+click | Open the link or file under the mouse |
 | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
 
 Every shortcut can be changed, removed or given more key combinations in the
@@ -189,8 +195,9 @@ match up, <kbd>Shift</kbd>+<kbd>Enter</kbd> down; after that <kbd>n</kbd> and
 again. <kbd>Esc</kbd> closes the bar, as does any other key, which then goes to
 the shell.
 
-Tabs can also be closed with a middle click; the ☰ button in the tab bar
-toggles the sidebar as well.
+Hold <kbd>Ctrl</kbd> and click a link or file name to open it (not a
+configurable shortcut). Tabs can also be closed with a middle click; the ☰
+button in the tab bar toggles the sidebar as well.
 
 ### Command line
 
@@ -227,7 +234,7 @@ splash = true                 # start-up animation
 # ui_font_family = "Inter"    # font of menus and panels (default: built in)
 opacity = 1.0                 # below 1 the window is see-through (0.2–1.0)
 blur = true                   # blur what's behind a see-through window
-commands_run = true           # built-in commands run at once; off: typed into the prompt
+commands_run = true           # command buttons run at once; off: typed into the prompt
 commands_assume_yes = false   # let them skip confirmations (-y, --noconfirm)
 # system = "debian"           # what the built-in commands build for
                               # (default: from /etc/os-release)
@@ -241,9 +248,10 @@ tab_9 = []                    # no shortcut
 
 Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
 `close_tab`, `next_tab`, `previous_tab`, `tab_1` … `tab_9`, `move_tab_left`,
-`move_tab_right`, `toggle_sidebar`, `open_settings`, `copy`, `paste`,
-`paste_and_run`, `scroll_page_up`, `scroll_page_down`, `scroll_to_top`,
-`scroll_to_bottom`, `font_bigger`, `font_smaller`, `font_reset`). Key
+`move_tab_right`, `toggle_broadcast`, `toggle_sidebar`, `open_settings`,
+`copy`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
+`scroll_to_top`, `scroll_to_bottom`, `search`, `previous_prompt`,
+`next_prompt`, `font_bigger`, `font_smaller`, `font_reset`). Key
 combinations are modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) plus one key,
 joined by `+`; write `Plus` and `Minus` for those keys.
 
@@ -281,7 +289,7 @@ After editing a theme file, click **Reload** next to the theme in the settings.
 
 Every option can also be set in the settings tab (**⚙** in the sidebar, or
 <kbd>Ctrl</kbd>+<kbd>,</kbd>; hover a setting's name to see its key). Font,
-padding, tab bar, cursor and scrolling apply right away, the sidebar width once
+padding, tab bar, cursor, scrolling and notifications apply right away, the sidebar width once
 you let go of its slider; window size, sidebar and animation at the next start. When you
 change something there, Terminaal edits just that line and keeps your comments and
 formatting.
@@ -292,7 +300,28 @@ Next to it, Terminaal keeps its own files. None of them holds anything secret:
 | --- | --- |
 | `hosts.toml` | Saved SSH hosts, logins and options |
 | `keys.toml` | Named keys: file paths, or the public half of agent keys |
+| `snippets.toml` | Your own commands |
+| `shell-integration/` | Startup files Terminaal generates for bash, zsh and fish: they load your own config, then the managed aliases and the shell integration |
 | `themes/*.toml` | Your own color themes (you write these; Terminaal only reads them) |
+
+### Snippets
+
+Snippets are managed in the sidebar, but `snippets.toml` is plain TOML too:
+
+```toml
+[[snippet]]
+name = "Follow logs"
+command = "journalctl -f"
+system = "arch"     # optional: only on this system (arch, debian, fedora, suse,
+                    # alpine, void, gentoo, nixos, macos, freebsd)
+
+[[snippet]]
+name = "Deploy"
+command = """
+cd /srv/app
+./deploy.sh"""
+host = "web1"       # optional: only in SSH tabs of this host (its name in the sidebar)
+```
 
 ## Translations
 
@@ -315,6 +344,13 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - The built-in commands ask an SSH host what it is right after login, which
   can hold the tab for up to two seconds on a slow link; set the host's
   system under "Advanced" to skip that
+- Desktop notifications need `notify-send`, opening links needs `xdg-open`
+- A command's exit code shows once the next prompt appears. Over SSH, prompt
+  marks and the working directory only work if the remote shell sends them
+- A paused remote port forward keeps listening on the server and turns
+  connections away; libssh2 can't cancel it cleanly mid-session
+- With broadcast on, the built-in command buttons send the line for the active
+  tab's system to every tab in the group
 
 ## Roadmap
 
@@ -325,12 +361,12 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Appearance: themes for console and interface, console and menu font,
   COSMIC theme sync, see-through and frosted window
 - [x] Built-in commands per system, local and over SSH
-- [ ] Terminal correctness and search: bracketed paste, search in the
-  scrollback, `known_hosts` entries shown and removable from the host form
-- [ ] Shell integration: working directory (OSC 7) and prompt marks (OSC 133)
+- [x] Terminal correctness and search: bracketed paste, search in the
+  scrollback, `known_hosts` entries shown and removable from the sidebar
+- [x] Shell integration: working directory (OSC 7) and prompt marks (OSC 133)
   for new tabs in the same folder, jumping between prompts, exit codes and
   notifications, plus clickable URLs and paths
-- [ ] Own commands: named snippets bound to a system or host, input broadcast
+- [x] Own commands: named snippets bound to a system or host, input broadcast
   to several tabs, and a live list of a session's port forwards
 - [ ] The bigger ones: SFTP browser, split panes, restoring the last session,
   drop-down (Quake) window
