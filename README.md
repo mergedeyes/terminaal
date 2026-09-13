@@ -56,8 +56,8 @@ in a sidebar, and never have secrets written to disk.
   terminals are unaffected:
   `~/.config/fish/terminaal.fish`, `~/.bash_terminaal`, `$ZDOTDIR/.zsh_terminaal`
 - **Built-in commands**: buttons for the everyday chores – update the system,
-  list what has updates, clean up, free space, folder sizes, memory, top
-  processes, uptime, failed services, log errors, open ports, addresses. The
+  list what has updates, free space, folder sizes, memory, top processes,
+  uptime, failed services, log errors, open ports, addresses. The
   lines are tailored to the system the active tab is on (pacman, apt, dnf,
   zypper, apk, xbps, emerge, nixos-rebuild, brew, pkg), detected from
   `/etc/os-release` locally and asked of the host over SSH – overridable in
@@ -290,6 +290,15 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Appearance: themes for console and interface, console and menu font,
   COSMIC theme sync, see-through and frosted window
 - [x] Built-in commands per system, local and over SSH
+- [ ] Terminal correctness and search: bracketed paste, search in the
+  scrollback, `known_hosts` entries shown and removable from the host form
+- [ ] Shell integration: working directory (OSC 7) and prompt marks (OSC 133)
+  for new tabs in the same folder, jumping between prompts, exit codes and
+  notifications, plus clickable URLs and paths
+- [ ] Own commands: named snippets bound to a system or host, input broadcast
+  to several tabs, and a live list of a session's port forwards
+- [ ] The bigger ones: SFTP browser, split panes, restoring the last session,
+  drop-down (Quake) window
 
 ## Development
 

@@ -160,21 +160,6 @@ impl Family {
                 Self::FreeBsd => "pkg version -vRL=",
                 Self::Unknown => return None,
             },
-            Builtin::Cleanup => match self {
-                // Orphans first: with none of them `pacman -Rns` would
-                // complain about its empty argument list.
-                Self::Arch => "pacman -Qdtq | sudo pacman -Rns -{yes}",
-                Self::Debian => "sudo apt autoremove{yes} && sudo apt clean",
-                Self::Fedora => "sudo dnf autoremove{yes} && sudo dnf clean packages",
-                Self::Suse => "sudo zypper clean --all",
-                Self::Alpine => "sudo apk cache clean",
-                Self::Void => "sudo xbps-remove -Oo{yes}",
-                Self::Gentoo => "sudo emerge --depclean{yes} && sudo eclean-dist",
-                Self::NixOs => "sudo nix-collect-garbage -d",
-                Self::MacOs => "brew cleanup",
-                Self::FreeBsd => "sudo pkg autoremove{yes} && sudo pkg clean{yes}",
-                Self::Unknown => return None,
-            },
             Builtin::DiskFree => {
                 if self.gnu() {
                     "df -h -x tmpfs -x devtmpfs -x efivarfs"
@@ -182,11 +167,13 @@ impl Family {
                     "df -h"
                 }
             }
+            // Folders the user can't read would otherwise bury the sizes
+            // in "Permission denied".
             Builtin::DiskUsage => {
                 if self.gnu() {
-                    "du -h --max-depth=1 . | sort -h"
+                    "du -h --max-depth=1 . 2>/dev/null | sort -h"
                 } else {
-                    "du -h -d 1 . | sort -h"
+                    "du -h -d 1 . 2>/dev/null | sort -h"
                 }
             }
             Builtin::Memory => match self {
@@ -240,7 +227,6 @@ impl Family {
 pub enum Builtin {
     Update,
     Outdated,
-    Cleanup,
     DiskFree,
     DiskUsage,
     Memory,
@@ -275,10 +261,9 @@ impl Group {
 }
 
 impl Builtin {
-    const ALL: [Builtin; 12] = [
+    const ALL: [Builtin; 11] = [
         Builtin::Update,
         Builtin::Outdated,
-        Builtin::Cleanup,
         Builtin::DiskFree,
         Builtin::DiskUsage,
         Builtin::Memory,
@@ -292,7 +277,7 @@ impl Builtin {
 
     pub fn group(self) -> Group {
         match self {
-            Self::Update | Self::Outdated | Self::Cleanup => Group::Packages,
+            Self::Update | Self::Outdated => Group::Packages,
             Self::DiskFree | Self::DiskUsage => Group::Disk,
             Self::Memory | Self::Processes | Self::Uptime | Self::FailedServices | Self::LogErrors => Group::System,
             Self::Ports | Self::Addresses => Group::Network,
@@ -303,7 +288,6 @@ impl Builtin {
         match self {
             Self::Update => t!("cmd-update"),
             Self::Outdated => t!("cmd-outdated"),
-            Self::Cleanup => t!("cmd-cleanup"),
             Self::DiskFree => t!("cmd-disk-free"),
             Self::DiskUsage => t!("cmd-disk-usage"),
             Self::Memory => t!("cmd-memory"),
@@ -357,7 +341,7 @@ pub fn catalog(system: System, assume_yes: bool) -> Vec<Command> {
         .filter_map(|builtin| {
             let line = system.family.line(builtin)?.replace("{yes}", confirm);
             let line = if system.root { line.replace("sudo ", "") } else { line };
-            let changes = matches!(builtin, Builtin::Update | Builtin::Cleanup);
+            let changes = builtin == Builtin::Update;
             Some(Command { builtin, line, changes })
         })
         .collect()
@@ -499,6 +483,8 @@ mod tests {
         let commands = catalog(System::default(), false);
         assert!(commands.iter().all(|c| c.builtin.group() != super::Group::Packages));
         assert!(commands.iter().any(|c| c.builtin == Builtin::DiskFree));
+        // Unreadable folders mustn't bury the sizes in error lines.
+        assert!(line(System::default(), false, Builtin::DiskUsage).unwrap().contains("2>/dev/null"));
         // Nothing that changes the system without knowing what it is.
         assert!(commands.iter().all(|c| !c.changes));
     }
