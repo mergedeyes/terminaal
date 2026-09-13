@@ -125,6 +125,15 @@ in a sidebar, and never have secrets written to disk.
   The default follows your system locale (German for a German locale, English
   otherwise). Switch it any time in the settings tab
 
+## Documentation
+
+The [`docs/`](docs/README.md) folder has more: a
+[getting started](docs/getting-started.md) guide, tutorials (your first SSH host,
+keys and agents, port forwarding, one command on many servers, your own theme),
+reference guides for configuration, shortcuts, SSH options and shell integration,
+background on the architecture and security model, plus
+[tips](docs/tips.md) and [troubleshooting](docs/troubleshooting.md).
+
 ## Installation
 
 Terminaal is built from source.
