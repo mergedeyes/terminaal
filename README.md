@@ -21,8 +21,8 @@ in a sidebar, and never have secrets written to disk.
 > **DISCLAIMER:** This project is coded mostly by Claude Code, I do make all decisions though; every feature was planned by me.
 
 **SCREENSHOTS:**
-<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/8b66f2ea-c9c3-42c5-9f1c-5429d2435855" />
-<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/64894246-9511-46f7-8931-fa2353f9dde8" />
+<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/95a72250-0e38-4be0-86cd-d9cbce21ce06" />
+<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/5d820773-2745-474c-bb17-9327a6339164" />
 
 ## Features
 
