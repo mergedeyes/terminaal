@@ -50,6 +50,8 @@ pub struct Palette {
     colors: [Rgb; COUNT],
     selection: Rgb,
     selection_text: Option<Rgb>,
+    search_match: (Rgb, Option<Rgb>),
+    search_focus: (Rgb, Option<Rgb>),
 }
 
 impl Palette {
@@ -85,7 +87,13 @@ impl Palette {
             colors[slot as usize] = color;
         }
 
-        Self { colors, selection: theme.selection, selection_text: theme.selection_text }
+        Self {
+            colors,
+            selection: theme.selection,
+            selection_text: theme.selection_text,
+            search_match: theme.search_match,
+            search_focus: theme.search_focus,
+        }
     }
 
     pub fn get(&self, index: usize) -> Rgb {
@@ -100,6 +108,12 @@ impl Palette {
     /// cell's own.
     pub fn selection(&self) -> (Rgb, Option<Rgb>) {
         (self.selection, self.selection_text)
+    }
+
+    /// Background and text of a search match on screen; `focus` for the
+    /// one in focus.
+    pub fn search(&self, focus: bool) -> (Rgb, Option<Rgb>) {
+        if focus { self.search_focus } else { self.search_match }
     }
 
     /// Resolve an `ansi::Color` to a concrete RGB value, preferring

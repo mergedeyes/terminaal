@@ -28,6 +28,8 @@ pub enum Action {
     SelectTab(u8),
     MoveTabLeft,
     MoveTabRight,
+    /// Take part in the broadcast (input to all such tabs) or not.
+    ToggleBroadcast,
     ToggleSidebar,
     OpenSettings,
     Copy,
@@ -37,6 +39,11 @@ pub enum Action {
     ScrollPageDown,
     ScrollToTop,
     ScrollToBottom,
+    /// Search the scrollback.
+    Search,
+    /// Scroll to the prompt above / below (shell integration).
+    PreviousPrompt,
+    NextPrompt,
     FontBigger,
     FontSmaller,
     FontReset,
@@ -69,7 +76,7 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 27] = [
+    pub const ALL: [Action; 31] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -85,6 +92,7 @@ impl Action {
         Action::SelectTab(9),
         Action::MoveTabLeft,
         Action::MoveTabRight,
+        Action::ToggleBroadcast,
         Action::ToggleSidebar,
         Action::OpenSettings,
         Action::Copy,
@@ -94,6 +102,9 @@ impl Action {
         Action::ScrollPageDown,
         Action::ScrollToTop,
         Action::ScrollToBottom,
+        Action::Search,
+        Action::PreviousPrompt,
+        Action::NextPrompt,
         Action::FontBigger,
         Action::FontSmaller,
         Action::FontReset,
@@ -109,6 +120,7 @@ impl Action {
             Action::SelectTab(number) => return Cow::Owned(format!("tab_{number}")),
             Action::MoveTabLeft => "move_tab_left",
             Action::MoveTabRight => "move_tab_right",
+            Action::ToggleBroadcast => "toggle_broadcast",
             Action::ToggleSidebar => "toggle_sidebar",
             Action::OpenSettings => "open_settings",
             Action::Copy => "copy",
@@ -118,6 +130,9 @@ impl Action {
             Action::ScrollPageDown => "scroll_page_down",
             Action::ScrollToTop => "scroll_to_top",
             Action::ScrollToBottom => "scroll_to_bottom",
+            Action::Search => "search",
+            Action::PreviousPrompt => "previous_prompt",
+            Action::NextPrompt => "next_prompt",
             Action::FontBigger => "font_bigger",
             Action::FontSmaller => "font_smaller",
             Action::FontReset => "font_reset",
@@ -137,6 +152,7 @@ impl Action {
             Action::SelectTab(number) => t!("shortcut-select-tab", number = u32::from(number)),
             Action::MoveTabLeft => t!("shortcut-move-tab-left"),
             Action::MoveTabRight => t!("shortcut-move-tab-right"),
+            Action::ToggleBroadcast => t!("shortcut-toggle-broadcast"),
             Action::ToggleSidebar => t!("shortcut-toggle-sidebar"),
             Action::OpenSettings => t!("shortcut-open-settings"),
             Action::Copy => t!("shortcut-copy"),
@@ -146,6 +162,9 @@ impl Action {
             Action::ScrollPageDown => t!("shortcut-scroll-page-down"),
             Action::ScrollToTop => t!("shortcut-scroll-to-top"),
             Action::ScrollToBottom => t!("shortcut-scroll-to-bottom"),
+            Action::Search => t!("shortcut-search"),
+            Action::PreviousPrompt => t!("shortcut-previous-prompt"),
+            Action::NextPrompt => t!("shortcut-next-prompt"),
             Action::FontBigger => t!("shortcut-font-bigger"),
             Action::FontSmaller => t!("shortcut-font-smaller"),
             Action::FontReset => t!("shortcut-font-reset"),
@@ -160,12 +179,17 @@ impl Action {
             | Action::PreviousTab
             | Action::SelectTab(_)
             | Action::MoveTabLeft
-            | Action::MoveTabRight => Group::Tabs,
+            | Action::MoveTabRight
+            | Action::ToggleBroadcast => Group::Tabs,
             Action::ToggleSidebar | Action::OpenSettings => Group::Window,
             Action::Copy | Action::Paste | Action::PasteAndRun => Group::Clipboard,
-            Action::ScrollPageUp | Action::ScrollPageDown | Action::ScrollToTop | Action::ScrollToBottom => {
-                Group::Scrolling
-            }
+            Action::ScrollPageUp
+            | Action::ScrollPageDown
+            | Action::ScrollToTop
+            | Action::ScrollToBottom
+            | Action::Search
+            | Action::PreviousPrompt
+            | Action::NextPrompt => Group::Scrolling,
             Action::FontBigger | Action::FontSmaller | Action::FontReset => Group::Font,
         }
     }
@@ -189,6 +213,7 @@ impl Action {
             }
             Action::MoveTabLeft => &["Ctrl+Shift+PageUp"],
             Action::MoveTabRight => &["Ctrl+Shift+PageDown"],
+            Action::ToggleBroadcast => &["Ctrl+Shift+I"],
             Action::ToggleSidebar => &["Ctrl+Shift+B"],
             Action::OpenSettings => &["Ctrl+,"],
             Action::Copy => &["Ctrl+Shift+C"],
@@ -198,6 +223,9 @@ impl Action {
             Action::ScrollPageDown => &["Shift+PageDown"],
             Action::ScrollToTop => &["Shift+Home"],
             Action::ScrollToBottom => &["Shift+End"],
+            Action::Search => &["Ctrl+Shift+F"],
+            Action::PreviousPrompt => &["Ctrl+Shift+Up"],
+            Action::NextPrompt => &["Ctrl+Shift+Down"],
             // `+` sits on its own key on a German layout, on `=` on a US one.
             Action::FontBigger => &["Ctrl+Plus", "Ctrl+="],
             Action::FontSmaller => &["Ctrl+Minus"],

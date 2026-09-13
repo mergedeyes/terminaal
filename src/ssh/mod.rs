@@ -14,9 +14,10 @@
 
 mod agent_forward;
 pub mod connection;
-mod forward;
+pub mod forward;
 mod socks;
 pub mod keys;
+pub mod known_hosts;
 pub mod options;
 
 use std::io;
@@ -187,6 +188,8 @@ impl Host {
 pub struct SshTarget {
     /// `user@host` (plus `:port` if it isn't 22) -- also the tab title.
     pub label: String,
+    /// The host's name in the sidebar (saved or `~/.ssh/config`).
+    pub name: String,
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -272,7 +275,16 @@ impl Catalog {
                 jumps.push(hop_target);
             }
         }
-        Ok(SshTarget { label, host: host.host.clone(), port: host.port, user, auth: self.auth_plan(host)?, settings, jumps })
+        Ok(SshTarget {
+            label,
+            name: host.name.clone(),
+            host: host.host.clone(),
+            port: host.port,
+            user,
+            auth: self.auth_plan(host)?,
+            settings,
+            jumps,
+        })
     }
 
     fn auth_plan(&self, host: &Host) -> Result<AuthPlan, String> {
@@ -394,7 +406,7 @@ pub fn save_hosts(hosts: &[Host]) -> Result<(), String> {
 }
 
 /// Write-then-rename, so a crash can't leave a truncated file.
-fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }

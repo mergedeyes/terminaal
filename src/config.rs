@@ -48,6 +48,9 @@ pub struct Config {
     pub cursor_blink: bool,
     /// Blink half-period in milliseconds (time visible == time hidden).
     pub cursor_blink_interval_ms: u64,
+    /// Notify when a command that ran at least this many seconds finishes
+    /// while its tab isn't in view (needs shell integration); 0: never.
+    pub notify_after_secs: u64,
     /// Show the clickable tab bar along the top of the window.
     pub tab_bar: bool,
     /// Shell new tabs start with, e.g. `/usr/bin/fish`. Unset: `$SHELL`.
@@ -128,6 +131,7 @@ impl Default for Config {
             default_height: 650.0,
             cursor_blink: true,
             cursor_blink_interval_ms: 600,
+            notify_after_secs: 10,
             tab_bar: true,
             shell: None,
             sidebar: true,
@@ -296,6 +300,7 @@ impl Config {
             Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
+            Setting::NotifyAfter(secs) => self.notify_after_secs = secs,
             Setting::TabBar(on) => self.tab_bar = on,
             Setting::Sidebar(on) => self.sidebar = on,
             Setting::SidebarWidth(width) => self.sidebar_width = width,
@@ -349,6 +354,8 @@ pub enum Setting {
     WindowSize { width: f64, height: f64 },
     CursorBlink(bool),
     CursorBlinkInterval(u64),
+    /// Seconds a command has to run to be notified about; 0: never.
+    NotifyAfter(u64),
     TabBar(bool),
     /// Show the sidebar at start.
     Sidebar(bool),
@@ -380,6 +387,7 @@ impl Setting {
             }
             Self::CursorBlink(on) => set_value(doc, "cursor_blink", on),
             Self::CursorBlinkInterval(ms) => set_value(doc, "cursor_blink_interval_ms", int(ms)),
+            Self::NotifyAfter(secs) => set_value(doc, "notify_after_secs", int(secs)),
             Self::TabBar(on) => set_value(doc, "tab_bar", on),
             Self::Sidebar(on) => set_value(doc, "sidebar", on),
             Self::SidebarWidth(width) => set_value(doc, "sidebar_width", float(width.into())),
@@ -475,6 +483,7 @@ mod tests {
             Setting::WindowSize { width: 1200.4, height: 700.0 },
             Setting::TabBar(false),
             Setting::CursorBlinkInterval(450),
+            Setting::NotifyAfter(30),
             Setting::Opacity(0.85),
             Setting::Blur(false),
             Setting::CommandsRun(false),
@@ -495,6 +504,7 @@ mod tests {
         assert_eq!((config.default_width, config.default_height), (1200.0, 700.0));
         assert!(!config.tab_bar);
         assert_eq!(config.cursor_blink_interval_ms, 450);
+        assert_eq!(config.notify_after_secs, 30);
         assert_eq!(config.opacity(), 0.85);
         assert!(!config.blur);
         assert!(!config.commands_run);

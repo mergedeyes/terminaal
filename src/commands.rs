@@ -325,11 +325,16 @@ pub struct System {
 pub struct Target {
     /// `None` while an SSH connection hasn't found out yet.
     pub system: Option<System>,
-    /// The host, when the active tab is an SSH session.
+    /// The host, when the active tab is an SSH session: `user@host`.
     pub host: Option<String>,
+    /// ... and its name in the sidebar, which snippets are bound to.
+    pub host_name: Option<String>,
     /// The system was set in the config or the host's options rather than
     /// detected -- then the hint points at a different place.
     pub configured: bool,
+    /// How many tabs a command goes to: more than one while the active
+    /// tab takes part in a broadcast.
+    pub tabs: usize,
 }
 
 /// Every command this system has, in button order. With `assume_yes` the

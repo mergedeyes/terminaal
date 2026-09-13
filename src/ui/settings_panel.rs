@@ -377,6 +377,15 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     });
     change(actions, moved, Setting::ScrollbackLines(scrollback));
     ui.label(weak(t!("settings-scrollback-note")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-integration"));
+    let mut secs = config.notify_after_secs;
+    let moved = slider(ui, &t!("settings-notify-after"), "notify_after_secs", &mut secs, 0..=300, 5.0, |secs| {
+        if secs == 0 { t!("settings-notify-never") } else { t!("settings-seconds", secs = secs) }
+    });
+    change(actions, moved, Setting::NotifyAfter(secs));
+    ui.label(weak(t!("settings-integration-note")).size(11.0));
 }
 
 fn shell(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {

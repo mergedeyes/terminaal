@@ -34,6 +34,24 @@ in a sidebar, and never have secrets written to disk.
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
 - Scrollback with the mouse wheel (speed adjustable in the settings), mouse selection,
   clipboard copy and paste
+- **Search the scrollback** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>): matches
+  light up as you type, <kbd>Enter</kbd> and then <kbd>n</kbd>/<kbd>N</kbd> jump
+  between them
+- Bracketed paste: pasted text goes to shells and editors as one paste, so a
+  multi-line paste isn't run line by line
+- **Shell integration** for fish, bash and zsh, set up by Terminaal itself (other
+  shells work if they send OSC 133/OSC 7, as fish 4 does):
+  - tab titles show the working directory, and a new tab opens in it
+  - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump from prompt to prompt
+  - a failed command gets its exit code (`✘ 1`) next to its prompt
+  - a desktop notification when a long command finishes in a tab you're not looking at
+- **Your own commands** (snippets) next to the built-in ones, optionally only for
+  one system or one host, kept in `~/.config/terminaal/snippets.toml`
+- **Broadcast**: put tabs into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
+  or the right-click menu) and what you type in one of them goes to all – with
+  snippets, the same command on ten servers at once. Those tabs are marked red
+- **Clickable links**: hold <kbd>Ctrl</kbd> to underline URLs, hyperlinks
+  (OSC 8) and existing files under the mouse, <kbd>Ctrl</kbd>+click opens them
 - Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
   reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
@@ -78,8 +96,12 @@ in a sidebar, and never have secrets written to disk.
   timeouts, keepalives, compression, address family, authentication order,
   agent forwarding (`ForwardAgent`), `StrictHostKeyChecking`, `RemoteCommand`, `SetEnv`/`SendEnv`, and the
   algorithm lists (kex, host key, ciphers, MACs)
-- Host keys are checked against `~/.ssh/known_hosts`, and new entries are appended,
-  never rewritten
+- The sidebar shows the active tab's **port forwards** – running, paused or
+  failed and why – and pauses, starts or retries each while connected
+- Host keys are checked against `~/.ssh/known_hosts`, and new entries are appended.
+  If a host's key changed, the tab shows the stored fingerprint next to the new
+  one; **Host key** on the host in the sidebar shows what's stored and removes
+  it after asking – only those lines, the rest of the file stays as it is
 - Host-key prompts, passphrases and passwords are asked **inside the tab**,
   like OpenSSH does. Nothing secret is ever stored
 
@@ -144,17 +166,28 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
 | <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> | Go to tab 1 … 9 |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Move the tab left / right |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> | Tab joins / leaves the broadcast |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Previous / next prompt |
+| <kbd>Ctrl</kbd>+click | Open the link or file under the mouse |
 | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
 
 Every shortcut can be changed, removed or given more key combinations in the
 settings tab under **Shortcuts** (click **+** and press the keys), or in
 `config.toml` (see below). "Paste and run" has no default. In full-screen
 programs such as `less` or `vim`, the scrolling keys go to the program.
+
+In the search bar, type to search upwards from the bottom of the screen (case
+matters only once you type a capital letter). <kbd>Enter</kbd> jumps to the next
+match up, <kbd>Shift</kbd>+<kbd>Enter</kbd> down; after that <kbd>n</kbd> and
+<kbd>N</kbd> do the same, and <kbd>/</kbd> or <kbd>Backspace</kbd> edit the query
+again. <kbd>Esc</kbd> closes the bar, as does any other key, which then goes to
+the shell.
 
 Tabs can also be closed with a middle click; the ☰ button in the tab bar
 toggles the sidebar as well.
@@ -182,6 +215,7 @@ default_width = 1000.0        # window size at start
 default_height = 650.0
 cursor_blink = true
 cursor_blink_interval_ms = 600
+notify_after_secs = 10        # notify when a command ran this long unseen (0: never)
 tab_bar = true
 sidebar = true                # show the sidebar at start
 sidebar_width = 300.0
@@ -234,7 +268,8 @@ black = "#45475a"
 # ...
 
 # Optional: [colors.bright], [colors.dim], [colors.cursor] cursor,
-# [colors.selection] background/text.
+# [colors.selection] background/text,
+# [colors.search.matches] and [colors.search.focused_match] background/foreground.
 
 [ui]              # optional, all keys too; the rest follows from the colors above
 accent = "#cba6f7"

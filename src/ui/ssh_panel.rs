@@ -4,10 +4,14 @@
 //! Connecting opens a tab ([`SidebarAction::Connect`]) with a host's
 //! default login or any of its others.
 //!
+//! A selected host's stored host key (`known_hosts`) folds out below its
+//! buttons, where it can be removed after asking ([`HostKeys`]).
+//!
 //! The host form shows what most hosts need -- address, logins, jump
 //! host. Port forwards and all other options fold out below it; a form
 //! opens those fold-outs that have something set.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, TextEdit, Ui};
@@ -15,8 +19,9 @@ use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margi
 use crate::commands::Family;
 use crate::i18n::t;
 use crate::ssh::options::{AddressFamily, Forward, ForwardAgent, ForwardKind, HostKeyCheck, Options, Target};
-use crate::ssh::{self, Catalog, Host, Login, keys};
-use crate::ui::sidebar::SidebarAction;
+use crate::ssh::{self, Catalog, Host, Login, keys, known_hosts};
+use crate::ssh::forward::ForwardState;
+use crate::ui::sidebar::{SidebarAction, TabForwards};
 use crate::ui::theme;
 use crate::ui::widgets::{Status, list_row, section_title, weak};
 
@@ -86,7 +91,123 @@ pub struct SshPanel {
     editor: Option<HostEditor>,
     /// Saved host whose delete button was clicked once.
     confirm_delete: Option<usize>,
+    /// The selected host's known_hosts entries, while shown.
+    host_keys: Option<HostKeys>,
     status: Option<Status>,
+}
+
+/// Where a host's key is stored and what's stored for it.
+struct HostKeys {
+    selection: Selection,
+    /// The host as known_hosts names it: `host` or `[host]:port`.
+    entry: String,
+    host: String,
+    port: u16,
+    file: Option<PathBuf>,
+    /// Read when shown and after removing; an error message otherwise.
+    entries: Result<Vec<known_hosts::Entry>, String>,
+    /// Removing was clicked once.
+    confirm: bool,
+}
+
+/// What was clicked in the host key view.
+enum HostKeysClick {
+    AskRemove,
+    Remove,
+    Cancel,
+}
+
+impl HostKeys {
+    /// The entries for `host` the way connecting would look them up: its
+    /// address and `UserKnownHostsFile` resolved through the catalog
+    /// (`~/.ssh/config` included).
+    fn new(data: &SshData, host: &Host, selection: Selection) -> Self {
+        let (address, port, file) = match data.catalog.target(host) {
+            Ok(target) => (target.host.clone(), target.port, known_hosts::file_for(&target)),
+            Err(_) => (host.host.clone(), host.port, None),
+        };
+        let mut view = Self {
+            selection,
+            entry: known_hosts::entry_name(&address, port),
+            host: address,
+            port,
+            file,
+            entries: Ok(Vec::new()),
+            confirm: false,
+        };
+        view.read();
+        view
+    }
+
+    fn file_label(&self) -> String {
+        self.file.as_deref().map_or_else(|| "known_hosts".to_string(), ssh::display_path)
+    }
+
+    fn read(&mut self) {
+        self.entries = match &self.file {
+            Some(file) => known_hosts::entries(file, &self.host, self.port)
+                .map_err(|err| t!("common-file-unreadable", path = self.file_label(), err = err.to_string())),
+            None => Err(t!("known-hosts-no-file")),
+        };
+    }
+
+    /// Take the shown entries out of the file.
+    fn remove(&mut self) -> Result<String, String> {
+        let (Some(file), Ok(entries)) = (&self.file, &self.entries) else { return Err(t!("known-hosts-no-file")) };
+        let result = known_hosts::remove(file, entries)
+            .map(|()| t!("known-hosts-removed", entry = &self.entry, file = self.file_label()))
+            .map_err(|err| t!("known-hosts-failed", file = self.file_label(), err = err.to_string()));
+        self.confirm = false;
+        self.read();
+        result
+    }
+
+    fn show(&self, ui: &mut Ui) -> Option<HostKeysClick> {
+        let mut click = None;
+        ui.add_space(4.0);
+        Frame::group(ui.style()).fill(theme::colors().row).inner_margin(Margin::same(8)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(t!("known-hosts-title", entry = &self.entry)).strong());
+            ui.label(weak(self.file_label()).size(11.0));
+            ui.add_space(4.0);
+            let entries = match &self.entries {
+                Ok(entries) => entries,
+                Err(err) => {
+                    ui.label(RichText::new(err).color(theme::colors().error));
+                    return;
+                }
+            };
+            if entries.is_empty() {
+                ui.label(weak(t!("known-hosts-none")));
+                return;
+            }
+            for entry in entries {
+                ui.label(RichText::new(&entry.key_type).monospace());
+                ui.add(egui::Label::new(RichText::new(&entry.fingerprint).monospace().size(11.0)).wrap());
+                let names = match &entry.hosts {
+                    Some(hosts) => t!("known-hosts-also", hosts = hosts),
+                    None => t!("known-hosts-hashed"),
+                };
+                ui.label(weak(format!("{} · {names}", t!("known-hosts-line", line = entry.line + 1))).size(11.0));
+                ui.add_space(4.0);
+            }
+            if self.confirm {
+                ui.label(RichText::new(t!("known-hosts-confirm")).color(theme::colors().error));
+                ui.horizontal(|ui| {
+                    let remove = RichText::new(t!("common-remove")).color(theme::colors().error);
+                    if ui.button(remove).clicked() {
+                        click = Some(HostKeysClick::Remove);
+                    }
+                    if ui.button(t!("common-no")).clicked() {
+                        click = Some(HostKeysClick::Cancel);
+                    }
+                });
+            } else if ui.button(t!("known-hosts-remove", count = entries.len())).clicked() {
+                click = Some(HostKeysClick::AskRemove);
+            }
+        });
+        click
+    }
 }
 
 /// What a forward row in the form is.
@@ -492,11 +613,33 @@ impl SshPanel {
         } else {
             None
         };
-        Self { selected, editor: None, confirm_delete: None, status: None }
+        Self { selected, editor: None, confirm_delete: None, host_keys: None, status: None }
     }
 
     pub fn report(&mut self, result: Result<String, String>) {
         self.status = Some(Status::from_result(result));
+    }
+
+    /// Show or hide the host key view for `host`.
+    fn toggle_host_keys(&mut self, data: &SshData, host: &Host, selection: Selection) {
+        self.host_keys = match &self.host_keys {
+            Some(view) if view.selection == selection => None,
+            _ => Some(HostKeys::new(data, host, selection)),
+        };
+    }
+
+    /// The host key view, if it's open for `selection`.
+    fn host_keys_ui(&mut self, ui: &mut Ui, selection: Selection) {
+        let Some(view) = self.host_keys.as_mut().filter(|view| view.selection == selection) else { return };
+        match view.show(ui) {
+            Some(HostKeysClick::AskRemove) => view.confirm = true,
+            Some(HostKeysClick::Cancel) => view.confirm = false,
+            Some(HostKeysClick::Remove) => {
+                let result = view.remove();
+                self.report(result);
+            }
+            None => {}
+        }
     }
 
     /// Open a tab to `host`, logged in with its login number `login`.
@@ -508,8 +651,12 @@ impl SshPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui, data: &mut SshData, actions: &mut Vec<SidebarAction>) {
+    pub fn show(&mut self, ui: &mut Ui, data: &mut SshData, forwards: Option<&TabForwards>, actions: &mut Vec<SidebarAction>) {
         let mut clicked = None;
+        if let Some(forwards) = forwards {
+            forwards_status(ui, forwards, actions);
+            ui.add_space(18.0);
+        }
 
         section_title(ui, &t!("ssh-saved-hosts"));
         if let Some(err) = data.hosts_error.clone() {
@@ -538,6 +685,7 @@ impl SshPanel {
             && self.editor.is_none()
         {
             self.saved_host_buttons(ui, data, i, host, actions);
+            self.host_keys_ui(ui, Selection::Saved(i));
         }
 
         ui.add_space(4.0);
@@ -577,7 +725,11 @@ impl SshPanel {
                     if copy.on_hover_text(t!("ssh-adopt-hint")).clicked() {
                         adopt = Some(host.clone());
                     }
+                    if ui.button(t!("known-hosts-button")).on_hover_text(t!("known-hosts-button-hint")).clicked() {
+                        self.toggle_host_keys(data, host, Selection::Config(i));
+                    }
                 });
+                self.host_keys_ui(ui, Selection::Config(i));
             }
         }
 
@@ -586,6 +738,7 @@ impl SshPanel {
         {
             self.selected = Some(selection);
             self.confirm_delete = None;
+            self.host_keys = None;
             self.status = None;
         }
         if let Some(host) = adopt {
@@ -612,7 +765,7 @@ impl SshPanel {
         let confirming = self.confirm_delete == Some(index);
         let logins = host.all_logins();
         let mut connect = None;
-        let (mut edit, mut ask_delete, mut delete, mut cancel_delete) = (false, false, false, false);
+        let (mut edit, mut ask_delete, mut delete, mut cancel_delete, mut show_keys) = (false, false, false, false, false);
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if logins.len() == 1 {
@@ -636,13 +789,20 @@ impl SshPanel {
                 edit = ui.button("✏").on_hover_text(t!("common-edit")).clicked();
                 ask_delete = ui.button("🗑").on_hover_text(t!("common-delete")).clicked();
             }
+            if ui.button(t!("known-hosts-button")).on_hover_text(t!("known-hosts-button-hint")).clicked() {
+                show_keys = true;
+            }
         });
+        if show_keys {
+            self.toggle_host_keys(data, host, Selection::Saved(index));
+        }
 
         if let Some(login) = connect {
             self.connect(data, host, login, actions);
         }
         if edit {
             self.editor = Some(HostEditor::from_host(host, Some(index)));
+            self.host_keys = None;
             self.status = None;
         }
         if ask_delete {
@@ -781,6 +941,46 @@ impl SshPanel {
         data.update_hosts(|saved| *saved = hosts)?;
         self.selected = Some(Selection::Saved(index));
         Ok(t!("common-saved", name = &name))
+    }
+}
+
+/// The active tab's port forwards: how each is doing, and a button to
+/// pause it, start it or try again.
+fn forwards_status(ui: &mut Ui, tab: &TabForwards, actions: &mut Vec<SidebarAction>) {
+    section_title(ui, &t!("fwd-title", tab = &tab.label));
+    for (i, forward) in tab.forwards.iter().enumerate() {
+        Frame::new().fill(theme::colors().row).corner_radius(CornerRadius::same(4)).inner_margin(Margin::symmetric(8, 6)).show(
+            ui,
+            |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let kind = if forward.remote { t!("host-forward-remote") } else { t!("host-forward-local") };
+                    ui.label(weak(kind).size(11.0));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let (label, enable) = match forward.state {
+                            ForwardState::Active | ForwardState::Starting => (t!("fwd-pause"), false),
+                            ForwardState::Paused => (t!("fwd-start"), true),
+                            ForwardState::Failed(_) => (t!("fwd-retry"), true),
+                        };
+                        if ui.small_button(label).clicked() {
+                            actions.push(SidebarAction::SetForward(i, enable));
+                        }
+                    });
+                });
+                ui.add(egui::Label::new(RichText::new(&forward.label).monospace().size(12.0)).wrap());
+                let (text, color) = match &forward.state {
+                    ForwardState::Active => (t!("fwd-active"), theme::colors().success),
+                    ForwardState::Starting => (t!("fwd-starting"), theme::colors().text_weak),
+                    ForwardState::Paused => (t!("fwd-paused"), theme::colors().text_weak),
+                    ForwardState::Failed(err) => (t!("fwd-failed", err = err.as_str()), theme::colors().error),
+                };
+                ui.add(egui::Label::new(RichText::new(text).size(11.0).color(color)).wrap());
+            },
+        );
+        ui.add_space(2.0);
+    }
+    if tab.forwards.iter().any(|forward| forward.remote && forward.state == ForwardState::Paused) {
+        ui.label(weak(t!("fwd-remote-paused-note")).size(11.0));
     }
 }
 
@@ -1032,10 +1232,24 @@ mod tests {
             panel.selected = selected;
             panel.editor = editor;
             for _ in 0..2 {
-                ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &mut data, &mut actions))
+                ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &mut data, None, &mut actions))
                     .drop_without_applying_deltas();
             }
         }
+        // The active tab's forwards in every state.
+        use crate::ssh::forward::ForwardStatus;
+        let status = |state, remote| ForwardStatus { label: "localhost:8080 → db:5432".into(), remote, state };
+        let tab = TabForwards {
+            label: "me@host".into(),
+            forwards: vec![
+                status(ForwardState::Active, false),
+                status(ForwardState::Starting, true),
+                status(ForwardState::Paused, true),
+                status(ForwardState::Failed("Address already in use".into()), false),
+            ],
+        };
+        ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &mut data, Some(&tab), &mut actions))
+            .drop_without_applying_deltas();
         assert!(actions.is_empty());
     }
 
@@ -1120,6 +1334,44 @@ mod tests {
         panel.editor = Some(HostEditor::from_host(&cfg, None));
         assert!(panel.commit(&mut data).unwrap_err().contains("unlesbar"));
         assert_eq!(data.catalog.saved.len(), 1, "nothing was added");
+    }
+
+    /// The known_hosts view against a throwaway `UserKnownHostsFile`,
+    /// never ~/.ssh: shown, asked, removed.
+    #[test]
+    fn host_key_view_shows_and_removes_entries() {
+        const KEY: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+        let dir = std::env::temp_dir().join(format!("terminaal-ssh-panel-kh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("known_hosts");
+        std::fs::write(&file, format!("# kept\na.example ssh-ed25519 {KEY}\nb.example ssh-ed25519 {KEY}\n")).unwrap();
+
+        let mut data = data();
+        data.catalog.saved[0].options.user_known_hosts_file = Some(file.display().to_string());
+        let mut panel = SshPanel::new(&data);
+        let host = data.catalog.saved[0].clone();
+        panel.toggle_host_keys(&data, &host, Selection::Saved(0));
+        let view = panel.host_keys.as_ref().unwrap();
+        assert_eq!(view.entry, "a.example");
+        assert_eq!(view.entries.as_ref().unwrap().len(), 1);
+
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        for confirm in [false, true] {
+            panel.host_keys.as_mut().unwrap().confirm = confirm;
+            ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &mut data, None, &mut actions)).drop_without_applying_deltas();
+        }
+
+        let result = panel.host_keys.as_mut().unwrap().remove();
+        assert!(result.unwrap().contains("a.example"));
+        assert!(panel.host_keys.as_ref().unwrap().entries.as_ref().unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), format!("# kept\nb.example ssh-ed25519 {KEY}\n"));
+        ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &mut data, None, &mut actions)).drop_without_applying_deltas();
+
+        // A second click on the button hides the view again.
+        panel.toggle_host_keys(&data, &host, Selection::Saved(0));
+        assert!(panel.host_keys.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

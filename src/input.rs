@@ -106,6 +106,37 @@ pub fn wheel_to_bytes(
     None
 }
 
+/// What the program gets for pasting `text`; with `run`, followed by
+/// exactly one Enter whether or not the text ended in a line break.
+/// `None` if there's nothing to send.
+///
+/// ESC and Ctrl-C are always stripped: in bracketed paste mode an embedded
+/// `ESC [201~` would end the paste early and run the rest as typed input,
+/// and outside it they'd reach the shell as keys. Like Alacritty:
+/// - Bracketed paste on (the program asked with `ESC [?2004h`): the text
+///   goes between `ESC [200~` and `ESC [201~`, line breaks untouched, so
+///   the shell inserts it instead of running each line. The Enter for
+///   `run` comes after the closing bracket.
+/// - Off: line breaks become CR, which is what Enter sends.
+pub fn paste_to_bytes(text: &str, mode: TermMode, run: bool) -> Option<Vec<u8>> {
+    let mut text: String = text.chars().filter(|&c| c != '\x1b' && c != '\x03').collect();
+    if run {
+        text.truncate(text.trim_end_matches(['\r', '\n']).len());
+    }
+    if text.is_empty() {
+        return None;
+    }
+    let mut bytes = if mode.contains(TermMode::BRACKETED_PASTE) {
+        [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
+    } else {
+        text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+    };
+    if run {
+        bytes.push(b'\r');
+    }
+    Some(bytes)
+}
+
 /// One mouse-button report at 1-based `col`/`row`. Empty if the position
 /// can't be encoded: the X10 default fits values up to 255 in one byte
 /// each (so coordinates up to 223), UTF-8 up to 2047 in two.
@@ -133,9 +164,39 @@ mod tests {
     use alacritty_terminal::term::TermMode;
     use winit::keyboard::ModifiersState;
 
-    use super::wheel_to_bytes;
+    use super::{paste_to_bytes, wheel_to_bytes};
 
     const NONE: ModifiersState = ModifiersState::empty();
+
+    #[test]
+    fn paste_without_bracketed_mode_sends_line_breaks_as_enter() {
+        let mode = TermMode::default();
+        assert_eq!(paste_to_bytes("a\r\nb\nc", mode, false).unwrap(), b"a\rb\rc");
+        assert_eq!(paste_to_bytes("ls\n\n", mode, true).unwrap(), b"ls\r");
+        assert_eq!(paste_to_bytes("ls", mode, true).unwrap(), b"ls\r");
+    }
+
+    #[test]
+    fn paste_in_bracketed_mode_is_wrapped() {
+        let mode = TermMode::default() | TermMode::BRACKETED_PASTE;
+        assert_eq!(paste_to_bytes("a\nb\n", mode, false).unwrap(), b"\x1b[200~a\nb\n\x1b[201~");
+        // Enter after the closing bracket, the trailing line break dropped.
+        assert_eq!(paste_to_bytes("a\nb\n", mode, true).unwrap(), b"\x1b[200~a\nb\x1b[201~\r");
+    }
+
+    #[test]
+    fn paste_cannot_end_the_bracket_early() {
+        let mode = TermMode::default() | TermMode::BRACKETED_PASTE;
+        let bytes = paste_to_bytes("x\x1b[201~rm -rf ~\x03\n", mode, false).unwrap();
+        assert_eq!(bytes, b"\x1b[200~x[201~rm -rf ~\n\x1b[201~");
+    }
+
+    #[test]
+    fn empty_paste_sends_nothing() {
+        assert_eq!(paste_to_bytes("", TermMode::default(), false), None);
+        assert_eq!(paste_to_bytes("\x1b\x03", TermMode::BRACKETED_PASTE, false), None);
+        assert_eq!(paste_to_bytes("\n\r\n", TermMode::default(), true), None);
+    }
 
     #[test]
     fn normal_screen_wheel_scrolls_the_scrollback() {

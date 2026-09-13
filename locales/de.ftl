@@ -46,6 +46,25 @@ app-language-changed = Sprache umgestellt.
 menu-copy = Kopieren
 menu-paste = Einfügen
 menu-paste-run = Einfügen und ausführen
+menu-broadcast-on = Broadcast für diesen Tab
+menu-broadcast-off = Broadcast beenden
+
+## Suche im Scrollback (render/search_bar.rs)
+
+search-prompt = Suchen:
+search-no-match = Keine Treffer
+search-hint-typing = Enter ↑ · Umschalt+Enter ↓ · Esc
+search-hint-jumping = n ↑ · N ↓ · / ändern · Esc
+
+## Shell-Integration (terminal/integration.rs, app.rs)
+
+notify-finished = Befehl fertig
+notify-failed = Befehl fehlgeschlagen (Exit-Code { $code })
+notify-body = { $tab } – nach { $duration }
+duration-seconds = { $secs } s
+duration-minutes = { $mins } min { $secs } s
+duration-hours = { $hours } h { $mins } min
+prompt-exit = ✘ { $code }
 
 ## Tastennamen in Tastenkürzeln
 
@@ -97,6 +116,11 @@ settings-scrollback-lines = { $lines ->
    *[other] { $lines } Zeilen
 }
 settings-scrollback-note = Gilt nach dem Loslassen für alle Tabs; kleiner gestellt, verwirft er die ältesten Zeilen.
+settings-integration = Shell-Integration
+settings-notify-after = Benachrichtigen nach
+settings-notify-never = nie
+settings-seconds = { $secs } s
+settings-integration-note = Benachrichtigt, wenn ein Befehl so lange lief und sein Tab gerade nicht zu sehen ist. fish, bash und zsh melden Prompts und Verzeichnis in Terminaal von selbst, andere Shells mit OSC 133 und OSC 7.
 settings-shell = Standard-Shell
 settings-startup = Beim Start
 settings-startup-sidebar = Seitenleiste anzeigen
@@ -162,6 +186,7 @@ shortcut-previous-tab = Vorheriger Tab
 shortcut-select-tab = Tab { $number }
 shortcut-move-tab-left = Tab nach links verschieben
 shortcut-move-tab-right = Tab nach rechts verschieben
+shortcut-toggle-broadcast = Broadcast an/aus (Eingabe an alle markierten Tabs)
 shortcut-toggle-sidebar = Seitenleiste ein-/ausblenden
 shortcut-open-settings = Einstellungen öffnen
 shortcut-copy = Kopieren
@@ -171,6 +196,9 @@ shortcut-scroll-page-up = Eine Seite zurück
 shortcut-scroll-page-down = Eine Seite vor
 shortcut-scroll-to-top = Zum Anfang des Scrollbacks
 shortcut-scroll-to-bottom = Zum Ende
+shortcut-search = Im Scrollback suchen
+shortcut-previous-prompt = Zum vorigen Prompt
+shortcut-next-prompt = Zum nächsten Prompt
 shortcut-font-bigger = Größer
 shortcut-font-smaller = Kleiner
 shortcut-font-reset = Zurücksetzen
@@ -222,6 +250,25 @@ shells-saved = „{ $name }“ gespeichert – gilt für neue { $shell }-Tabs.
 ## Seitenleiste: Befehle (commands.rs)
 
 cmd-title = Befehle
+cmd-broadcast = Broadcast: geht an { $count } Tabs
+snip-title = Eigene Befehle
+snip-manage = Verwalten
+snip-manage-done = Fertig
+snip-none = Noch keine eigenen Befehle – „Verwalten“ legt welche an.
+snip-none-here = Keine eigenen Befehle für dieses System oder diesen Host.
+snip-add = +  Befehl hinzufügen
+snip-new = Neuer Befehl
+snip-edit = Befehl bearbeiten
+snip-name-hint = z. B. Logs verfolgen
+snip-command-note = Mehrere Zeilen kommen zusammen an, wie eingefügt.
+snip-system = Nur auf System
+snip-all-systems = Alle Systeme
+snip-host = Nur auf Host
+snip-all-hosts = Alle Hosts und lokal
+snip-everywhere = Überall
+snip-on-host = auf { $host }
+snip-command-missing = Der Befehl fehlt.
+snip-name-taken = Einen Befehl „{ $name }“ gibt es schon.
 cmd-system = System: { $system }
 cmd-system-local-hint = Aus /etc/os-release erkannt. Stimmt das nicht, lässt es sich in den Einstellungen unter „Shell“ festlegen.
 cmd-system-remote-hint = Beim Verbinden auf { $host } ermittelt. Stimmt das nicht, lässt es sich im Host-Formular unter „Erweitert“ festlegen.
@@ -383,7 +430,7 @@ adv-forward-agent-socket = Weitergeleitet wird { $socket }
 adv-methods = Methoden in dieser Reihenfolge
 adv-host-key = Host-Key
 adv-unknown-host-keys = Unbekannte Host-Keys
-adv-changed-host-key-note = Ein geänderter Host-Key bricht die Verbindung immer ab.
+adv-changed-host-key-note = Ein geänderter Host-Key bricht die Verbindung immer ab. Den gespeicherten zeigt und entfernt 🔑 Host-Key beim ausgewählten Host.
 adv-known-hosts-file = known_hosts-Datei
 adv-session = Sitzung
 adv-remote-command = Befehl statt Login-Shell
@@ -522,8 +569,11 @@ conn-unknown-type = unbekannter
 conn-host-key-changed =
     WARNUNG: Der Host-Key von { $entry } hat sich geändert!
     Das kann ein Angriff sein (Man-in-the-Middle) – oder der Server wurde neu aufgesetzt.
-    Neuer { $kind }-Fingerprint: { $fingerprint }
-    Verbindung abgebrochen. Ist die Änderung erwartet, entferne den alten Eintrag mit
+    Gespeichert in { $file }:
+    { $stored }
+    Neu vom Server: { $kind } { $fingerprint }
+    Verbindung abgebrochen. Ist die Änderung erwartet, entferne den alten Eintrag
+    in der Seitenleiste (SSH → Host auswählen → Host-Key) oder mit
       ssh-keygen -R '{ $entry }'{ $file_option }
 conn-host-key-refused = Der Host-Key von „{ $entry }“ steht nicht in { $file }, und StrictHostKeyChecking lässt nur bekannte Hosts zu.
     { $kind }-Fingerprint: { $fingerprint }
@@ -534,6 +584,24 @@ conn-host-key-question =
 conn-host-key-rejected = Abgebrochen: Host-Key nicht bestätigt.
 conn-known-hosts-failed = { $file } konnte nicht ergänzt werden: { $err }
 conn-host-key-saved = Host-Key von „{ $entry }“ ({ $kind }, { $fingerprint }) in { $file } gespeichert.
+known-hosts-changed = Die Datei hat sich inzwischen geändert – bitte neu laden.
+conn-stored-key = { $kind } { $fingerprint } (Zeile { $line })
+known-hosts-button = 🔑 Host-Key
+known-hosts-button-hint = Den gespeicherten Host-Key aus known_hosts anzeigen oder entfernen
+known-hosts-title = Host-Key von { $entry }
+known-hosts-none = Kein Eintrag gespeichert – beim nächsten Verbinden wird der Host-Key je nach StrictHostKeyChecking erfragt.
+known-hosts-line = Zeile { $line }
+known-hosts-hashed = Name gehasht
+known-hosts-also = gilt für { $hosts }
+known-hosts-remove =
+    { $count ->
+        [one] Eintrag entfernen
+       *[other] { $count } Einträge entfernen
+    }
+known-hosts-confirm = Nur entfernen, wenn feststeht, dass der Server einen neuen Schlüssel hat – sonst kann es ein Angriff sein. Die ganze Zeile fällt weg, auch für die anderen Namen darin. Beim nächsten Verbinden wird der neue Host-Key zur Bestätigung angezeigt.
+known-hosts-removed = Host-Key von { $entry } aus { $file } entfernt.
+known-hosts-failed = { $file } konnte nicht geändert werden: { $err }
+known-hosts-no-file = Kein known_hosts-Pfad ($HOME ist nicht gesetzt).
 conn-denied = Zugriff verweigert.
 conn-password-prompt = Passwort für { $target }:
 conn-auth-failed = Anmeldung als { $user } bei { $host } fehlgeschlagen (vom Server angeboten: { $methods }).
@@ -558,3 +626,15 @@ conn-unknown-key-type = unbekannter Schlüsseltyp
 forward-up = Weiterleitung { $forward }
 forward-failed = Weiterleitung { $forward } fehlgeschlagen: { $err }
 forward-no-address = keine Adresse gefunden
+
+## Weiterleitungen des aktiven Tabs (ui/ssh_panel.rs)
+
+fwd-title = Weiterleitungen · { $tab }
+fwd-active = aktiv
+fwd-starting = wird eingerichtet …
+fwd-paused = angehalten
+fwd-failed = fehlgeschlagen: { $err }
+fwd-pause = Anhalten
+fwd-start = Starten
+fwd-retry = Erneut versuchen
+fwd-remote-paused-note = Eine angehaltene Remote-Weiterleitung lauscht auf dem Server weiter, weist Verbindungen aber ab.

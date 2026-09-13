@@ -24,6 +24,7 @@ use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
 use crate::shortcuts::{Action, KeyCombo};
 use crate::ssh::SshTarget;
+use crate::ssh::forward::ForwardStatus;
 use crate::ui::keys_panel::KeysPanel;
 use crate::ui::ssh_panel::{SshData, SshPanel};
 use crate::ui::theme;
@@ -59,6 +60,15 @@ pub enum SidebarAction {
     /// Send this built-in command to the active tab's shell, run or only
     /// typed out depending on `commands_run`.
     RunCommand(String),
+    /// Pause the active tab's port forward at this index, or start it.
+    SetForward(usize, bool),
+}
+
+/// The active SSH tab's port forwards.
+pub struct TabForwards {
+    /// `user@host`.
+    pub label: String,
+    pub forwards: Vec<ForwardStatus>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -137,7 +147,7 @@ impl Sidebar {
             entries: Ok(Vec::new()),
             list: EntryKind::Alias,
             editor: None,
-            commands: CommandsPanel::default(),
+            commands: CommandsPanel::load(),
             confirm_delete: None,
             status: None,
         };
@@ -172,6 +182,7 @@ impl Sidebar {
         default: &InstalledShell,
         config: &Config,
         target: Option<&Target>,
+        forwards: Option<&TabForwards>,
         header_height: f32,
     ) -> (f32, Vec<SidebarAction>) {
         let mut actions = Vec::new();
@@ -184,7 +195,7 @@ impl Sidebar {
                 ScrollArea::vertical().id_salt(self.section).auto_shrink([false; 2]).show(ui, |ui| {
                     Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| match self.section {
                         Section::Shells => self.shells_section(ui, default, config, target, &mut actions),
-                        Section::Ssh => self.ssh.show(ui, &mut self.data, &mut actions),
+                        Section::Ssh => self.ssh.show(ui, &mut self.data, forwards, &mut actions),
                         Section::Keys => self.keys.show(ui, &mut self.data),
                     });
                 });
@@ -204,7 +215,13 @@ impl Sidebar {
         ui.add_space(18.0);
         self.managed_section(ui);
         ui.add_space(18.0);
-        self.commands.show(ui, config, target, actions);
+        let mut hosts: Vec<String> = Vec::new();
+        for host in self.data.catalog.saved.iter().chain(&self.data.catalog.config) {
+            if !hosts.contains(&host.name) {
+                hosts.push(host.name.clone());
+            }
+        }
+        self.commands.show(ui, config, target, &hosts, actions);
         if let Some(status) = &self.status {
             ui.add_space(8.0);
             status.show(ui);

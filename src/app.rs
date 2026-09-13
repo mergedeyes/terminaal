@@ -6,6 +6,7 @@
 //! then the console column -- tab bar on top (`render::tab_bar`), the
 //! terminal grid below it (or, in the settings tab, egui's settings page).
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,7 +24,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::platform::x11::WindowAttributesExtX11;
-use winit::window::{CursorIcon, Icon, Window, WindowId};
+use winit::window::{CursorIcon, Icon, UserAttentionType, Window, WindowId};
 
 /// Wayland app_id and X11 WM_CLASS; a desktop entry named
 /// `terminaal.desktop` gets matched to the window through it.
@@ -55,6 +56,7 @@ use crate::input;
 use crate::render::grid::{self, GridText};
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::{QuadInstance, QuadRenderer};
+use crate::render::search_bar::{SearchBar, SearchBarView};
 use crate::render::tab_bar::{self, TabBar, TabBarHit, TabBarLayout};
 use crate::render::text::{CellMetrics, FontFamilies, TextRendererState};
 use crate::theme::{Theme, Themes};
@@ -64,10 +66,14 @@ use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use crate::shells::{self, launch, InstalledShell};
 use crate::shortcuts::{Action, KeyCombo, Keymap};
 use crate::ssh::SshTarget;
+use crate::render::label::{Labels, Rect as LabelRect};
+use crate::terminal::integration::{self, ShellEvent};
+use crate::terminal::{links, prompts};
+use crate::terminal::search::Search;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
 use crate::ui::settings_panel::{SettingsPanel, SettingsView, Transparency};
-use crate::ui::sidebar::{Sidebar, SidebarAction};
+use crate::ui::sidebar::{Sidebar, SidebarAction, TabForwards};
 use crate::ui::splash::{self, Splash, SplashFrames};
 use crate::ui::UiLayer;
 
@@ -85,6 +91,8 @@ pub enum UserEvent {
     SplashReady(Result<SplashFrames, String>),
     /// The COSMIC desktop's theme changed (`theme::cosmic::watch`).
     CosmicThemeChanged,
+    /// A tab's shell said something about itself (`terminal::integration`).
+    Shell(usize, ShellEvent),
 }
 
 pub struct App {
@@ -110,10 +118,20 @@ impl App {
 struct Tab {
     id: usize,
     content: TabContent,
+    /// As shown: the program's title, else the working directory, else
+    /// `default_title` ([`Tab::refresh_title`]).
     title: String,
-    /// What the title falls back to when the program resets it: the
-    /// shell's name, or `user@host` for SSH.
+    /// The shell's name, or `user@host` for SSH.
     default_title: String,
+    /// Set by the program (OSC 0/2) until it resets it.
+    program_title: Option<String>,
+    /// Working directory the shell reported (OSC 7): host and path.
+    cwd: Option<(String, PathBuf)>,
+    /// When the running command started (OSC 133;C).
+    command_started: Option<Instant>,
+    /// Takes part in the broadcast: input typed into one such tab goes to
+    /// all of them.
+    broadcast: bool,
 }
 
 enum TabContent {
@@ -134,6 +152,25 @@ impl Tab {
 
     fn is_settings(&self) -> bool {
         matches!(self.content, TabContent::Settings)
+    }
+
+    fn refresh_title(&mut self, local_host: &str) {
+        self.title = match (&self.program_title, &self.cwd) {
+            (Some(title), _) => title.clone(),
+            (None, Some((host, path))) => {
+                let home = std::env::var_os("HOME").map(PathBuf::from);
+                integration::short_path(host, path, home.as_deref(), local_host)
+            }
+            (None, None) => self.default_title.clone(),
+        };
+    }
+
+    /// The working directory, if it's a folder on this machine: where a
+    /// new tab opened from this one starts.
+    fn local_cwd(&self, local_host: &str) -> Option<PathBuf> {
+        let (host, path) = self.cwd.as_ref()?;
+        let here = host.is_empty() || host == local_host || host == "localhost";
+        (here && matches!(self.content, TabContent::Terminal(ref t) if t.is_local()) && path.is_dir()).then(|| path.clone())
     }
 
     /// Input or a reply for the tab's shell; the settings tab has none.
@@ -205,6 +242,18 @@ struct AppState {
     splash_redraw_at: Option<Instant>,
     /// Right-click menu over the grid, while it's open.
     context_menu: Option<ContextMenu>,
+    /// This machine's name, to tell its working directories from others'.
+    hostname: String,
+    /// The window has the keyboard focus.
+    focused: bool,
+    /// Exit codes next to the prompts of failed commands.
+    prompt_labels: Labels,
+    links: links::Finder,
+    /// The link under the mouse while Ctrl is held.
+    link: Option<links::Link>,
+    /// Search in the active tab's scrollback, while its bar is open.
+    search: Option<Search>,
+    search_bar: SearchBar,
     /// Which key combination does what (`[shortcuts]` in the config).
     keymap: Keymap,
     /// Font size change by shortcut, in points on top of the configured
@@ -284,6 +333,7 @@ impl AppState {
         let default_shell = shells::default_shell(config.shell.as_deref());
         let splash = if config.splash { spawn_splash_decoder(proxy.clone(), scale_factor) } else { None };
 
+        let ui_colors = theme.ui;
         let mut state = Self {
             window,
             gpu,
@@ -312,6 +362,13 @@ impl AppState {
             splash,
             splash_redraw_at: None,
             context_menu: None,
+            hostname: hostname(),
+            focused: true,
+            prompt_labels: Labels::default(),
+            links: links::Finder::default(),
+            link: None,
+            search: None,
+            search_bar: SearchBar::new(ui_colors),
             keymap: Keymap::new(&config.shortcuts),
             font_zoom: 0.0,
             scroll_remainder: 0.0,
@@ -359,6 +416,7 @@ impl AppState {
         let terminal = TerminalSession::spawn_local_shell(
             listener,
             &launch::launch(shell),
+            self.tabs.get(self.active_tab).and_then(|tab| tab.local_cwd(&self.hostname)),
             GridSize { columns: self.cols, screen_lines: self.rows },
             self.text.cell.width,
             self.text.cell.height,
@@ -388,7 +446,16 @@ impl AppState {
     }
 
     fn push_tab(&mut self, id: usize, content: TabContent, title: String) {
-        self.tabs.push(Tab { id, content, title: title.clone(), default_title: title });
+        self.tabs.push(Tab {
+            id,
+            content,
+            title: title.clone(),
+            default_title: title,
+            program_title: None,
+            cwd: None,
+            command_started: None,
+            broadcast: false,
+        });
         self.active_tab = self.tabs.len() - 1;
         self.switched_tab();
     }
@@ -411,6 +478,7 @@ impl AppState {
     /// a shortcut ends with leaving the settings tab.
     fn switched_tab(&mut self) {
         self.settings.stop_recording();
+        self.search = None;
         self.give_keyboard_to_terminal();
         self.update_window_title();
         self.window.request_redraw();
@@ -487,6 +555,7 @@ impl AppState {
     /// `None` while the settings tab is showing -- no shell to send to.
     fn command_target(&self) -> Option<Target> {
         let mut target = self.current_terminal()?.command_target();
+        target.tabs = self.input_tabs().len();
         if target.host.is_none() && let Some(family) = self.config.system() {
             target.system = Some(System { family, root: target.system.is_some_and(|system| system.root) });
             target.configured = true;
@@ -494,14 +563,11 @@ impl AppState {
         Some(target)
     }
 
-    /// A built-in command from the sidebar: run in the active tab, or --
-    /// with `commands_run` off -- only typed into its prompt.
+    /// A built-in command or a snippet, sent like a paste (several lines
+    /// arrive as one) and run with `commands_run`.
     fn run_command(&mut self, line: String) {
-        let mut bytes = line.into_bytes();
-        if self.config.commands_run {
-            bytes.push(b'\r');
-        }
-        self.send_typed(bytes);
+        let run = self.config.commands_run;
+        self.send_to_input_tabs(|mode| input::paste_to_bytes(&line, mode, run));
     }
 
     fn settings_active(&self) -> bool {
@@ -588,9 +654,46 @@ impl AppState {
             return;
         }
         self.hovered = hovered;
-        let icon = if hovered.is_some() { CursorIcon::Pointer } else { CursorIcon::Default };
-        self.window.set_cursor(icon);
+        self.update_cursor_icon();
         self.window.request_redraw();
+    }
+
+    fn update_cursor_icon(&self) {
+        let pointer = self.hovered.is_some() || self.link.is_some();
+        self.window.set_cursor(if pointer { CursorIcon::Pointer } else { CursorIcon::Default });
+    }
+
+    /// Find the link under the mouse while Ctrl is held; underlined and
+    /// opened by a click.
+    fn update_link(&mut self) {
+        let (x, y) = self.last_cursor_pos;
+        let over_grid = self.modifiers.control_key()
+            && !self.left_button_down
+            && self.context_menu.is_none()
+            && !self.over_ui((x, y))
+            && y >= self.tab_bar_height as f64
+            && !self.search_bar.contains(x as f32, y as f32);
+        let link = over_grid.then(|| self.link_at(x, y)).flatten();
+        if link != self.link {
+            self.link = link;
+            self.update_cursor_icon();
+            self.window.request_redraw();
+        }
+    }
+
+    fn link_at(&mut self, x: f64, y: f64) -> Option<links::Link> {
+        let tab = self.tabs.get(self.active_tab)?;
+        let terminal = tab.terminal()?;
+        let (files, cwd) = (terminal.is_local(), tab.local_cwd(&self.hostname));
+        let term = terminal.term.clone();
+        let term = term.lock();
+        if term.mode().contains(TermMode::ALT_SCREEN) && term.mode().intersects(TermMode::MOUSE_MODE) {
+            return None;
+        }
+        let (col, row, _) = pixel_to_cell(x, y, self.grid_origin(), self.text.cell, self.cols, self.rows);
+        let offset = term.grid().display_offset() as i32;
+        let point = Point::new(Line(row as i32 - offset), Column(col));
+        self.links.at(&term, point, files, cwd.as_deref())
     }
 
     fn update_window_title(&self) {
@@ -658,41 +761,64 @@ impl AppState {
     /// line break.
     fn paste_clipboard(&mut self, run: bool) {
         let Some(clipboard) = self.clipboard.as_mut() else { return };
-        match clipboard.get_text() {
-            // Bracketed-paste wrapping would need to check whether the
-            // program actually enabled that terminal mode first; skipped
-            // for now, so we settle for the same minimal safety net
-            // upstream Alacritty applies regardless of paste mode:
-            // strip ESC/Ctrl-C so pasted text can't smuggle in escape
-            // sequences or prematurely signal the shell.
-            Ok(text) => {
-                let mut filtered: String = text.chars().filter(|&c| c != '\x1b' && c != '\x03').collect();
-                if run {
-                    filtered.truncate(filtered.trim_end_matches(['\r', '\n']).len());
-                    if filtered.is_empty() {
-                        return;
-                    }
-                    filtered.push('\r');
-                }
-                self.send_typed(filtered.into_bytes());
-            }
-            Err(err) => log::warn!("failed to read clipboard: {err}"),
+        let text = match clipboard.get_text() {
+            Ok(text) => text,
+            Err(err) => return log::warn!("failed to read clipboard: {err}"),
+        };
+        let Some(term) = self.current_terminal().map(|terminal| terminal.term.clone()) else { return };
+        // Into the query while it's being typed.
+        if let Some(search) = self.search.as_mut().filter(|search| search.editing()) {
+            search.push_str(&mut term.lock(), &text);
+            self.window.request_redraw();
+            return;
         }
+        self.send_to_input_tabs(|mode| input::paste_to_bytes(&text, mode, run));
     }
 
     /// Input the user typed or pasted. Snaps the view back to the bottom
     /// if they had scrolled into history, and resets the blink cycle so
     /// the cursor doesn't look like it vanished mid-keystroke.
     fn send_typed(&mut self, bytes: Vec<u8>) {
+        self.send_to_input_tabs(|_| Some(bytes.clone()));
+    }
+
+    /// The tabs typed input goes to: the active one, or while it takes part
+    /// in the broadcast, every terminal tab that does.
+    fn input_tabs(&self) -> Vec<usize> {
+        match self.tabs.get(self.active_tab) {
+            Some(tab) if tab.broadcast => {
+                (0..self.tabs.len()).filter(|&i| self.tabs[i].broadcast && self.tabs[i].terminal().is_some()).collect()
+            }
+            Some(tab) if tab.terminal().is_some() => vec![self.active_tab],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Send input to [`AppState::input_tabs`], encoded for each tab's mode
+    /// (a paste is bracketed only where the program asked for that).
+    fn send_to_input_tabs(&mut self, encode: impl Fn(TermMode) -> Option<Vec<u8>>) {
         self.reset_cursor_blink();
-        let Some(terminal) = self.current_terminal() else { return };
-        {
-            let mut term = terminal.term.lock();
-            if term.renderable_content().display_offset != 0 {
-                term.scroll_display(Scroll::Bottom);
+        for idx in self.input_tabs() {
+            let Some(terminal) = self.tabs[idx].terminal() else { continue };
+            let bytes = {
+                let mut term = terminal.term.lock();
+                if term.renderable_content().display_offset != 0 {
+                    term.scroll_display(Scroll::Bottom);
+                }
+                encode(*term.mode())
+            };
+            if let Some(bytes) = bytes {
+                terminal.send_input(bytes);
             }
         }
-        terminal.send_input(bytes);
+    }
+
+    /// Put the active tab into the broadcast, or take it out.
+    fn toggle_broadcast(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab).filter(|tab| tab.terminal().is_some()) {
+            tab.broadcast = !tab.broadcast;
+            self.window.request_redraw();
+        }
     }
 
     /// Open the context menu at the mouse. Whether copying and pasting
@@ -701,9 +827,11 @@ impl AppState {
         let Some(terminal) = self.current_terminal() else { return };
         let can_copy = terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
         let can_paste = self.clipboard.as_mut().is_some_and(|c| c.get_text().is_ok_and(|text| !text.is_empty()));
-        let shortcuts = [Action::Copy, Action::Paste, Action::PasteAndRun].map(|action| self.keymap.label(action));
+        let shortcuts =
+            [Action::Copy, Action::Paste, Action::PasteAndRun, Action::ToggleBroadcast].map(|action| self.keymap.label(action));
+        let broadcast = self.current_tab().broadcast;
         let pos = self.to_points(self.last_cursor_pos);
-        self.context_menu = Some(ContextMenu::new(pos, can_copy, can_paste, shortcuts));
+        self.context_menu = Some(ContextMenu::new(pos, can_copy, can_paste, broadcast, shortcuts));
         self.set_hovered(None);
         self.window.request_redraw();
     }
@@ -719,6 +847,7 @@ impl AppState {
             MenuAction::Copy => self.copy_selection(),
             MenuAction::Paste => self.paste_clipboard(false),
             MenuAction::PasteAndRun => self.paste_clipboard(true),
+            MenuAction::ToggleBroadcast => self.toggle_broadcast(),
         }
     }
 
@@ -759,6 +888,9 @@ impl AppState {
         if self.ui_has_keyboard() {
             return;
         }
+        if self.search.is_some() && self.search_key(&event) {
+            return;
+        }
 
         if let Some(bytes) = input::key_event_to_bytes(&event, self.modifiers) {
             self.send_typed(bytes);
@@ -777,6 +909,7 @@ impl AppState {
             Action::SelectTab(number) => self.select_tab(usize::from(number).saturating_sub(1)),
             Action::MoveTabLeft => self.move_tab(-1),
             Action::MoveTabRight => self.move_tab(1),
+            Action::ToggleBroadcast => self.toggle_broadcast(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::OpenSettings => self.open_settings(),
             Action::Copy => self.copy_selection(),
@@ -786,6 +919,9 @@ impl AppState {
             Action::ScrollPageDown => return self.scroll_by_key(Scroll::PageDown),
             Action::ScrollToTop => return self.scroll_by_key(Scroll::Top),
             Action::ScrollToBottom => return self.scroll_by_key(Scroll::Bottom),
+            Action::Search => return self.open_search(),
+            Action::PreviousPrompt => return self.jump_prompt(true),
+            Action::NextPrompt => return self.jump_prompt(false),
             Action::FontBigger => self.zoom(1.0),
             Action::FontSmaller => self.zoom(-1.0),
             Action::FontReset => {
@@ -807,6 +943,97 @@ impl AppState {
                 return false;
             }
             term.scroll_display(scroll);
+        }
+        self.window.request_redraw();
+        true
+    }
+
+    /// Scroll to the prompt above (`older`) or below. Not in the alternate
+    /// screen, which has no prompts: the key goes to the program there.
+    fn jump_prompt(&self, older: bool) -> bool {
+        let Some(terminal) = self.current_terminal() else { return false };
+        let mut term = terminal.term.lock();
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return false;
+        }
+        if prompts::jump(&mut term, older) {
+            self.window.request_redraw();
+        }
+        true
+    }
+
+    /// What a tab's shell said about itself.
+    fn shell_event(&mut self, tab_id: usize, event: ShellEvent) {
+        let Some(idx) = self.tabs.iter().position(|tab| tab.id == tab_id) else { return };
+        let tab = &mut self.tabs[idx];
+        match event {
+            ShellEvent::Cwd { host, path } => {
+                tab.cwd = Some((host, path));
+                tab.refresh_title(&self.hostname);
+                if idx == self.active_tab {
+                    self.update_window_title();
+                }
+                self.window.request_redraw();
+            }
+            ShellEvent::CommandStarted => tab.command_started = Some(Instant::now()),
+            ShellEvent::CommandFinished { exit } => {
+                let Some(started) = tab.command_started.take() else { return };
+                let elapsed = started.elapsed();
+                let threshold = self.config.notify_after_secs;
+                let in_view = self.focused && idx == self.active_tab;
+                if threshold > 0 && elapsed.as_secs() >= threshold && !in_view {
+                    notify(&tab.title, exit, elapsed);
+                    self.window.request_user_attention(Some(UserAttentionType::Informational));
+                }
+            }
+        }
+    }
+
+    /// Open the search bar over the active tab, or go back to typing the
+    /// query if it's open. Not on the settings tab.
+    fn open_search(&mut self) -> bool {
+        let Some(term) = self.current_terminal().map(|terminal| terminal.term.clone()) else { return false };
+        match &mut self.search {
+            Some(search) => search.set_editing(true),
+            None => self.search = Some(Search::new(&term.lock())),
+        }
+        self.window.request_redraw();
+        true
+    }
+
+    /// A key while the search bar is open. Typing the query: text,
+    /// Backspace, Enter/Shift+Enter jump up/down and stop typing. After
+    /// that n/N jump, / or Backspace types again. Escape closes the bar
+    /// either way. `false` for any other key after typing: it closes the
+    /// bar and goes on to the terminal.
+    fn search_key(&mut self, event: &KeyEvent) -> bool {
+        let Some(term) = self.current_terminal().map(|terminal| terminal.term.clone()) else { return false };
+        let Some(search) = self.search.as_mut() else { return false };
+        let mut term = term.lock();
+        let mods = self.modifiers;
+        let plain = !(mods.control_key() || mods.alt_key() || mods.super_key());
+        let char_key = |c: &str| matches!(&event.logical_key, Key::Character(key) if plain && key == c);
+        match &event.logical_key {
+            Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super) => return true,
+            Key::Named(NamedKey::Escape) => self.search = None,
+            Key::Named(NamedKey::Enter) => {
+                search.jump(&mut term, !mods.shift_key());
+                search.set_editing(false);
+            }
+            _ if search.editing() => match (&event.logical_key, &event.text) {
+                (Key::Named(NamedKey::Backspace), _) => search.pop(&mut term),
+                (_, Some(text)) if plain => search.push_str(&mut term, text),
+                _ => {}
+            },
+            _ if char_key("n") => search.jump(&mut term, true),
+            _ if char_key("N") => search.jump(&mut term, false),
+            Key::Named(NamedKey::Backspace) => search.set_editing(true),
+            _ if char_key("/") => search.set_editing(true),
+            _ => {
+                self.search = None;
+                self.window.request_redraw();
+                return false;
+            }
         }
         self.window.request_redraw();
         true
@@ -870,6 +1097,9 @@ impl AppState {
             // Over the sidebar or the context menu, egui does the hovering.
             let hit = if self.over_ui(self.last_cursor_pos) { None } else { self.tab_bar_hit(position.x, position.y) };
             self.set_hovered(hit);
+            if self.modifiers.control_key() || self.link.is_some() {
+                self.update_link();
+            }
             return;
         }
         let origin = self.grid_origin();
@@ -935,6 +1165,25 @@ impl AppState {
             }
             self.give_keyboard_to_terminal();
             if self.on_tab_bar_click(button, event_loop) {
+                return;
+            }
+            // Ctrl+click on a link opens it.
+            if button == MouseButton::Left
+                && self.modifiers.control_key()
+                && let Some(link) = self.link.take()
+            {
+                open_link(&link.target);
+                self.update_cursor_icon();
+                self.window.request_redraw();
+                return;
+            }
+            // A click on the search bar types the query again.
+            let (x, y) = self.last_cursor_pos;
+            if self.search_bar.contains(x as f32, y as f32) {
+                if let Some(search) = self.search.as_mut() {
+                    search.set_editing(true);
+                }
+                self.window.request_redraw();
                 return;
             }
             if button == MouseButton::Right {
@@ -1059,6 +1308,10 @@ impl AppState {
         let mut settings_actions = Vec::new();
         let splash = self.splash.as_ref();
         let command_target = self.command_target();
+        let tab_forwards = self.tabs.get(self.active_tab).and_then(|tab| {
+            let forwards = tab.terminal()?.forwards();
+            (!forwards.is_empty()).then(|| TabForwards { label: tab.default_title.clone(), forwards })
+        });
         let mut splash_next = None;
         let context_menu = &mut self.context_menu;
         let mut menu_action = None;
@@ -1066,7 +1319,7 @@ impl AppState {
             // egui may run this more than once per frame; only the last
             // pass counts.
             (right_edge, actions) = if visible {
-                self.sidebar.show(ui, &default_shell, &self.config, command_target.as_ref(), header_height)
+                self.sidebar.show(ui, &default_shell, &self.config, command_target.as_ref(), tab_forwards.as_ref(), header_height)
             } else {
                 (0.0, Vec::new())
             };
@@ -1193,6 +1446,11 @@ impl AppState {
                 self.report(origin, Ok(t!("settings-themes-reloaded", count = self.themes.all().len())));
             }
             SidebarAction::RunCommand(line) => self.run_command(line),
+            SidebarAction::SetForward(index, enabled) => {
+                if let Some(terminal) = self.current_terminal() {
+                    terminal.set_forward(index, enabled);
+                }
+            }
             SidebarAction::SetSystem(family) => {
                 let result = self.config.save_system(family).map(|()| match family {
                     Some(family) => t!("cmd-system", system = family.label()),
@@ -1221,6 +1479,7 @@ impl AppState {
         self.theme = self.themes.get(self.config.theme.as_deref()).clone();
         self.palette = Palette::new(&self.theme.terminal);
         self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity());
+        self.search_bar = SearchBar::new(self.theme.ui);
         crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.opacity());
         self.window.request_redraw();
     }
@@ -1313,6 +1572,7 @@ impl AppState {
             // `run_ui` moves the console along.
             Setting::SidebarWidth(_) => {}
             Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
+            Setting::NotifyAfter(_) => {}
             Setting::Opacity(_) | Setting::Blur(_) => self.apply_transparency(),
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
@@ -1356,6 +1616,34 @@ impl AppState {
         self.relayout();
     }
 
+    /// `✘ code` at the right end of the prompts whose command failed, where
+    /// the row has room for it -- never over text.
+    fn build_prompt_labels(
+        &mut self,
+        prompts: &[(usize, Option<i32>)],
+        row_lengths: &std::collections::HashMap<usize, usize>,
+        geometry: grid::GridGeometry,
+    ) {
+        self.prompt_labels.clear();
+        let cutout = self.search_bar.cutout().map(|(rows, _)| rows);
+        let red = self.palette.named(NamedColor::Red);
+        let color = glyphon::Color::rgb(red.r, red.g, red.b);
+        let cell = geometry.cell;
+        for &(row, exit) in prompts {
+            let Some(code) = exit.filter(|&code| code != 0) else { continue };
+            if cutout.as_ref().is_some_and(|rows| rows.contains(&row)) {
+                continue;
+            }
+            let label = t!("prompt-exit", code = code);
+            let len = label.chars().count();
+            let used = row_lengths.get(&row).copied().unwrap_or(0);
+            let Some(col) = self.cols.checked_sub(len + 1).filter(|&col| col >= used + 2) else { continue };
+            let (left, top) = (geometry.origin_x + col as f32 * cell.width, geometry.origin_y + row as f32 * cell.height);
+            let clip = LabelRect { x: left, y: top, w: (len + 1) as f32 * cell.width, h: cell.height };
+            self.prompt_labels.push(&mut self.text, &label, left, top, clip, color);
+        }
+    }
+
     fn redraw(&mut self) {
         let t0 = Instant::now();
         self.run_ui();
@@ -1375,20 +1663,67 @@ impl AppState {
         let show_grid = term_arc.is_some();
         match term_arc {
             Some(term_arc) => {
-                let rows = {
+                let (rows, focus_rows, prompts) = {
                     let term = term_arc.lock();
+                    let prompts =
+                        if term.mode().contains(TermMode::ALT_SCREEN) { Vec::new() } else { prompts::visible(&term) };
                     let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&term));
-                    grid::build_frame(&term, selection_range, self.cursor_visible, &self.palette, &mut self.quads, geometry)
+                    let matches = self.search.as_mut().map(|search| search.visible_matches(&term)).unwrap_or_default();
+                    let focus = self.search.as_ref().and_then(Search::focus);
+                    let highlight = grid::Highlights { matches: &matches, focus, link: self.link.as_ref().map(|link| &link.cells) };
+                    let offset = term.grid().display_offset() as i32;
+                    let focus_rows = focus.map(|m| (m.start().line.0 + offset, m.end().line.0 + offset));
+                    let rows = grid::build_frame(
+                        &term,
+                        selection_range,
+                        highlight,
+                        self.cursor_visible,
+                        &self.palette,
+                        &mut self.quads,
+                        geometry,
+                    );
+                    (rows, focus_rows, prompts)
                 };
+                let row_lengths: std::collections::HashMap<usize, usize> =
+                    rows.iter().map(|(row, text)| (*row, text.len())).collect();
                 self.grid_text.update(&mut self.text, rows);
+                match &self.search {
+                    Some(search) => {
+                        let prompt = t!("search-prompt");
+                        let status = if search.no_match() {
+                            t!("search-no-match")
+                        } else if search.editing() {
+                            t!("search-hint-typing")
+                        } else {
+                            t!("search-hint-jumping")
+                        };
+                        let view = SearchBarView {
+                            prompt: &prompt,
+                            query: search.query(),
+                            editing: search.editing(),
+                            status: &status,
+                            no_match: search.no_match(),
+                            focus_rows,
+                        };
+                        let scale_factor = self.window.scale_factor() as f32;
+                        let size = (self.cols, self.rows);
+                        self.search_bar.build(geometry, size, &view, scale_factor, &mut self.text, &mut self.quads);
+                    }
+                    None => self.search_bar.hide(),
+                }
+                self.build_prompt_labels(&prompts, &row_lengths, geometry);
             }
-            None => self.quads.clear(),
+            None => {
+                self.quads.clear();
+                self.search_bar.hide();
+                self.prompt_labels.clear();
+            }
         }
 
         if let Some(layout) = self.tab_bar_layout() {
             self.tab_bar.build(
                 &layout,
-                self.tabs.iter().map(|t| t.title.as_str()),
+                self.tabs.iter().map(|t| (t.title.as_str(), t.broadcast)),
                 self.active_tab,
                 self.hovered,
                 &mut self.text,
@@ -1435,6 +1770,7 @@ impl AppState {
                 self.grid_text.text_areas(
                     geometry,
                     grid_bounds,
+                    self.search_bar.cutout(),
                     glyphon::Color::rgb(default_fg.r, default_fg.g, default_fg.b),
                 )
             })
@@ -1447,7 +1783,10 @@ impl AppState {
             &mut self.text.font_system,
             &mut self.text.atlas,
             &self.text.viewport,
-            grid_areas.chain(self.tab_bar.text_areas()),
+            grid_areas
+                .chain(self.prompt_labels.text_areas())
+                .chain(self.search_bar.text_areas())
+                .chain(self.tab_bar.text_areas()),
             &mut self.text.swash_cache,
         ) {
             log::error!("glyphon prepare failed: {err:?}");
@@ -1543,6 +1882,77 @@ impl AppState {
             self.gpu.surface.configure(&self.gpu.device, &self.gpu.surface_config);
             self.window.request_redraw();
         }
+    }
+}
+
+/// This machine's host name, as shells put it into OSC 7.
+fn hostname() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: `buf` is valid for `buf.len()` bytes; gethostname writes at
+    // most that many, NUL-terminated unless truncated.
+    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+        return String::new();
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..len]).into_owned()
+}
+
+/// A desktop notification that the command in the tab titled `tab`
+/// finished, through `notify-send` if it's installed.
+fn notify(tab: &str, exit: Option<i32>, elapsed: Duration) {
+    let title = match exit {
+        Some(code) if code != 0 => t!("notify-failed", code = code),
+        _ => t!("notify-finished"),
+    };
+    let body = t!("notify-body", tab = tab, duration = duration_text(elapsed));
+    let spawned = std::process::Command::new("notify-send")
+        .args(["--app-name=Terminaal", "--icon=terminaal", "--"])
+        .args([title, body])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        // Reaped on a thread of its own, so it doesn't linger as a zombie.
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(err) => log::debug!("no desktop notification (notify-send): {err}"),
+    }
+}
+
+/// Open a link with the desktop's default application (`xdg-open`). An
+/// executable file isn't opened -- that could run it -- but the folder
+/// it's in.
+fn open_link(target: &links::Target) {
+    use std::os::unix::fs::PermissionsExt;
+    let arg = match target {
+        links::Target::Uri(uri) => uri.clone().into(),
+        links::Target::Path(path) => {
+            let executable = path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0);
+            match path.parent().filter(|_| executable) {
+                Some(dir) => dir.as_os_str().to_owned(),
+                None => path.as_os_str().to_owned(),
+            }
+        }
+    };
+    let spawned = std::process::Command::new("xdg-open")
+        .arg(&arg)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(err) => log::warn!("failed to open {arg:?} with xdg-open: {err}"),
+    }
+}
+
+/// `42 s`, `3 min 5 s`, `2 h 10 min`.
+fn duration_text(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    match (secs / 3600, secs / 60 % 60, secs % 60) {
+        (0, 0, secs) => t!("duration-seconds", secs = secs),
+        (0, mins, secs) => t!("duration-minutes", mins = mins, secs = secs),
+        (hours, mins, _) => t!("duration-hours", hours = hours, mins = mins),
     }
 }
 
@@ -1721,7 +2131,11 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::ModifiersChanged(modifiers) => state.modifiers = modifiers.state(),
+            WindowEvent::Focused(focused) => state.focused = focused,
+            WindowEvent::ModifiersChanged(modifiers) => {
+                state.modifiers = modifiers.state();
+                state.update_link();
+            }
             WindowEvent::KeyboardInput { event, .. } => state.handle_keyboard_input(event, event_loop),
             WindowEvent::CursorMoved { position, .. } => state.on_cursor_moved(position),
             WindowEvent::CursorLeft { .. } => state.set_hovered(None),
@@ -1746,6 +2160,10 @@ impl ApplicationHandler<UserEvent> for App {
                 state.reload_themes();
                 return;
             }
+            UserEvent::Shell(tab_id, event) => {
+                state.shell_event(tab_id, event);
+                return;
+            }
         };
 
         // The event may have been queued before the tab closed (Exit
@@ -1756,14 +2174,18 @@ impl ApplicationHandler<UserEvent> for App {
             // Every tab's title is visible in the tab bar, so unlike most
             // events these redraw even when they come from a background tab.
             TermEvent::Title(title) => {
-                state.tabs[idx].title = title;
+                state.tabs[idx].program_title = Some(title);
+                let host = state.hostname.clone();
+                state.tabs[idx].refresh_title(&host);
                 if idx == state.active_tab {
                     state.update_window_title();
                 }
                 state.window.request_redraw();
             }
             TermEvent::ResetTitle => {
-                state.tabs[idx].title = state.tabs[idx].default_title.clone();
+                state.tabs[idx].program_title = None;
+                let host = state.hostname.clone();
+                state.tabs[idx].refresh_title(&host);
                 if idx == state.active_tab {
                     state.update_window_title();
                 }

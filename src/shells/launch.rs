@@ -13,6 +13,11 @@
 //!   integration. If `/etc/zshenv` overrides `ZDOTDIR` itself, zsh never
 //!   sees ours and simply starts without the managed file.
 //!
+//! The same files set up shell integration (`terminal::integration`):
+//! the working directory (OSC 7) whenever the prompt comes, and prompt
+//! marks (OSC 133) -- `A` before the prompt, `C` when a command starts,
+//! `D;status` when it's done. Other terminals never see any of it.
+//!
 //! The generated files live in `~/.config/terminaal/shell-integration`.
 //! Every shell still starts as an interactive non-login shell, same as
 //! alacritty_terminal's default.
@@ -42,7 +47,7 @@ impl Launch {
 pub fn launch(shell: &InstalledShell) -> Launch {
     let Some(file) = managed::path_for(shell.kind) else { return Launch::plain(shell) };
     let result = match shell.kind {
-        ShellKind::Fish => Ok(fish(shell, &file)),
+        ShellKind::Fish => fish(shell, &file),
         ShellKind::Bash => bash(shell, &file),
         ShellKind::Zsh => zsh(shell, &file),
         ShellKind::Other => Ok(Launch::plain(shell)),
@@ -53,10 +58,36 @@ pub fn launch(shell: &InstalledShell) -> Launch {
     })
 }
 
-fn fish(shell: &InstalledShell, file: &Path) -> Launch {
+const FISH_INTEGRATION: &str = r#"# Von Terminaal erzeugt: meldet Arbeitsverzeichnis (OSC 7) und Prompts
+# (OSC 133) an Terminaal. Ab fish 4 tut fish das selbst.
+if not set -q __terminaal_integration; and test (string split -f1 . -- $version) -lt 4
+    set -g __terminaal_integration 1
+    function __terminaal_cwd --on-event fish_prompt
+        printf '\e]7;file://%s%s\a' $hostname (string escape --style=url -- $PWD)
+    end
+    function __terminaal_prompt_start --on-event fish_prompt
+        printf '\e]133;A\a'
+    end
+    function __terminaal_command_start --on-event fish_preexec
+        printf '\e]133;C\a'
+    end
+    function __terminaal_command_end --on-event fish_postexec
+        printf '\e]133;D;%s\a' $status
+    end
+end
+"#;
+
+fn fish(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
+    let integration = integration_dir()?.join("terminaal.fish");
+    write_if_changed(&integration, FISH_INTEGRATION)?;
+    Ok(fish_launch(shell, &integration, file))
+}
+
+fn fish_launch(shell: &InstalledShell, integration: &Path, file: &Path) -> Launch {
+    let integration = quote_fish(&integration.to_string_lossy());
     let file = quote_fish(&file.to_string_lossy());
     Launch {
-        args: vec!["--init-command".into(), format!("test -f {file}; and source {file}")],
+        args: vec!["--init-command".into(), format!("source {integration}; test -f {file}; and source {file}")],
         ..Launch::plain(shell)
     }
 }
@@ -66,6 +97,24 @@ const BASHRC: &str = "\
 # und Funktionen, die Terminaal verwaltet.
 [ -f ~/.bashrc ] && . ~/.bashrc
 [ -f @FILE@ ] && . @FILE@
+
+# Arbeitsverzeichnis (OSC 7) und Prompts (OSC 133) an Terminaal melden.
+if [ -z \"$__terminaal_integration\" ]; then
+    __terminaal_integration=1
+    __terminaal_prompt() {
+        local ret=$?
+        local cwd=\"${PWD//%/%25}\"
+        printf '\\e]133;D;%s\\a\\e]7;file://%s%s\\a\\e]133;A\\a' \"$ret\" \"$HOSTNAME\" \"${cwd// /%20}\"
+        return $ret
+    }
+    # First, so it still sees the command's status.
+    if [[ \"$(declare -p PROMPT_COMMAND 2>/dev/null)\" == 'declare -a'* ]]; then
+        PROMPT_COMMAND=(__terminaal_prompt \"${PROMPT_COMMAND[@]}\")
+    else
+        PROMPT_COMMAND=\"__terminaal_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"
+    fi
+    PS0=\"${PS0}\\e]133;C\\a\"
+fi
 ";
 
 fn bash(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
@@ -90,6 +139,22 @@ unset TERMINAAL_USER_ZDOTDIR
 [ "$ZDOTDIR" = "$HOME" ] && unset ZDOTDIR
 [ -f "${ZDOTDIR:-$HOME}/.zshrc" ] && . "${ZDOTDIR:-$HOME}/.zshrc"
 [ -f @FILE@ ] && . @FILE@
+
+# Arbeitsverzeichnis (OSC 7) und Prompts (OSC 133) an Terminaal melden.
+if [[ -z $__terminaal_integration ]]; then
+    __terminaal_integration=1
+    __terminaal_precmd() {
+        local ret=$?
+        local cwd=${PWD//\%/%25}
+        printf '\e]133;D;%s\a\e]7;file://%s%s\a\e]133;A\a' $ret $HOST ${cwd// /%20}
+    }
+    __terminaal_preexec() {
+        printf '\e]133;C\a'
+    }
+    # First, so it still sees the command's status.
+    precmd_functions=(__terminaal_precmd $precmd_functions)
+    preexec_functions+=(__terminaal_preexec)
+fi
 "##;
 
 fn zsh(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
@@ -127,13 +192,18 @@ mod tests {
 
     #[test]
     fn fish_sources_the_managed_file_via_init_command() {
-        let launch = fish(&InstalledShell::new("/usr/bin/fish"), Path::new("/home/u/.config/fish/terminaal.fish"));
+        let launch = fish_launch(
+            &InstalledShell::new("/usr/bin/fish"),
+            Path::new("/home/u/.config/terminaal/shell-integration/terminaal.fish"),
+            Path::new("/home/u/.config/fish/terminaal.fish"),
+        );
         assert_eq!(launch.program, "/usr/bin/fish");
         assert_eq!(
             launch.args,
             [
                 "--init-command",
-                "test -f '/home/u/.config/fish/terminaal.fish'; and source '/home/u/.config/fish/terminaal.fish'"
+                "source '/home/u/.config/terminaal/shell-integration/terminaal.fish'; \
+                 test -f '/home/u/.config/fish/terminaal.fish'; and source '/home/u/.config/fish/terminaal.fish'"
             ]
         );
     }

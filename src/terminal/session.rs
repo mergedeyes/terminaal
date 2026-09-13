@@ -8,6 +8,7 @@
 //! Everything in `render/` and `input.rs` only ever sees `term`,
 //! `send_input` and `resize`, so it works the same for both.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Notify, OnResize, WindowSize};
@@ -21,6 +22,8 @@ use crate::commands::{self, Target};
 use crate::shells::launch::Launch;
 use crate::ssh::SshTarget;
 use crate::ssh::connection::{self, SshHandle};
+use crate::ssh::forward::ForwardStatus;
+use crate::terminal::filtered_pty::FilteredPty;
 use crate::terminal::listener::EventProxyListener;
 
 /// Terminal grid size, in cells. Implements `Dimensions` so it can be
@@ -61,6 +64,7 @@ impl TerminalSession {
     pub fn spawn_local_shell(
         listener: EventProxyListener,
         launch: &Launch,
+        working_directory: Option<PathBuf>,
         size: GridSize,
         cell_width: f32,
         cell_height: f32,
@@ -72,9 +76,12 @@ impl TerminalSession {
         let options = tty::Options {
             shell: Some(tty::Shell::new(launch.program.clone(), launch.args.clone())),
             env: launch.env.clone(),
+            working_directory,
             ..tty::Options::default()
         };
         let pty = tty::new(&options, window_size(size, cell_width, cell_height), 0)?;
+        let shell_events = listener.clone();
+        let pty = FilteredPty::new(pty, move |event| shell_events.send_shell(event))?;
 
         let pty_event_loop = PtyEventLoop::new(term.clone(), listener, pty, false, false)?;
         let notifier = Notifier(pty_event_loop.channel());
@@ -119,12 +126,33 @@ impl TerminalSession {
         }
     }
 
+    /// The SSH connection's port forwards and how they're doing; none for
+    /// a local shell.
+    pub fn forwards(&self) -> Vec<ForwardStatus> {
+        match &self.backend {
+            Backend::Local(_) => Vec::new(),
+            Backend::Ssh(handle) => handle.forwards(),
+        }
+    }
+
+    /// Pause forward `index` or start it again (SSH only).
+    pub fn set_forward(&self, index: usize, enabled: bool) {
+        if let Backend::Ssh(handle) = &self.backend {
+            handle.set_forward(index, enabled);
+        }
+    }
+
+    /// A local shell rather than an SSH connection.
+    pub fn is_local(&self) -> bool {
+        matches!(self.backend, Backend::Local(_))
+    }
+
     /// What the built-in commands (`crate::commands`) should build for:
     /// this machine for a local shell, whatever the host turned out to be
     /// for SSH.
     pub fn command_target(&self) -> Target {
         match &self.backend {
-            Backend::Local(_) => Target { system: Some(commands::local()), host: None, configured: false },
+            Backend::Local(_) => Target { system: Some(commands::local()), ..Target::default() },
             Backend::Ssh(handle) => handle.target(),
         }
     }

@@ -18,6 +18,7 @@ use alacritty_terminal::event::{Event, EventListener};
 use winit::event_loop::EventLoopProxy;
 
 use crate::app::UserEvent;
+use crate::terminal::integration::ShellEvent;
 
 #[derive(Clone)]
 pub struct EventProxyListener {
@@ -28,6 +29,11 @@ pub struct EventProxyListener {
 impl EventProxyListener {
     pub fn new(proxy: EventLoopProxy<UserEvent>, tab_id: usize) -> Self {
         Self { proxy, tab_id }
+    }
+
+    /// What the shell told about itself (`terminal::integration`).
+    pub fn send_shell(&self, event: ShellEvent) {
+        let _ = self.proxy.send_event(UserEvent::Shell(self.tab_id, event));
     }
 }
 

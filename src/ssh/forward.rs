@@ -19,6 +19,14 @@
 //! libssh2 reads packets for *all* channels whenever it reads for one, so
 //! data can end up buffered for a channel that was already serviced in
 //! this round. [`Forwards::buffered`] tells the pump not to sleep then.
+//!
+//! Each configured forward can be paused and started again while the
+//! connection runs ([`Forwards::set_enabled`], shown by
+//! [`Forwards::statuses`]). A paused local forward stops listening; a
+//! paused remote one keeps the server's listener -- cancelling it can't be
+//! done without blocking -- and turns its connections away. Asking the
+//! server to listen once the session is non-blocking takes several rounds
+//! of the pump ([`Slot::listening`]).
 
 use std::collections::VecDeque;
 use std::fs::Permissions;
@@ -143,14 +151,37 @@ impl Drop for Socket {
     }
 }
 
-struct LocalListener {
-    socket: Socket,
+/// One configured forward and what became of it.
+struct Slot {
     forward: Forward,
+    /// Local: what it listens on; empty while paused or failed.
+    sockets: Vec<Socket>,
+    /// Remote: the server's listener, once it has one.
+    listener: Option<Listener>,
+    /// Remote: asked the server to listen, no answer yet.
+    listening: bool,
+    /// Not paused.
+    enabled: bool,
+    /// Why it isn't up.
+    error: Option<String>,
 }
 
-struct RemoteListener {
-    listener: Listener,
-    forward: Forward,
+/// How a forward is doing, for the sidebar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardState {
+    /// Waiting for the server to listen.
+    Starting,
+    Active,
+    Paused,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForwardStatus {
+    /// `listen → target`.
+    pub label: String,
+    pub remote: bool,
+    pub state: ForwardState,
 }
 
 /// A local connection waiting for its channel.
@@ -314,8 +345,7 @@ struct Tunnel {
 
 #[derive(Default)]
 pub struct Forwards {
-    local: Vec<LocalListener>,
-    remote: Vec<RemoteListener>,
+    slots: Vec<Slot>,
     /// Local connections to a dynamic forward, still in the handshake.
     socks_local: Vec<(Negotiation<Stream>, (String, u16))>,
     /// Connections to a SOCKS proxy on the server, still in the handshake.
@@ -335,51 +365,61 @@ impl Forwards {
         let mut this = Self::default();
         let mut report = Vec::new();
         for forward in forwards {
-            let describe = |listen: String| format!("{listen} → {}", forward.target_label());
-            let failed =
-                |err: String| Err(t!("forward-failed", forward = describe(forward.listen_label()), err = err));
-            if forward.remote {
-                let Listen::Port { bind, port } = &forward.listen else {
-                    report.push(failed(t!("opt-forward-remote-unix")));
-                    continue;
-                };
-                let address = match bind.as_deref() {
-                    None => "localhost",
-                    Some("*") => "",
-                    Some(bind) => bind,
-                };
-                match session.channel_forward_listen(*port, Some(address), None) {
-                    Ok((listener, bound)) => {
-                        let shown = Forward { listen: Listen::Port { bind: bind.clone(), port: bound }, ..forward.clone() };
-                        report.push(Ok(t!("forward-up", forward = describe(shown.listen_label()))));
-                        this.remote.push(RemoteListener { listener, forward: forward.clone() });
-                    }
-                    Err(err) => report.push(failed(err.to_string())),
-                }
-            } else {
-                match listen_locally(forward) {
-                    Ok(sockets) => {
-                        report.push(Ok(t!("forward-up", forward = describe(forward.listen_label()))));
-                        this.local.extend(sockets.into_iter().map(|socket| LocalListener { socket, forward: forward.clone() }));
-                    }
-                    Err(err) => report.push(failed(err.to_string())),
-                }
-            }
+            let mut slot = Slot {
+                forward: forward.clone(),
+                sockets: Vec::new(),
+                listener: None,
+                listening: false,
+                enabled: true,
+                error: None,
+            };
+            slot.open(session);
+            report.push(match &slot.error {
+                None => Ok(t!("forward-up", forward = slot.label())),
+                Some(err) => Err(t!("forward-failed", forward = slot.label(), err = err.as_str())),
+            });
+            this.slots.push(slot);
         }
         (this, report)
+    }
+
+    /// How each forward is doing, in the configured order.
+    pub fn statuses(&self) -> Vec<ForwardStatus> {
+        self.slots.iter().map(Slot::status).collect()
+    }
+
+    /// Pause the forward `index`, or start it again -- also one that
+    /// failed, to try once more.
+    pub fn set_enabled(&mut self, index: usize, enabled: bool, session: &Session) {
+        let Some(slot) = self.slots.get_mut(index) else { return };
+        slot.enabled = enabled;
+        if !enabled {
+            // Dropping a socket file removes it, see `Socket`.
+            slot.sockets.clear();
+            slot.error = None;
+            return;
+        }
+        let up = if slot.forward.remote { slot.listener.is_some() } else { !slot.sockets.is_empty() };
+        if !up {
+            slot.error = None;
+            slot.open(session);
+        }
     }
 
     /// Accept local connections, run SOCKS handshakes, open channels and
     /// move data. Returns how many bytes came in from the server.
     pub fn service(&mut self, session: &Session) -> usize {
-        for listener in &self.local {
+        for slot in self.slots.iter_mut().filter(|slot| slot.listening) {
+            slot.open(session);
+        }
+        for (slot, socket) in self.slots.iter().flat_map(|slot| slot.sockets.iter().map(move |socket| (slot, socket))) {
             loop {
-                match listener.socket.accept() {
+                match socket.accept() {
                     Ok((stream, origin)) => {
                         if stream.set_nonblocking().is_err() {
                             continue;
                         }
-                        match &listener.forward.target {
+                        match &slot.forward.target {
                             Some(target) => self.pending.push_back(Pending {
                                 stream,
                                 origin,
@@ -393,7 +433,7 @@ impl Forwards {
                     }
                     Err(err) if err.kind() == ErrorKind::WouldBlock => break,
                     Err(err) => {
-                        log::debug!("forward {}: accept failed: {err}", listener.forward.listen_label());
+                        log::debug!("forward {}: accept failed: {err}", slot.forward.listen_label());
                         break;
                     }
                 }
@@ -479,22 +519,25 @@ impl Forwards {
     /// connect each to its local target. Call this last before sleeping:
     /// it drains what libssh2 can read, see the module docs.
     pub fn accept_remote(&mut self) {
-        for listener in &mut self.remote {
+        for slot in &mut self.slots {
+            let Some(listener) = slot.listener.as_mut() else { continue };
             loop {
-                match listener.listener.accept() {
-                    Ok(channel) => match &listener.forward.target {
+                match listener.accept() {
+                    // Paused: the server still listens, the connection is refused.
+                    Ok(channel) if !slot.enabled => self.tunnels.push(Tunnel::closing(channel)),
+                    Ok(channel) => match &slot.forward.target {
                         None => self.socks_remote.push(Negotiation::new(merge_stderr(channel))),
                         Some(target) => match connect_local(target) {
                             Ok(stream) => self.tunnels.push(Tunnel::new(channel, stream)),
                             Err(err) => {
-                                log::debug!("forward to {}: {err}", listener.forward.target_label());
+                                log::debug!("forward to {}: {err}", slot.forward.target_label());
                                 self.tunnels.push(Tunnel::closing(channel));
                             }
                         },
                     },
                     Err(err) if would_block(&err) => break,
                     Err(err) => {
-                        log::debug!("forward {}: accept failed: {err}", listener.forward.listen_label());
+                        log::debug!("forward {}: accept failed: {err}", slot.forward.listen_label());
                         break;
                     }
                 }
@@ -529,7 +572,7 @@ impl Forwards {
     /// Local sockets to wake up for. Channels need nothing extra: their
     /// data arrives on the session's socket.
     pub fn poll_fds(&self, fds: &mut Vec<(RawFd, libc::c_short)>) {
-        fds.extend(self.local.iter().map(|l| (l.socket.as_raw_fd(), libc::POLLIN)));
+        fds.extend(self.slots.iter().flat_map(|slot| &slot.sockets).map(|socket| (socket.as_raw_fd(), libc::POLLIN)));
         for (negotiation, _) in &self.socks_local {
             let mut events = 0;
             if !negotiation.refused {
@@ -550,6 +593,57 @@ impl Forwards {
                 events |= libc::POLLOUT;
             }
             fds.push((stream.as_raw_fd(), events));
+        }
+    }
+}
+
+impl Slot {
+    /// `listen → target`, as the tab and the sidebar show it.
+    fn label(&self) -> String {
+        format!("{} → {}", self.forward.listen_label(), self.forward.target_label())
+    }
+
+    fn status(&self) -> ForwardStatus {
+        let state = match &self.error {
+            _ if !self.enabled => ForwardState::Paused,
+            Some(err) => ForwardState::Failed(err.clone()),
+            None if self.listening => ForwardState::Starting,
+            None => ForwardState::Active,
+        };
+        ForwardStatus { label: self.label(), remote: self.forward.remote, state }
+    }
+
+    /// Listen: here right away, on the server by asking it -- on a
+    /// non-blocking session again each round until it answers.
+    fn open(&mut self, session: &Session) {
+        if !self.forward.remote {
+            match listen_locally(&self.forward) {
+                Ok(sockets) => self.sockets = sockets,
+                Err(err) => self.error = Some(err.to_string()),
+            }
+            return;
+        }
+        let Listen::Port { bind, port } = &self.forward.listen else {
+            self.error = Some(t!("opt-forward-remote-unix"));
+            return;
+        };
+        let address = match bind.as_deref() {
+            None => "localhost",
+            Some("*") => "",
+            Some(bind) => bind,
+        };
+        match session.channel_forward_listen(*port, Some(address), None) {
+            Ok((listener, bound)) => {
+                // Port 0: the server picked one.
+                self.forward.listen = Listen::Port { bind: bind.clone(), port: bound };
+                self.listener = Some(listener);
+                self.listening = false;
+            }
+            Err(err) if would_block(&err) => self.listening = true,
+            Err(err) => {
+                self.listening = false;
+                self.error = Some(err.to_string());
+            }
         }
     }
 }
@@ -751,6 +845,36 @@ mod tests {
     fn scratch(name: &str) -> PathBuf {
         // Short: socket paths are limited to ~107 bytes.
         std::env::temp_dir().join(format!("tf-{}-{name}", std::process::id()))
+    }
+
+    /// Local forwards pause (the port is free again), start again, and a
+    /// failed one comes up on retry once its port is free. No server
+    /// needed: only remote forwards talk to the session.
+    #[test]
+    fn local_forwards_pause_start_and_retry() {
+        let session = Session::new().unwrap();
+        let free_port = || TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let (a, b) = (free_port(), free_port());
+        let blocker = TcpListener::bind(("127.0.0.1", b)).unwrap();
+        let forward = |port: u16| Forward::parse(&format!("127.0.0.1:{port} localhost:80"), super::super::options::ForwardKind::Local).unwrap();
+        let (mut forwards, report) = Forwards::start(&session, &[forward(a), forward(b)]);
+        assert!(report[0].is_ok() && report[1].is_err());
+        let states = |forwards: &Forwards| forwards.statuses().into_iter().map(|s| s.state).collect::<Vec<_>>();
+        assert!(matches!(states(&forwards).as_slice(), [ForwardState::Active, ForwardState::Failed(_)]));
+        assert_eq!(forwards.statuses()[0].label, format!("127.0.0.1:{a} → localhost:80"));
+
+        forwards.set_enabled(0, false, &session);
+        assert_eq!(states(&forwards)[0], ForwardState::Paused);
+        drop(TcpListener::bind(("127.0.0.1", a)).expect("port is free while paused"));
+        forwards.set_enabled(0, true, &session);
+        assert_eq!(states(&forwards)[0], ForwardState::Active);
+        assert!(TcpListener::bind(("127.0.0.1", a)).is_err(), "listening again");
+
+        forwards.set_enabled(1, true, &session);
+        assert!(matches!(states(&forwards)[1], ForwardState::Failed(_)), "still taken");
+        drop(blocker);
+        forwards.set_enabled(1, true, &session);
+        assert_eq!(states(&forwards)[1], ForwardState::Active);
     }
 
     #[test]

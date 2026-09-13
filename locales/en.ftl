@@ -46,6 +46,25 @@ app-language-changed = Language changed.
 menu-copy = Copy
 menu-paste = Paste
 menu-paste-run = Paste and run
+menu-broadcast-on = Broadcast to this tab
+menu-broadcast-off = Stop broadcasting
+
+## Scrollback search (render/search_bar.rs)
+
+search-prompt = Search:
+search-no-match = No matches
+search-hint-typing = Enter ↑ · Shift+Enter ↓ · Esc
+search-hint-jumping = n ↑ · N ↓ · / edit · Esc
+
+## Shell integration (terminal/integration.rs, app.rs)
+
+notify-finished = Command finished
+notify-failed = Command failed (exit code { $code })
+notify-body = { $tab } – after { $duration }
+duration-seconds = { $secs } s
+duration-minutes = { $mins } min { $secs } s
+duration-hours = { $hours } h { $mins } min
+prompt-exit = ✘ { $code }
 
 ## Key names in shortcuts
 
@@ -97,6 +116,11 @@ settings-scrollback-lines = { $lines ->
    *[other] { $lines } lines
 }
 settings-scrollback-note = Applies to all tabs once released; set lower, it drops the oldest lines.
+settings-integration = Shell integration
+settings-notify-after = Notify after
+settings-notify-never = never
+settings-seconds = { $secs } s
+settings-integration-note = Notifies when a command ran this long and its tab isn't in view. fish, bash and zsh report prompts and directory in Terminaal by themselves, other shells with OSC 133 and OSC 7.
 settings-shell = Default shell
 settings-startup = At start
 settings-startup-sidebar = Show sidebar
@@ -162,6 +186,7 @@ shortcut-previous-tab = Previous tab
 shortcut-select-tab = Tab { $number }
 shortcut-move-tab-left = Move tab left
 shortcut-move-tab-right = Move tab right
+shortcut-toggle-broadcast = Broadcast on/off (input to all marked tabs)
 shortcut-toggle-sidebar = Show or hide the sidebar
 shortcut-open-settings = Open settings
 shortcut-copy = Copy
@@ -171,6 +196,9 @@ shortcut-scroll-page-up = One page up
 shortcut-scroll-page-down = One page down
 shortcut-scroll-to-top = To the top of the scrollback
 shortcut-scroll-to-bottom = To the bottom
+shortcut-search = Search the scrollback
+shortcut-previous-prompt = To the previous prompt
+shortcut-next-prompt = To the next prompt
 shortcut-font-bigger = Bigger
 shortcut-font-smaller = Smaller
 shortcut-font-reset = Reset
@@ -222,6 +250,25 @@ shells-saved = Saved “{ $name }” – applies to new { $shell } tabs.
 ## Sidebar: built-in commands (commands.rs)
 
 cmd-title = Commands
+cmd-broadcast = Broadcast: goes to { $count } tabs
+snip-title = Your commands
+snip-manage = Manage
+snip-manage-done = Done
+snip-none = No commands of your own yet – “Manage” adds some.
+snip-none-here = None of your commands are for this system or host.
+snip-add = +  Add command
+snip-new = New command
+snip-edit = Edit command
+snip-name-hint = e.g. Follow logs
+snip-command-note = Several lines arrive together, as if pasted.
+snip-system = Only on system
+snip-all-systems = All systems
+snip-host = Only on host
+snip-all-hosts = All hosts and local
+snip-everywhere = Everywhere
+snip-on-host = on { $host }
+snip-command-missing = The command is missing.
+snip-name-taken = There is already a command “{ $name }”.
 cmd-system = System: { $system }
 cmd-system-local-hint = Detected from /etc/os-release. If that's wrong, set it in the settings under “Shell”.
 cmd-system-remote-hint = Detected on { $host } while connecting. If that's wrong, set it in the host form under “Advanced”.
@@ -382,7 +429,7 @@ adv-forward-agent-socket = Forwards { $socket }
 adv-methods = Methods in this order
 adv-host-key = Host key
 adv-unknown-host-keys = Unknown host keys
-adv-changed-host-key-note = A changed host key always aborts the connection.
+adv-changed-host-key-note = A changed host key always aborts the connection. 🔑 Host key on the selected host shows and removes the stored one.
 adv-known-hosts-file = known_hosts file
 adv-session = Session
 adv-remote-command = Command instead of login shell
@@ -521,8 +568,11 @@ conn-unknown-type = unknown
 conn-host-key-changed =
     WARNING: The host key of { $entry } has changed!
     This may be an attack (man-in-the-middle) – or the server was set up anew.
-    New { $kind } fingerprint: { $fingerprint }
-    Connection aborted. If the change is expected, remove the old entry with
+    Stored in { $file }:
+    { $stored }
+    New from the server: { $kind } { $fingerprint }
+    Connection aborted. If the change is expected, remove the old entry
+    in the sidebar (SSH → select the host → Host key) or with
       ssh-keygen -R '{ $entry }'{ $file_option }
 conn-host-key-refused = The host key of “{ $entry }” is not in { $file }, and StrictHostKeyChecking only allows known hosts.
     { $kind } fingerprint: { $fingerprint }
@@ -533,6 +583,24 @@ conn-host-key-question =
 conn-host-key-rejected = Aborted: host key not confirmed.
 conn-known-hosts-failed = Could not add to { $file }: { $err }
 conn-host-key-saved = Saved the host key of “{ $entry }” ({ $kind }, { $fingerprint }) in { $file }.
+known-hosts-changed = The file has changed in the meantime – please reload.
+conn-stored-key = { $kind } { $fingerprint } (line { $line })
+known-hosts-button = 🔑 Host key
+known-hosts-button-hint = Show or remove the host key stored in known_hosts
+known-hosts-title = Host key of { $entry }
+known-hosts-none = No entry stored – the next connection asks about the host key as StrictHostKeyChecking says.
+known-hosts-line = Line { $line }
+known-hosts-hashed = name hashed
+known-hosts-also = applies to { $hosts }
+known-hosts-remove =
+    { $count ->
+        [one] Remove entry
+       *[other] Remove { $count } entries
+    }
+known-hosts-confirm = Only remove it if you know the server has a new key – otherwise this may be an attack. The whole line goes, for the other names in it too. The next connection shows the new host key for you to confirm.
+known-hosts-removed = Removed the host key of { $entry } from { $file }.
+known-hosts-failed = Could not change { $file }: { $err }
+known-hosts-no-file = No known_hosts path ($HOME is not set).
 conn-denied = Permission denied.
 conn-password-prompt = Password for { $target }:
 conn-auth-failed = Login as { $user } at { $host } failed (offered by the server: { $methods }).
@@ -557,3 +625,15 @@ conn-unknown-key-type = unknown key type
 forward-up = Forwarding { $forward }
 forward-failed = Forwarding { $forward } failed: { $err }
 forward-no-address = no address found
+
+## Port forwards of the active tab (ui/ssh_panel.rs)
+
+fwd-title = Forwards · { $tab }
+fwd-active = active
+fwd-starting = setting up …
+fwd-paused = paused
+fwd-failed = failed: { $err }
+fwd-pause = Pause
+fwd-start = Start
+fwd-retry = Try again
+fwd-remote-paused-note = A paused remote forward keeps listening on the server but turns connections away.

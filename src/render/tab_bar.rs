@@ -9,18 +9,17 @@
 //!   hover position into a [`TabBarHit`] -- so what's drawn and what's
 //!   clickable can never drift apart.
 //! - [`TabBar`] turns a layout into draw data: flat rectangles appended
-//!   to the same `QuadInstance` list the grid uses, and a handful of small
-//!   glyphon buffers (one per label) that become extra `TextArea`s in the
-//!   same `prepare` call as the terminal text. Labels get their own
-//!   buffers rather than going into the grid's buffer so they don't
-//!   disturb its per-line shaping cache.
+//!   to the same `QuadInstance` list the grid uses, and a handful of labels
+//!   (`render::label`) that become extra `TextArea`s in the same `prepare`
+//!   call as the terminal text.
 //!
 //! Everything is in physical pixels, same as the rest of `render/`. The
 //! colors are the theme's chrome colors, the same egui's panels use.
 
 use alacritty_terminal::vte::ansi::Rgb;
-use glyphon::{Buffer as TextBuffer, Color as TextColor, Shaping, TextArea, TextBounds, Wrap};
+use glyphon::{Color as TextColor, TextArea};
 
+use crate::render::label::{Labels, Rect};
 use crate::render::palette::to_linear;
 use crate::render::quad::QuadInstance;
 use crate::render::text::{CellMetrics, TextRendererState};
@@ -33,22 +32,9 @@ const MAX_TAB_CELLS: f32 = 26.0;
 /// title keeps at least a few characters.
 const MIN_CLOSE_TAB_CELLS: f32 = 8.0;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Rect {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
-
-impl Rect {
-    fn contains(&self, x: f32, y: f32) -> bool {
-        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
-    }
-
-    fn quad(&self, color: Rgb) -> QuadInstance {
-        QuadInstance { offset: [self.x, self.y], size: [self.w, self.h], color: to_linear(color, 1.0) }
-    }
+/// A solid quad covering `rect`.
+fn quad(rect: Rect, color: Rgb) -> QuadInstance {
+    QuadInstance { offset: [rect.x, rect.y], size: [rect.w, rect.h], color: to_linear(color, 1.0) }
 }
 
 /// What's under a given point in the tab bar.
@@ -145,17 +131,7 @@ impl TabBarLayout {
     }
 }
 
-/// Where and how one label buffer gets drawn this frame.
-struct LabelPlacement {
-    left: f32,
-    top: f32,
-    clip: Rect,
-    color: TextColor,
-}
-
-/// Draw-side state: a pool of label buffers reused across frames (the
-/// first `placements.len()` of them are live this frame) plus where each
-/// one goes.
+/// Draw-side state: colors and the labels of the last build.
 pub struct TabBar {
     /// The terminal's default background. The active tab is filled with
     /// it so it visually merges into the terminal content below.
@@ -163,16 +139,12 @@ pub struct TabBar {
     colors: UiColors,
     /// The window's opacity, for the bar's and tabs' backgrounds.
     opacity: f32,
-    buffers: Vec<TextBuffer>,
-    /// What each buffer in `buffers` currently holds, so unchanged
-    /// labels aren't re-shaped every frame.
-    shaped: Vec<(String, TextColor)>,
-    placements: Vec<LabelPlacement>,
+    labels: Labels,
 }
 
 impl TabBar {
     pub fn new(terminal_bg: Rgb, colors: UiColors, opacity: f32) -> Self {
-        Self { terminal_bg, colors, opacity, buffers: Vec::new(), shaped: Vec::new(), placements: Vec::new() }
+        Self { terminal_bg, colors, opacity, labels: Labels::default() }
     }
 
     /// Append the bar's rectangles to `quads` and re-fill the label
@@ -180,13 +152,13 @@ impl TabBar {
     pub fn build<'t>(
         &mut self,
         layout: &TabBarLayout,
-        titles: impl Iterator<Item = &'t str>,
+        titles: impl Iterator<Item = (&'t str, bool)>,
         active: usize,
         hovered: Option<TabBarHit>,
         text: &mut TextRendererState,
         quads: &mut Vec<QuadInstance>,
     ) {
-        self.placements.clear();
+        self.labels.clear();
         let (h, px) = (layout.height, layout.px);
         let cell = text.cell;
         let (c, op) = (self.colors, self.opacity);
@@ -210,11 +182,11 @@ impl TabBar {
         };
         for &(x0, x1) in spans.iter().filter(|(x0, x1)| x1 > x0) {
             quads.push(fill(Rect { x: x0, y: 0.0, w: x1 - x0, h }, c.background));
-            quads.push(Rect { x: x0, y: h - px, w: x1 - x0, h: px }.quad(c.border));
+            quads.push(quad(Rect { x: x0, y: h - px, w: x1 - x0, h: px }, c.border));
         }
 
         let sep_h = (h * 0.5).round();
-        let separator = |x: f32| Rect { x: x - px, y: ((h - sep_h) * 0.5).round(), w: px, h: sep_h }.quad(c.border);
+        let separator = |x: f32| quad(Rect { x: x - px, y: ((h - sep_h) * 0.5).round(), w: px, h: sep_h }, c.border);
 
         // Sidebar toggle: a hamburger icon drawn from three quads, so it
         // doesn't depend on the monospace font having the glyph.
@@ -228,7 +200,7 @@ impl TabBar {
         let line_y = (t.y + (h - thick) * 0.5).round();
         for dy in [-gap, 0.0, gap] {
             let icon = if toggle_hovered { c.text } else { c.text_weak };
-            quads.push(Rect { x: line_x, y: line_y + dy, w: line_w, h: thick }.quad(icon));
+            quads.push(quad(Rect { x: line_x, y: line_y + dy, w: line_w, h: thick }, icon));
         }
         if active != 0 {
             quads.push(separator(t.x + t.w));
@@ -236,17 +208,26 @@ impl TabBar {
 
         let text_top = ((h - text.metrics.line_height) * 0.5).round();
 
-        for (i, (slot, title)) in layout.tabs.iter().zip(titles).enumerate() {
+        for (i, (slot, (title, broadcast))) in layout.tabs.iter().zip(titles).enumerate() {
             let r = slot.rect;
             let is_active = i == active;
             let is_hovered = matches!(hovered, Some(TabBarHit::Tab(j) | TabBarHit::Close(j)) if j == i);
 
-            if is_active {
+            // A tab in the broadcast gets a line in the error color on top,
+            // thicker than the active tab's -- typing goes further than it seems.
+            if broadcast {
+                let line = quad(Rect { x: r.x, y: 0.0, w: r.w, h: 3.0 * px }, c.error);
+                if is_active {
+                    quads.push(fill(r, self.terminal_bg));
+                }
+                quads.push(line);
+            }
+            if is_active && !broadcast {
                 // Covers the bottom border too, so the active tab opens
                 // straight into the terminal below.
                 quads.push(fill(r, self.terminal_bg));
-                quads.push(Rect { x: r.x, y: 0.0, w: r.w, h: 2.0 * px }.quad(c.accent));
-            } else {
+                quads.push(quad(Rect { x: r.x, y: 0.0, w: r.w, h: 2.0 * px }, c.accent));
+            } else if !is_active {
                 if is_hovered {
                     quads.push(fill(Rect { h: h - px, ..r }, c.hover));
                 }
@@ -272,7 +253,7 @@ impl TabBar {
                 text_inactive
             };
             let clip = Rect { x: label_left, y: 0.0, w: (label_right - label_left).max(0.0), h };
-            self.push_label(text, &truncate(title, max_chars), label_left, text_top, clip, color);
+            self.labels.push(text, &truncate(title, max_chars), label_left, text_top, clip, color);
 
             if let Some(close) = slot.close.filter(|_| show_close) {
                 let close_hovered = hovered == Some(TabBarHit::Close(i));
@@ -281,7 +262,7 @@ impl TabBar {
                 }
                 let color = if close_hovered { text_active } else { text_inactive };
                 let left = (close.x + (close.w - cell.width) * 0.5).round();
-                self.push_label(text, "×", left, text_top, close, color);
+                self.labels.push(text, "×", left, text_top, close, color);
             }
         }
 
@@ -292,59 +273,12 @@ impl TabBar {
         }
         let color = if new_hovered { text_active } else { text_inactive };
         let left = (b.x + (b.w - cell.width) * 0.5).round();
-        self.push_label(text, "+", left, text_top, b, color);
+        self.labels.push(text, "+", left, text_top, b, color);
     }
 
-    fn push_label(
-        &mut self,
-        text: &mut TextRendererState,
-        label: &str,
-        left: f32,
-        top: f32,
-        clip: Rect,
-        color: TextColor,
-    ) {
-        let attrs = text.default_attrs().color(color);
-        let metrics = text.metrics;
-        let font_system = &mut text.font_system;
-
-        let idx = self.placements.len();
-        if idx == self.buffers.len() {
-            let mut buffer = TextBuffer::new(font_system, metrics);
-            {
-                let mut buffer = buffer.borrow_with(font_system);
-                buffer.set_wrap(Wrap::None);
-                buffer.set_size(None, Some(metrics.line_height));
-            }
-            self.buffers.push(buffer);
-            self.shaped.push((String::new(), color));
-        }
-        if self.shaped[idx].0 != label || self.shaped[idx].1 != color {
-            let mut buffer = self.buffers[idx].borrow_with(font_system);
-            buffer.set_text(label, &attrs, Shaping::Advanced, None);
-            buffer.shape_until_scroll(false);
-            self.shaped[idx] = (label.to_string(), color);
-        }
-        self.placements.push(LabelPlacement { left, top, clip, color });
-    }
-
-    /// The labels built by the last [`TabBar::build`], ready to hand to
-    /// glyphon's `prepare` alongside the terminal's own text area.
+    /// The labels built by the last [`TabBar::build`].
     pub fn text_areas(&self) -> impl Iterator<Item = TextArea<'_>> {
-        self.placements.iter().zip(&self.buffers).map(|(p, buffer)| TextArea {
-            buffer,
-            left: p.left,
-            top: p.top,
-            scale: 1.0,
-            bounds: TextBounds {
-                left: p.clip.x.floor() as i32,
-                top: p.clip.y.floor() as i32,
-                right: (p.clip.x + p.clip.w).ceil() as i32,
-                bottom: (p.clip.y + p.clip.h).ceil() as i32,
-            },
-            default_color: p.color,
-            custom_glyphs: &[],
-        })
+        self.labels.text_areas()
     }
 }
 

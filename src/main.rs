@@ -8,6 +8,7 @@ mod input;
 mod render;
 mod shells;
 mod shortcuts;
+mod snippets;
 mod ssh;
 mod terminal;
 mod theme;

@@ -123,6 +123,8 @@ fn build(roots: &Roots, component: &str) -> Result<Theme, String> {
         cursor: accent,
         selection: mix(bg, accent, 0.35),
         selection_text: None,
+        search_match: (mix(bg, normal[3], 0.4), None),
+        search_focus: (normal[3], Some(bg)),
         normal,
         bright,
         dim: normal.map(|c| mix(c, bg, 0.35)),

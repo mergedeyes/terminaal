@@ -1,4 +1,5 @@
-//! Right-click menu over the terminal grid: copy, paste, paste and run.
+//! Right-click menu over the terminal grid: copy, paste, paste and run,
+//! and whether the tab takes part in the broadcast.
 //!
 //! `app.rs` opens it at the mouse (right-click on the grid) and closes it
 //! on a pick, a click anywhere else or a key press. It never takes the
@@ -17,6 +18,7 @@ pub enum MenuAction {
     Copy,
     Paste,
     PasteAndRun,
+    ToggleBroadcast,
 }
 
 pub struct ContextMenu {
@@ -25,8 +27,10 @@ pub struct ContextMenu {
     pos: Pos2,
     can_copy: bool,
     can_paste: bool,
-    /// The shortcuts shown beside copy, paste and paste-and-run.
-    shortcuts: [Option<String>; 3],
+    /// The tab takes part in the broadcast.
+    broadcast: bool,
+    /// The shortcuts shown beside the entries.
+    shortcuts: [Option<String>; 4],
     /// Where the menu ended up in the last pass, in points.
     rect: Option<Rect>,
 }
@@ -34,9 +38,10 @@ pub struct ContextMenu {
 impl ContextMenu {
     /// `can_copy`: there's a selection; `can_paste`: the clipboard holds
     /// text. Both are decided once, when the menu opens. `shortcuts`:
-    /// the combinations for copy, paste and paste-and-run, where bound.
-    pub fn new(pos: Pos2, can_copy: bool, can_paste: bool, shortcuts: [Option<String>; 3]) -> Self {
-        Self { pos, can_copy, can_paste, shortcuts, rect: None }
+    /// the combinations for copy, paste, paste-and-run and the broadcast,
+    /// where bound.
+    pub fn new(pos: Pos2, can_copy: bool, can_paste: bool, broadcast: bool, shortcuts: [Option<String>; 4]) -> Self {
+        Self { pos, can_copy, can_paste, broadcast, shortcuts, rect: None }
     }
 
     /// `pos` (points) lies on the menu as last shown.
@@ -46,11 +51,13 @@ impl ContextMenu {
 
     /// Show the menu; returns the entry clicked in this pass, if any.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<MenuAction> {
-        let [copy, paste, paste_and_run] = self.shortcuts.clone();
+        let [copy, paste, paste_and_run, broadcast] = self.shortcuts.clone();
+        let broadcast_label = if self.broadcast { t!("menu-broadcast-off") } else { t!("menu-broadcast-on") };
         let items = [
             (MenuAction::Copy, t!("menu-copy"), copy, self.can_copy),
             (MenuAction::Paste, t!("menu-paste"), paste, self.can_paste),
             (MenuAction::PasteAndRun, t!("menu-paste-run"), paste_and_run, self.can_paste),
+            (MenuAction::ToggleBroadcast, broadcast_label, broadcast, true),
         ];
         let mut picked = None;
         let response = Area::new(Id::new("context_menu"))
@@ -105,7 +112,7 @@ mod tests {
     /// of the menu's height from its top.
     fn click(can_copy: bool, can_paste: bool, at: f32) -> Option<MenuAction> {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(100.0, 100.0), can_copy, can_paste, Default::default());
+        let mut menu = ContextMenu::new(pos2(100.0, 100.0), can_copy, can_paste, false, Default::default());
         for _ in 0..3 {
             pass(&ctx, &mut menu, Vec::new());
         }
@@ -124,22 +131,23 @@ mod tests {
 
     #[test]
     fn clicks_pick_their_entry() {
-        assert_eq!(click(true, true, 1.0 / 6.0), Some(MenuAction::Copy));
-        assert_eq!(click(true, true, 0.5), Some(MenuAction::Paste));
-        assert_eq!(click(true, true, 5.0 / 6.0), Some(MenuAction::PasteAndRun));
+        assert_eq!(click(true, true, 1.0 / 8.0), Some(MenuAction::Copy));
+        assert_eq!(click(true, true, 3.0 / 8.0), Some(MenuAction::Paste));
+        assert_eq!(click(true, true, 5.0 / 8.0), Some(MenuAction::PasteAndRun));
+        assert_eq!(click(false, false, 7.0 / 8.0), Some(MenuAction::ToggleBroadcast));
     }
 
     #[test]
     fn disabled_entries_ignore_clicks() {
-        assert_eq!(click(false, true, 1.0 / 6.0), None);
-        assert_eq!(click(true, false, 0.5), None);
-        assert_eq!(click(true, false, 5.0 / 6.0), None);
+        assert_eq!(click(false, true, 1.0 / 8.0), None);
+        assert_eq!(click(true, false, 3.0 / 8.0), None);
+        assert_eq!(click(true, false, 5.0 / 8.0), None);
     }
 
     #[test]
     fn contains_follows_the_shown_menu() {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(100.0, 100.0), true, true, Default::default());
+        let mut menu = ContextMenu::new(pos2(100.0, 100.0), true, true, false, Default::default());
         assert!(!menu.contains(pos2(110.0, 110.0)), "nothing shown yet");
         pass(&ctx, &mut menu, Vec::new());
         assert!(menu.contains(pos2(110.0, 110.0)));
@@ -149,7 +157,7 @@ mod tests {
     #[test]
     fn stays_on_screen_near_the_corner() {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(790.0, 590.0), true, true, Default::default());
+        let mut menu = ContextMenu::new(pos2(790.0, 590.0), true, true, true, Default::default());
         for _ in 0..3 {
             pass(&ctx, &mut menu, Vec::new());
         }

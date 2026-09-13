@@ -66,6 +66,11 @@ pub struct TerminalColors {
     pub selection: Rgb,
     /// Text of selected cells; `None` keeps each cell's own.
     pub selection_text: Option<Rgb>,
+    /// Background and text of search matches on screen (`[colors.search]`);
+    /// no text color keeps each cell's own.
+    pub search_match: (Rgb, Option<Rgb>),
+    /// The same for the match in focus, the one n/N jumped to.
+    pub search_focus: (Rgb, Option<Rgb>),
     /// Black, red, green, yellow, blue, magenta, cyan, white.
     pub normal: [Rgb; 8],
     pub bright: [Rgb; 8],
@@ -160,6 +165,14 @@ impl Theme {
             cursor: optional("colors.cursor.cursor", &c.cursor.cursor, foreground)?,
             selection: optional("colors.selection.background", &c.selection.background, mix(background, normal[4], 0.5))?,
             selection_text: color("colors.selection.text", &c.selection.text)?,
+            search_match: (
+                optional("colors.search.matches.background", &c.search.matches.background, mix(background, normal[3], 0.4))?,
+                color("colors.search.matches.foreground", &c.search.matches.foreground)?,
+            ),
+            search_focus: (
+                optional("colors.search.focused_match.background", &c.search.focused_match.background, normal[3])?,
+                Some(optional("colors.search.focused_match.foreground", &c.search.focused_match.foreground, background)?),
+            ),
             normal,
             bright,
             dim: dim_colors,
@@ -356,6 +369,7 @@ struct FileColors {
     primary: Primary,
     cursor: CursorColors,
     selection: SelectionColors,
+    search: SearchColors,
     normal: Eight,
     bright: Eight,
     dim: Eight,
@@ -381,6 +395,20 @@ struct CursorColors {
 struct SelectionColors {
     background: Option<String>,
     text: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct SearchColors {
+    matches: MatchColors,
+    focused_match: MatchColors,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct MatchColors {
+    foreground: Option<String>,
+    background: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -500,6 +528,10 @@ cursor = 'CellForeground'
 text = '#1e1e2e'
 background = '#44475a'
 
+[colors.search.focused_match]
+background = '#ffb86c'
+foreground = 'CellBackground'
+
 [colors.hints.start]
 foreground = '#1e1e2e'
 
@@ -515,6 +547,8 @@ red = '#f00'
         assert_eq!(colors.cursor, colors.foreground);
         assert_eq!(colors.selection, rgb(0x44, 0x47, 0x5a));
         assert_eq!(colors.selection_text, Some(rgb(0x1e, 0x1e, 0x2e)));
+        assert_eq!(colors.search_focus, (rgb(0xff, 0xb8, 0x6c), Some(colors.background)));
+        assert_eq!(colors.search_match, (mix(colors.background, colors.normal[3], 0.4), None));
         assert_eq!(colors.bright[1], rgb(255, 0, 0));
         assert_eq!(colors.bright[2], colors.normal[2]);
         assert_eq!(colors.dim[3], dim(colors.normal[3]));

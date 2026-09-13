@@ -21,9 +21,12 @@
 //! than once per cell.
 
 use std::collections::HashMap;
+use std::ops::{Range, RangeInclusive};
 
 use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::index::Point;
+use alacritty_terminal::term::search::Match;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Rgb};
 use glyphon::{
@@ -79,6 +82,11 @@ impl RowText {
         self.text.push(ch);
     }
 
+    /// How many cells the row's text covers, give or take wide characters.
+    pub fn len(&self) -> usize {
+        self.text.chars().count()
+    }
+
     /// Trailing blanks draw nothing (backgrounds are quads), so dropping
     /// them saves shaping and lets more rows share a cache entry.
     fn trim_end(&mut self) {
@@ -104,15 +112,26 @@ pub struct GridGeometry {
     pub cell: CellMetrics,
 }
 
+/// What's highlighted besides the selection.
+#[derive(Clone, Copy, Default)]
+pub struct Highlights<'a> {
+    /// Search matches on screen, first to last (`terminal::search`).
+    pub matches: &'a [Match],
+    pub focus: Option<&'a Match>,
+    /// The link under the mouse while Ctrl is held: underlined.
+    pub link: Option<&'a RangeInclusive<Point>>,
+}
+
 /// Rebuild `quads` from the terminal's current state and return the text
 /// of every visible, non-blank row as `(row index, text)` for
-/// [`GridText::update`]. `selection_range` (already resolved from
-/// `Term::selection` via `Selection::to_range`) gets a translucent
-/// highlight quad per covered cell; `cursor_visible` is `false` on the
-/// "off" half of a blink cycle.
+/// [`GridText::update`]. Cells in `selection_range` (already resolved from
+/// `Term::selection` via `Selection::to_range`) and in a search match get
+/// the theme's colors for them, the selection winning; `cursor_visible`
+/// is `false` on the "off" half of a blink cycle.
 pub fn build_frame(
     term: &Term<EventProxyListener>,
     selection_range: Option<SelectionRange>,
+    search: Highlights,
     cursor_visible: bool,
     palette: &Palette,
     quads: &mut Vec<QuadInstance>,
@@ -138,10 +157,17 @@ pub fn build_frame(
         }
     };
 
+    // Cells come first to last, like the matches: skip those that ended.
+    let mut next_match = 0;
     for indexed in content.display_iter {
         let point = indexed.point;
         let cell = indexed.cell;
         let selected = selection_range.is_some_and(|range| range.contains(point));
+        while search.matches.get(next_match).is_some_and(|m| *m.end() < point) {
+            next_match += 1;
+        }
+        let focused = search.focus.is_some_and(|m| m.contains(&point));
+        let matched = focused || search.matches.get(next_match).is_some_and(|m| m.contains(&point));
 
         let row = point.line.0 + display_offset;
         if row < 0 {
@@ -163,7 +189,13 @@ pub fn build_frame(
         if cell.flags.contains(Flags::DIM) {
             fg = crate::theme::dim(fg);
         }
-        // Like Alacritty, the theme's selection colors replace the cell's.
+        // Like Alacritty, the theme's search and selection colors replace
+        // the cell's.
+        if matched {
+            let (match_bg, match_fg) = palette.search(focused);
+            bg = match_bg;
+            fg = match_fg.unwrap_or(fg);
+        }
         if selected {
             let (selection_bg, selection_fg) = palette.selection();
             bg = selection_bg;
@@ -175,6 +207,15 @@ pub fn build_frame(
                 offset: [origin_x + col as f32 * cell_w, origin_y + row as f32 * cell_h],
                 size: [cell_w, cell_h],
                 color: to_linear(bg, 1.0),
+            });
+        }
+
+        if search.link.is_some_and(|link| link.contains(&point)) {
+            let thickness = (cell_h / 16.0).round().max(1.0);
+            quads.push(QuadInstance {
+                offset: [origin_x + col as f32 * cell_w, origin_y + (row + 1) as f32 * cell_h - thickness],
+                size: [cell_w, thickness],
+                color: to_linear(fg, 1.0),
             });
         }
 
@@ -244,15 +285,22 @@ impl GridText {
         self.visible = rows;
     }
 
-    /// One text area per visible row, clipped to `bounds`.
+    /// One text area per visible row, clipped to `bounds`. The rows in
+    /// `cutout` end at its x: something is drawn over them from there
+    /// (the search bar), and text always comes out on top of quads.
     pub fn text_areas(
         &self,
         geometry: GridGeometry,
         bounds: TextBounds,
+        cutout: Option<(Range<usize>, f32)>,
         default_color: TextColor,
     ) -> impl Iterator<Item = TextArea<'_>> {
         self.visible.iter().filter_map(move |(row, text)| {
             let cached = self.cache.get(text)?;
+            let bounds = match &cutout {
+                Some((rows, x)) if rows.contains(row) => TextBounds { right: bounds.right.min(*x as i32), ..bounds },
+                _ => bounds,
+            };
             Some(TextArea {
                 buffer: &cached.buffer,
                 left: geometry.origin_x,

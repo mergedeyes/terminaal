@@ -49,9 +49,11 @@ use ssh2::{
 use crate::commands::{self, System, Target};
 use crate::i18n::t;
 use crate::ssh::agent_forward::AgentForwarding;
-use crate::ssh::forward::Forwards;
+use crate::ssh::forward::{ForwardStatus, Forwards};
+use crate::ssh::known_hosts;
+use crate::terminal::integration::Filter;
 use crate::ssh::options::{AlgorithmKind, AuthMethod, ForwardAgent, HostKeyCheck, algorithm_list};
-use crate::ssh::{AgentSocket, AuthPlan, SshTarget, default_key_files, display_path, expand_tilde, ssh_dir};
+use crate::ssh::{AgentSocket, AuthPlan, SshTarget, default_key_files, display_path, expand_tilde};
 use crate::terminal::listener::EventProxyListener;
 
 /// For the blocking phase (handshake, auth); the pump loop is non-blocking.
@@ -83,6 +85,8 @@ type SharedTerm = Arc<FairMutex<Term<EventProxyListener>>>;
 enum Msg {
     Input(Vec<u8>),
     Resize(WindowSize),
+    /// Pause the forward at this index, or start it (again).
+    SetForward(usize, bool),
 }
 
 pub struct SshHandle {
@@ -94,15 +98,25 @@ pub struct SshHandle {
     system: Arc<Mutex<Option<System>>>,
     /// `user@host`, for the sidebar's hint.
     label: String,
+    /// The host's name in the sidebar.
+    name: String,
     /// The system came from the host's options, not the probe.
     configured: bool,
+    /// How the port forwards are doing; empty until the shell starts.
+    forwards: Arc<Mutex<Vec<ForwardStatus>>>,
 }
 
 impl SshHandle {
     /// What the buttons of the built-in commands should build for.
     pub fn target(&self) -> Target {
         let system = *self.system.lock().unwrap_or_else(PoisonError::into_inner);
-        Target { system, host: Some(self.label.clone()), configured: self.configured }
+        Target {
+            system,
+            host: Some(self.label.clone()),
+            host_name: Some(self.name.clone()),
+            configured: self.configured,
+            ..Target::default()
+        }
     }
 
     pub fn send_input(&self, bytes: Vec<u8>) {
@@ -111,6 +125,15 @@ impl SshHandle {
 
     pub fn resize(&self, size: WindowSize) {
         self.send(Msg::Resize(size));
+    }
+
+    pub fn forwards(&self) -> Vec<ForwardStatus> {
+        self.forwards.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Pause forward `index`, or start it again.
+    pub fn set_forward(&self, index: usize, enabled: bool) {
+        self.send(Msg::SetForward(index, enabled));
     }
 
     fn send(&self, msg: Msg) {
@@ -136,21 +159,24 @@ pub fn spawn(
     // A host that says what it is needs no probe -- and being root is
     // something only the probe could tell, so go by the user name.
     let configured = target.settings.system;
-    let label = target.label.clone();
+    let (label, host_name) = (target.label.clone(), target.name.clone());
+    let forwards = Arc::new(Mutex::new(Vec::new()));
     let system = Arc::new(Mutex::new(configured.map(|family| System { family, root: target.user == "root" })));
     let worker = Worker {
         target,
         term,
         listener,
         parser: Processor::new(),
+        filter: Filter::default(),
         rx,
         wake: wake_rx,
         size,
         proxy: None,
         system: system.clone(),
+        forward_statuses: forwards.clone(),
     };
     std::thread::Builder::new().name(name).spawn(move || worker.run())?;
-    Ok(SshHandle { tx, wake: wake_tx, system, label, configured: configured.is_some() })
+    Ok(SshHandle { tx, wake: wake_tx, system, label, name: host_name, configured: configured.is_some(), forwards })
 }
 
 /// How a connection ended without an error.
@@ -202,6 +228,8 @@ struct Worker {
     term: SharedTerm,
     listener: EventProxyListener,
     parser: Processor,
+    /// Shell integration marks in the server's output (`terminal::integration`).
+    filter: Filter,
     rx: Receiver<Msg>,
     /// Read end of the wakeup socketpair; see the module docs.
     wake: UnixStream,
@@ -209,6 +237,8 @@ struct Worker {
     proxy: Option<Proxy>,
     /// Shared with the handle; see [`SshHandle::system`].
     system: Arc<Mutex<Option<System>>>,
+    /// Shared with the handle; see [`SshHandle::forwards`].
+    forward_statuses: Arc<Mutex<Vec<ForwardStatus>>>,
 }
 
 /// A running `ProxyCommand`, and what it wrote to stderr so far.
@@ -310,6 +340,7 @@ impl Worker {
     fn open_shell(&mut self, session: Session, socket: RawFd) -> Result<End, Stop> {
         let settings = self.target.settings.clone();
         let (mut forwards, report) = Forwards::start(&session, &settings.forwards);
+        self.publish_forwards(&forwards);
         for line in report {
             match line {
                 Ok(text) => self.print(&format!("\x1b[2m{text}\x1b[0m\n")),
@@ -358,6 +389,18 @@ impl Worker {
         // listeners would wait for the server one by one.
         drop(forwards);
         Ok(end)
+    }
+
+    /// Tell the handle how the forwards are doing, if that changed, and
+    /// redraw so the sidebar shows it.
+    fn publish_forwards(&self, forwards: &Forwards) {
+        let statuses = forwards.statuses();
+        let mut shared = self.forward_statuses.lock().unwrap_or_else(PoisonError::into_inner);
+        if *shared != statuses {
+            *shared = statuses;
+            drop(shared);
+            self.listener.send_event(Event::Wakeup);
+        }
     }
 
     /// Ask the host what it is, for the built-in commands, unless its
@@ -521,10 +564,10 @@ impl Worker {
             .unwrap_or_default();
         let kind = key_type_name(key_type).map_or_else(|| t!("conn-unknown-type"), str::to_string);
         let (host, port) = (hop.host.as_str(), hop.port);
-        let entry = if port == 22 { host.to_string() } else { format!("[{host}]:{port}") };
+        let entry = known_hosts::entry_name(host, port);
 
         let custom_file = hop.settings.known_hosts.clone();
-        let known_hosts = custom_file.clone().or_else(|| ssh_dir().map(|dir| dir.join("known_hosts")));
+        let known_hosts = known_hosts::file_for(hop);
         let file = known_hosts.as_deref().map_or_else(|| "known_hosts".to_string(), display_path);
         let mut known = session.known_hosts()?;
         if let Some(text) = known_hosts.as_ref().and_then(|path| std::fs::read_to_string(path).ok()) {
@@ -542,6 +585,8 @@ impl Worker {
                 entry = &entry,
                 kind = &kind,
                 fingerprint = &fingerprint,
+                file = &file,
+                stored = stored_keys(known_hosts.as_deref(), host, port),
                 file_option = custom_file.map(|path| format!(" -f '{}'", path.display())).unwrap_or_default()
             ))),
             CheckResult::NotFound | CheckResult::Failure => {
@@ -796,6 +841,7 @@ impl Worker {
                 match self.rx.try_recv() {
                     Ok(Msg::Input(bytes)) => outgoing.extend(bytes),
                     Ok(Msg::Resize(size)) => resize = Some(size),
+                    Ok(Msg::SetForward(index, enabled)) => forwards.set_enabled(index, enabled, session),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => return Ok(End::TabClosed),
                 }
@@ -845,7 +891,12 @@ impl Worker {
                     Ok(0) => break,
                     Ok(n) => {
                         log::trace!("{}: read {n} bytes", self.target.label);
-                        self.parser.advance(&mut *self.term.lock(), &buf[..n]);
+                        let (mut filtered, mut events) = (Vec::new(), Vec::new());
+                        self.filter.feed(&buf[..n], &mut filtered, &mut events);
+                        self.parser.advance(&mut *self.term.lock(), &filtered);
+                        for event in events {
+                            self.listener.send_shell(event);
+                        }
                         processed += n;
                     }
                     Err(err) if err.kind() == ErrorKind::WouldBlock => break,
@@ -854,6 +905,7 @@ impl Worker {
             }
             // Last before sleeping; see `Forwards::accept_remote`.
             forwards.accept_remote();
+            self.publish_forwards(forwards);
             inbound += processed;
             if inbound > 0 {
                 unanswered = 0;
@@ -923,6 +975,7 @@ impl Worker {
                     self.size = size;
                     continue;
                 }
+                Ok(Msg::SetForward(..)) => continue,
                 Ok(Msg::Input(bytes)) => bytes,
             };
             // Arrow keys and friends arrive as one escape sequence each.
@@ -961,7 +1014,7 @@ impl Worker {
         loop {
             match self.rx.recv() {
                 Ok(Msg::Input(_)) => return true,
-                Ok(Msg::Resize(_)) => {}
+                Ok(Msg::Resize(_) | Msg::SetForward(..)) => {}
                 Err(_) => return false,
             }
         }
@@ -1128,6 +1181,18 @@ fn set_algorithms(session: &Session, hop: &SshTarget) -> Result<(), Stop> {
     Ok(())
 }
 
+/// The keys `path` has for `host`, one per line, to set against a changed
+/// one.
+fn stored_keys(path: Option<&Path>, host: &str, port: u16) -> String {
+    let entries = path.map(|path| known_hosts::entries(path, host, port)).unwrap_or(Ok(Vec::new()));
+    let lines: Vec<String> = entries
+        .unwrap_or_default()
+        .iter()
+        .map(|e| t!("conn-stored-key", kind = &e.key_type, fingerprint = &e.fingerprint, line = e.line + 1))
+        .collect();
+    format!("  {}", lines.join("\n  "))
+}
+
 /// Append one line rather than letting libssh2 rewrite the file, which
 /// would drop comments and every line it didn't understand.
 fn append_known_host(path: &Path, entry: &str, key_type: HostKeyType, key: &[u8]) -> io::Result<()> {
@@ -1176,7 +1241,7 @@ pub(super) fn key_is_encrypted(text: &str) -> bool {
 }
 
 /// Inverse of [`base64`]; skips whitespace, `None` on other invalid input.
-fn base64_decode(text: &str) -> Option<Vec<u8>> {
+pub(super) fn base64_decode(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
     let (mut acc, mut bits) = (0u32, 0);
     for c in text.bytes().filter(|c| !c.is_ascii_whitespace()) {
