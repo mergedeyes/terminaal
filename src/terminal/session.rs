@@ -17,6 +17,7 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::tty;
 
+use crate::commands::{self, Target};
 use crate::shells::launch::Launch;
 use crate::ssh::SshTarget;
 use crate::ssh::connection::{self, SshHandle};
@@ -115,6 +116,16 @@ impl TerminalSession {
         match &mut self.backend {
             Backend::Local(notifier) => notifier.on_resize(window_size),
             Backend::Ssh(handle) => handle.resize(window_size),
+        }
+    }
+
+    /// What the built-in commands (`crate::commands`) should build for:
+    /// this machine for a local shell, whatever the host turned out to be
+    /// for SSH.
+    pub fn command_target(&self) -> Target {
+        match &self.backend {
+            Backend::Local(_) => Target { system: Some(commands::local()), host: None, configured: false },
+            Backend::Ssh(handle) => handle.target(),
         }
     }
 

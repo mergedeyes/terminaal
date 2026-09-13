@@ -16,7 +16,9 @@ use egui::{
     TextStyle, Ui, pos2, vec2,
 };
 
+use crate::commands::{Family, Target};
 use crate::config::{Config, FontSlot, Setting};
+use crate::ui::commands_panel::CommandsPanel;
 use crate::i18n::{Language, t};
 use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
@@ -51,6 +53,12 @@ pub enum SidebarAction {
     ReloadThemes,
     /// Choose a font family -- `None`: the default -- and persist it.
     SetFont(FontSlot, Option<String>),
+    /// Tailor the built-in commands to this system -- `None`: detect it
+    /// -- and persist that.
+    SetSystem(Option<Family>),
+    /// Send this built-in command to the active tab's shell, run or only
+    /// typed out depending on `commands_run`.
+    RunCommand(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -75,6 +83,7 @@ pub struct Sidebar {
     /// Which list (aliases or functions) is showing.
     list: EntryKind,
     editor: Option<Editor>,
+    commands: CommandsPanel,
     /// Entry whose delete button was clicked once; a second click confirms.
     confirm_delete: Option<(EntryKind, String)>,
     status: Option<Status>,
@@ -128,6 +137,7 @@ impl Sidebar {
             entries: Ok(Vec::new()),
             list: EntryKind::Alias,
             editor: None,
+            commands: CommandsPanel::default(),
             confirm_delete: None,
             status: None,
         };
@@ -161,6 +171,7 @@ impl Sidebar {
         ui: &mut Ui,
         default: &InstalledShell,
         config: &Config,
+        target: Option<&Target>,
         header_height: f32,
     ) -> (f32, Vec<SidebarAction>) {
         let mut actions = Vec::new();
@@ -172,7 +183,7 @@ impl Sidebar {
                 header(ui, &mut self.section, header_height, &mut actions);
                 ScrollArea::vertical().id_salt(self.section).auto_shrink([false; 2]).show(ui, |ui| {
                     Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| match self.section {
-                        Section::Shells => self.shells_section(ui, default, &mut actions),
+                        Section::Shells => self.shells_section(ui, default, config, target, &mut actions),
                         Section::Ssh => self.ssh.show(ui, &mut self.data, &mut actions),
                         Section::Keys => self.keys.show(ui, &mut self.data),
                     });
@@ -181,10 +192,19 @@ impl Sidebar {
         (panel.response.rect.right(), actions)
     }
 
-    fn shells_section(&mut self, ui: &mut Ui, default: &InstalledShell, actions: &mut Vec<SidebarAction>) {
+    fn shells_section(
+        &mut self,
+        ui: &mut Ui,
+        default: &InstalledShell,
+        config: &Config,
+        target: Option<&Target>,
+        actions: &mut Vec<SidebarAction>,
+    ) {
         self.shell_list(ui, default, actions);
         ui.add_space(18.0);
         self.managed_section(ui);
+        ui.add_space(18.0);
+        self.commands.show(ui, config, target, actions);
         if let Some(status) = &self.status {
             ui.add_space(8.0);
             status.show(ui);

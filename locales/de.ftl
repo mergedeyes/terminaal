@@ -114,6 +114,13 @@ settings-page-shortcuts = Tastenkürzel
 settings-font = Schrift
 settings-layout = Fenster
 settings-shell-aliases-hint = Aliase und Funktionen je Shell: Seitenleiste, Bereich „Shells“.
+settings-commands-run = Befehle sofort ausführen
+settings-commands-run-hint = Aus: der Befehl landet nur in der Eingabezeile, Enter drückst du selbst.
+settings-commands-yes = Rückfragen der Befehle überspringen
+settings-commands-yes-hint = Hängt --noconfirm bzw. -y an: Aktualisieren und Aufräumen laufen dann ohne Rückfrage durch, auch wenn dabei Pakete entfernt werden.
+settings-commands-system = System
+settings-commands-system-auto = Automatisch · { $system }
+settings-commands-system-hint = Bestimmt, welche Befehle die Seitenleiste für lokale Tabs anbietet. Für SSH-Hosts steht es im Host-Formular unter „Erweitert“.
 settings-theme = Theme
 settings-theme-builtin = Eingebautes Theme
 settings-theme-own = Eigenes Theme aus { $path }
@@ -211,6 +218,49 @@ shells-command-missing = Der Befehl fehlt.
 shells-body-missing = Der Rumpf fehlt.
 shells-name-taken = „{ $name }“ ist bereits als { $kind } definiert.
 shells-saved = „{ $name }“ gespeichert – gilt für neue { $shell }-Tabs.
+
+## Seitenleiste: Befehle (commands.rs)
+
+cmd-title = Befehle
+cmd-system = System: { $system }
+cmd-system-local-hint = Aus /etc/os-release erkannt. Stimmt das nicht, lässt es sich in den Einstellungen unter „Shell“ festlegen.
+cmd-system-remote-hint = Beim Verbinden auf { $host } ermittelt. Stimmt das nicht, lässt es sich im Host-Formular unter „Erweitert“ festlegen.
+cmd-system-detect = System wird wieder automatisch erkannt.
+cmd-system-probing = System wird ermittelt …
+cmd-system-unknown = System nicht erkannt – die Paketbefehle bleiben aus. In den Einstellungen unter „Shell“ lässt es sich festlegen.
+cmd-no-tab = Kein Terminal-Tab offen – Befehle brauchen eine Shell.
+cmd-run-hint = Führt sofort aus: { $line }
+cmd-type-hint = Schreibt in die Eingabezeile: { $line }
+cmd-warn-title = Befehle laufen sofort los
+cmd-warn-body = Ein Klick schickt den Befehl direkt an die Shell des aktiven Tabs, samt Enter. In den Einstellungen unter „Shell“ lässt sich das auf bloßes Eintippen umstellen.
+cmd-warn-run = Verstanden, ausführen
+cmd-group-packages = Pakete
+cmd-group-disk = Speicherplatz
+cmd-group-system = System
+cmd-group-network = Netzwerk
+cmd-update = System aktualisieren
+cmd-outdated = Verfügbare Updates
+cmd-cleanup = Aufräumen
+cmd-disk-free = Freier Speicher
+cmd-disk-usage = Ordnergrößen hier
+cmd-memory = Arbeitsspeicher
+cmd-processes = Top-Prozesse
+cmd-uptime = Laufzeit
+cmd-failed-services = Fehlgeschlagene Dienste
+cmd-log-errors = Fehler im Log
+cmd-ports = Offene Ports
+cmd-addresses = IP-Adressen
+cmd-family-arch = Arch, CachyOS, Manjaro (pacman)
+cmd-family-debian = Debian, Ubuntu, Mint (apt)
+cmd-family-fedora = Fedora, RHEL, Rocky (dnf)
+cmd-family-suse = openSUSE, SLES (zypper)
+cmd-family-alpine = Alpine (apk)
+cmd-family-void = Void (xbps)
+cmd-family-gentoo = Gentoo (emerge)
+cmd-family-nixos = NixOS (nixos-rebuild)
+cmd-family-macos = macOS (brew)
+cmd-family-freebsd = FreeBSD (pkg)
+cmd-family-unknown = Automatisch erkennen
 
 ## Verwaltete Alias-/Funktionsdateien (shells/managed.rs)
 
@@ -343,6 +393,8 @@ adv-set-env = Umgebungsvariablen, je Zeile NAME=Wert
 adv-set-env-hint = LANG=de_DE.UTF-8
 adv-send-env = Lokale Variablen mitgeben
 adv-env-note = Der Server übernimmt nur, was seine AcceptEnv-Liste erlaubt. TERM=… setzt den Terminaltyp.
+adv-system = System (für die Befehle)
+adv-system-hint = Bestimmt, welche Befehle die Seitenleiste im Bereich „Shells“ anbietet – Paketmanager und Dienste unterscheiden sich je System. Automatisch: beim Verbinden ermittelt. Eigene Option von Terminaal, kein ssh_config-Schlüsselwort.
 adv-algorithms = Algorithmen
 adv-kex = Schlüsseltausch
 adv-host-key-types = Host-Key-Typen

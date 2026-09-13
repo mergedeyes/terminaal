@@ -6,6 +6,7 @@
 //! Every winit event goes through [`UiLayer::on_window_event`] first;
 //! `app.rs` then decides whether the terminal should see it as well.
 
+pub mod commands_panel;
 pub mod context_menu;
 pub mod keys_panel;
 pub mod settings_panel;

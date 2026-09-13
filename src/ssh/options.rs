@@ -12,6 +12,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{expand_tilde, glob};
+use crate::commands::Family;
 use crate::i18n::t;
 
 /// `ConnectTimeout` if unset, in seconds.
@@ -90,6 +91,11 @@ pub struct Options {
     pub ciphers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub macs: Option<String>,
+    /// Which system the built-in commands should be tailored to
+    /// (`commands::Family::key`). Terminaal's own, not an ssh_config
+    /// keyword; unset: ask the host when connecting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -481,6 +487,9 @@ pub struct Settings {
     pub forwards: Vec<Forward>,
     pub forward_agent: ForwardAgent,
     pub algorithms: Vec<(AlgorithmKind, String)>,
+    /// The system for the built-in commands, where the host says; unset:
+    /// found out on login (`commands::PROBE`).
+    pub system: Option<Family>,
 }
 
 impl Default for Settings {
@@ -500,6 +509,7 @@ impl Default for Settings {
             forwards: Vec::new(),
             forward_agent: ForwardAgent::Off,
             algorithms: Vec::new(),
+            system: None,
         }
     }
 }
@@ -613,6 +623,7 @@ impl Options {
             forwards,
             forward_agent: ForwardAgent::parse(self.forward_agent.as_deref()),
             algorithms,
+            system: non_empty(&self.system).and_then(Family::parse).filter(|family| *family != Family::Unknown),
         })
     }
 }

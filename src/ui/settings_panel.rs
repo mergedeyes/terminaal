@@ -16,6 +16,7 @@ use egui::{
     pos2, vec2,
 };
 
+use crate::commands::{self, Family};
 use crate::config::{self, Config, FontSlot, Setting};
 use crate::i18n::{Language, t};
 use crate::render::text::FontFamilies;
@@ -395,6 +396,47 @@ fn shell(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
         .response
         .on_hover_text(hint);
     ui.label(weak(t!("settings-shell-aliases-hint")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    commands(ui, view.config, actions);
+}
+
+/// The built-in commands: whether a click runs them, whether they may
+/// skip their confirmation prompts, and which system they build for.
+fn commands(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
+    section_title(ui, &t!("cmd-title"));
+    if let Some(on) = checkbox(ui, t!("settings-commands-run"), "commands_run", config.commands_run) {
+        actions.push(SidebarAction::ChangeSetting { setting: Setting::CommandsRun(on), save: true });
+    }
+    ui.label(weak(t!("settings-commands-run-hint")).size(11.0));
+    if let Some(on) = checkbox(ui, t!("settings-commands-yes"), "commands_assume_yes", config.commands_assume_yes) {
+        actions.push(SidebarAction::ChangeSetting { setting: Setting::CommandsAssumeYes(on), save: true });
+    }
+    let warning = weak(t!("settings-commands-yes-hint")).size(11.0);
+    let warning = if config.commands_assume_yes { warning.color(theme::colors().error) } else { warning };
+    ui.label(warning);
+
+    ui.add_space(6.0);
+    let detected = commands::local().family;
+    let configured = config.system();
+    let selected = match configured {
+        Some(family) => family.label(),
+        None => t!("settings-commands-system-auto", system = detected.label()),
+    };
+    ui.label(t!("settings-commands-system")).on_hover_text(key_hint("system"));
+    egui::ComboBox::from_id_salt("settings-system").width(COMBO_WIDTH).selected_text(selected).show_ui(ui, |ui| {
+        for family in Family::ALL {
+            let value = (family != Family::Unknown).then_some(family);
+            let label = match value {
+                Some(_) => family.label(),
+                None => t!("settings-commands-system-auto", system = detected.label()),
+            };
+            if ui.selectable_label(configured == value, label).clicked() && configured != value {
+                actions.push(SidebarAction::SetSystem(value));
+            }
+        }
+    });
+    ui.label(weak(t!("settings-commands-system-hint")).size(11.0));
 }
 
 /// The theme dropdown -- built-in themes, then your own -- with a button

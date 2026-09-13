@@ -55,6 +55,15 @@ in a sidebar, and never have secrets written to disk.
   They live in a separate file that only Terminaal loads, so your other
   terminals are unaffected:
   `~/.config/fish/terminaal.fish`, `~/.bash_terminaal`, `$ZDOTDIR/.zsh_terminaal`
+- **Built-in commands**: buttons for the everyday chores – update the system,
+  list what has updates, clean up, free space, folder sizes, memory, top
+  processes, uptime, failed services, log errors, open ports, addresses. The
+  lines are tailored to the system the active tab is on (pacman, apt, dnf,
+  zypper, apk, xbps, emerge, nixos-rebuild, brew, pkg), detected from
+  `/etc/os-release` locally and asked of the host over SSH – overridable in
+  the settings and per host. Confirmation prompts are left alone unless you
+  turn that off (`commands_assume_yes`), and the first click explains that
+  commands go straight to the shell
 
 ### SSH
 - Saved hosts plus the hosts from your **`~/.ssh/config`**, read-only or
@@ -184,6 +193,10 @@ splash = true                 # start-up animation
 # ui_font_family = "Inter"    # font of menus and panels (default: built in)
 opacity = 1.0                 # below 1 the window is see-through (0.2–1.0)
 blur = true                   # blur what's behind a see-through window
+commands_run = true           # built-in commands run at once; off: typed into the prompt
+commands_assume_yes = false   # let them skip confirmations (-y, --noconfirm)
+# system = "debian"           # what the built-in commands build for
+                              # (default: from /etc/os-release)
 
 [shortcuts]                   # only what differs from the defaults
 new_tab = "Ctrl+Alt+N"
@@ -264,6 +277,9 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - Only Ed25519 keys can be generated. Existing RSA/ECDSA keys work
 - `Match exec` in `~/.ssh/config` is never evaluated, on purpose
 - A see-through window needs Wayland; on X11 it stays opaque
+- The built-in commands ask an SSH host what it is right after login, which
+  can hold the tab for up to two seconds on a slow link; set the host's
+  system under "Advanced" to skip that
 
 ## Roadmap
 
@@ -273,6 +289,7 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Configurable keyboard shortcuts for every action
 - [x] Appearance: themes for console and interface, console and menu font,
   COSMIC theme sync, see-through and frosted window
+- [x] Built-in commands per system, local and over SSH
 
 ## Development
 

@@ -1,5 +1,6 @@
 mod app;
 mod blur;
+mod commands;
 mod config;
 mod gpu;
 mod i18n;

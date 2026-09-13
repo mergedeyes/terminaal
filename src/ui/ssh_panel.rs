@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, TextEdit, Ui};
 
+use crate::commands::Family;
 use crate::i18n::t;
 use crate::ssh::options::{AddressFamily, Forward, ForwardAgent, ForwardKind, HostKeyCheck, Options, Target};
 use crate::ssh::{self, Catalog, Host, Login, keys};
@@ -225,6 +226,9 @@ struct Advanced {
     host_key_algorithms: String,
     ciphers: String,
     macs: String,
+    /// The system the built-in commands build for; `None`: ask the host
+    /// when connecting. Terminaal's own, not an ssh_config keyword.
+    system: Option<Family>,
 }
 
 impl Advanced {
@@ -258,6 +262,7 @@ impl Advanced {
             host_key_algorithms: text(&options.host_key_algorithms),
             ciphers: text(&options.ciphers),
             macs: text(&options.macs),
+            system: options.system.as_deref().and_then(Family::parse).filter(|family| *family != Family::Unknown),
         }
     }
 
@@ -286,6 +291,7 @@ impl Advanced {
             + usize::from(self.forward_agent)
             + usize::from(self.address_family != AddressFamily::Any)
             + usize::from(self.host_key_check != HostKeyCheck::Ask)
+            + usize::from(self.system.is_some())
     }
 }
 
@@ -425,6 +431,7 @@ impl HostEditor {
             host_key_algorithms: text(&advanced.host_key_algorithms),
             ciphers: text(&advanced.ciphers),
             macs: text(&advanced.macs),
+            system: advanced.system.map(|family| family.key().to_string()),
         };
         Ok(Host {
             name,
@@ -939,6 +946,18 @@ fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor) {
         );
         option_field(ui, &t!("adv-send-env"), "SendEnv", &mut a.send_env, "LANG LC_*");
         ui.label(weak(t!("adv-env-note")).size(11.0));
+        ui.add_space(4.0);
+        ui.label(weak(t!("adv-system"))).on_hover_text(t!("adv-system-hint"));
+        let selected = a.system.unwrap_or(Family::Unknown);
+        ComboBox::from_id_salt(("ssh-system", id)).width(ui.available_width()).selected_text(selected.label()).show_ui(
+            ui,
+            |ui| {
+                for family in Family::ALL {
+                    let value = (family != Family::Unknown).then_some(family);
+                    ui.selectable_value(&mut a.system, value, family.label());
+                }
+            },
+        );
 
         group(ui, &t!("adv-algorithms"));
         option_field(ui, &t!("adv-kex"), "KexAlgorithms", &mut a.kex, &default);
@@ -1052,6 +1071,7 @@ mod tests {
             host_key_algorithms: Some("^ssh-ed25519".into()),
             ciphers: Some("aes256-ctr".into()),
             macs: Some("hmac-sha2-256".into()),
+            system: Some("debian".into()),
             ..Options::default()
         };
         assert_eq!(HostEditor::from_host(&host, None).to_host(&data).unwrap(), host);

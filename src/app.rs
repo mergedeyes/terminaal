@@ -47,6 +47,7 @@ fn window_icon() -> Option<Icon> {
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
 }
 
+use crate::commands::{System, Target};
 use crate::config::{self, Config, FontSlot, Setting};
 use crate::i18n::{self, t};
 use crate::gpu::GpuState;
@@ -479,6 +480,28 @@ impl AppState {
     /// The active tab's shell session; `None` on the settings tab.
     fn current_terminal(&self) -> Option<&TerminalSession> {
         self.tabs.get(self.active_tab).and_then(Tab::terminal)
+    }
+
+    /// What the sidebar's command buttons should build for: the active
+    /// tab's system, with the configured one winning for a local shell.
+    /// `None` while the settings tab is showing -- no shell to send to.
+    fn command_target(&self) -> Option<Target> {
+        let mut target = self.current_terminal()?.command_target();
+        if target.host.is_none() && let Some(family) = self.config.system() {
+            target.system = Some(System { family, root: target.system.is_some_and(|system| system.root) });
+            target.configured = true;
+        }
+        Some(target)
+    }
+
+    /// A built-in command from the sidebar: run in the active tab, or --
+    /// with `commands_run` off -- only typed into its prompt.
+    fn run_command(&mut self, line: String) {
+        let mut bytes = line.into_bytes();
+        if self.config.commands_run {
+            bytes.push(b'\r');
+        }
+        self.send_typed(bytes);
     }
 
     fn settings_active(&self) -> bool {
@@ -1035,6 +1058,7 @@ impl AppState {
         let mut actions = Vec::new();
         let mut settings_actions = Vec::new();
         let splash = self.splash.as_ref();
+        let command_target = self.command_target();
         let mut splash_next = None;
         let context_menu = &mut self.context_menu;
         let mut menu_action = None;
@@ -1042,7 +1066,7 @@ impl AppState {
             // egui may run this more than once per frame; only the last
             // pass counts.
             (right_edge, actions) = if visible {
-                self.sidebar.show(ui, &default_shell, &self.config, header_height)
+                self.sidebar.show(ui, &default_shell, &self.config, command_target.as_ref(), header_height)
             } else {
                 (0.0, Vec::new())
             };
@@ -1167,6 +1191,14 @@ impl AppState {
                 self.themes = Themes::load();
                 self.apply_theme();
                 self.report(origin, Ok(t!("settings-themes-reloaded", count = self.themes.all().len())));
+            }
+            SidebarAction::RunCommand(line) => self.run_command(line),
+            SidebarAction::SetSystem(family) => {
+                let result = self.config.save_system(family).map(|()| match family {
+                    Some(family) => t!("cmd-system", system = family.label()),
+                    None => t!("cmd-system-detect"),
+                });
+                self.report(origin, result);
             }
             SidebarAction::SetFont(slot, family) => {
                 if let Err(err) = self.config.save_font(slot, family.as_deref()) {
@@ -1294,7 +1326,10 @@ impl AppState {
             | Setting::ScrollLines(_)
             | Setting::WindowSize { .. }
             | Setting::Sidebar(_)
-            | Setting::Splash(_) => {}
+            | Setting::Splash(_)
+            | Setting::CommandsRun(_)
+            | Setting::CommandsAssumeYes(_)
+            | Setting::CommandsWarned(_) => {}
         }
         if save && let Err(err) = self.config.save(setting) {
             self.settings.report(Err(err));

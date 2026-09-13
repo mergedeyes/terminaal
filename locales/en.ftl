@@ -114,6 +114,13 @@ settings-page-shortcuts = Shortcuts
 settings-font = Font
 settings-layout = Window
 settings-shell-aliases-hint = Aliases and functions per shell: sidebar, "Shells" section.
+settings-commands-run = Run commands right away
+settings-commands-run-hint = Off: the command only lands in the prompt, you press Enter yourself.
+settings-commands-yes = Let commands skip their prompts
+settings-commands-yes-hint = Adds --noconfirm or -y: updating and cleaning up then run through without asking, even when that removes packages.
+settings-commands-system = System
+settings-commands-system-auto = Automatic · { $system }
+settings-commands-system-hint = Decides which commands the sidebar offers for local tabs. For SSH hosts it's in the host form under “Advanced”.
 settings-theme = Theme
 settings-theme-builtin = Built-in theme
 settings-theme-own = Your theme from { $path }
@@ -211,6 +218,49 @@ shells-command-missing = The command is missing.
 shells-body-missing = The body is missing.
 shells-name-taken = “{ $name }” already exists ({ $kind }).
 shells-saved = Saved “{ $name }” – applies to new { $shell } tabs.
+
+## Sidebar: built-in commands (commands.rs)
+
+cmd-title = Commands
+cmd-system = System: { $system }
+cmd-system-local-hint = Detected from /etc/os-release. If that's wrong, set it in the settings under “Shell”.
+cmd-system-remote-hint = Detected on { $host } while connecting. If that's wrong, set it in the host form under “Advanced”.
+cmd-system-detect = The system is detected automatically again.
+cmd-system-probing = Detecting the system…
+cmd-system-unknown = System not recognized – the package commands stay hidden. You can set it in the settings under “Shell”.
+cmd-no-tab = No terminal tab open – commands need a shell.
+cmd-run-hint = Runs right away: { $line }
+cmd-type-hint = Types into the prompt: { $line }
+cmd-warn-title = Commands run right away
+cmd-warn-body = A click sends the command straight to the active tab's shell, Enter included. The settings under “Shell” can switch that to typing it out instead.
+cmd-warn-run = Got it, run it
+cmd-group-packages = Packages
+cmd-group-disk = Disk
+cmd-group-system = System
+cmd-group-network = Network
+cmd-update = Update the system
+cmd-outdated = Available updates
+cmd-cleanup = Clean up
+cmd-disk-free = Free space
+cmd-disk-usage = Folder sizes here
+cmd-memory = Memory
+cmd-processes = Top processes
+cmd-uptime = Uptime
+cmd-failed-services = Failed services
+cmd-log-errors = Errors in the log
+cmd-ports = Open ports
+cmd-addresses = IP addresses
+cmd-family-arch = Arch, CachyOS, Manjaro (pacman)
+cmd-family-debian = Debian, Ubuntu, Mint (apt)
+cmd-family-fedora = Fedora, RHEL, Rocky (dnf)
+cmd-family-suse = openSUSE, SLES (zypper)
+cmd-family-alpine = Alpine (apk)
+cmd-family-void = Void (xbps)
+cmd-family-gentoo = Gentoo (emerge)
+cmd-family-nixos = NixOS (nixos-rebuild)
+cmd-family-macos = macOS (brew)
+cmd-family-freebsd = FreeBSD (pkg)
+cmd-family-unknown = Detect automatically
 
 ## Managed alias/function files (shells/managed.rs)
 
@@ -342,6 +392,8 @@ adv-set-env = Environment variables, one NAME=value per line
 adv-set-env-hint = LANG=en_US.UTF-8
 adv-send-env = Pass on local variables
 adv-env-note = The server only takes what its AcceptEnv list allows. TERM=… sets the terminal type.
+adv-system = System (for the commands)
+adv-system-hint = Decides which built-in commands the sidebar's shell section offers – package managers and service tools differ per system. Automatic: found out while connecting. Terminaal's own option, not an ssh_config keyword.
 adv-algorithms = Algorithms
 adv-kex = Key exchange
 adv-host-key-types = Host key types

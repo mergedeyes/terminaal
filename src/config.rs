@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
+use crate::commands::Family;
 use crate::i18n::{Language, t};
 use crate::shortcuts::{Action, Bindings, KeyCombo};
 
@@ -73,6 +74,19 @@ pub struct Config {
     /// Blur what shines through a see-through window, where the compositor
     /// can.
     pub blur: bool,
+    /// Send a built-in command (`crate::commands`) to the shell right
+    /// away, Enter included; off types it into the prompt instead.
+    pub commands_run: bool,
+    /// Let the built-in commands skip their confirmation prompts (`-y`,
+    /// `--noconfirm`). Off by default: a click shouldn't be able to remove
+    /// packages unasked.
+    pub commands_assume_yes: bool,
+    /// Whether the warning about commands running right away has been
+    /// acknowledged; set the first time one is used.
+    pub commands_warned: bool,
+    /// The system the built-in commands are tailored to, e.g. `debian`
+    /// (`commands::Family::key`). Unset (or `auto`): from `/etc/os-release`.
+    pub system: Option<String>,
     /// Keyboard shortcuts that differ from the defaults, by action name
     /// (`[shortcuts]`); see `shortcuts`.
     pub shortcuts: BTreeMap<String, Bindings>,
@@ -120,6 +134,10 @@ impl Default for Config {
             sidebar_width: 300.0,
             splash: true,
             language: None,
+            commands_run: true,
+            commands_assume_yes: false,
+            commands_warned: false,
+            system: None,
             shortcuts: BTreeMap::new(),
         }
     }
@@ -203,6 +221,21 @@ impl Config {
         Ok(())
     }
 
+    /// The system the built-in commands should be tailored to, if the
+    /// config names one. An unknown value counts as unset.
+    pub fn system(&self) -> Option<Family> {
+        self.system.as_deref().and_then(Family::parse).filter(|family| *family != Family::Unknown)
+    }
+
+    /// Tailor the built-in commands to `family` and persist that; `None`
+    /// (detect it) removes the key.
+    pub fn save_system(&mut self, family: Option<Family>) -> Result<(), String> {
+        let key = family.map(Family::key);
+        Self::edit(|doc| write_text(doc, "system", key))?;
+        self.system = key.map(str::to_string);
+        Ok(())
+    }
+
     /// The font family chosen for `slot`, if any.
     pub fn font(&self, slot: FontSlot) -> Option<&str> {
         match slot {
@@ -269,6 +302,9 @@ impl Config {
             Setting::Splash(on) => self.splash = on,
             Setting::Opacity(opacity) => self.opacity = opacity,
             Setting::Blur(on) => self.blur = on,
+            Setting::CommandsRun(on) => self.commands_run = on,
+            Setting::CommandsAssumeYes(on) => self.commands_assume_yes = on,
+            Setting::CommandsWarned(on) => self.commands_warned = on,
         }
     }
 
@@ -320,6 +356,10 @@ pub enum Setting {
     Splash(bool),
     Opacity(f32),
     Blur(bool),
+    /// Run built-in commands right away instead of typing them out.
+    CommandsRun(bool),
+    CommandsAssumeYes(bool),
+    CommandsWarned(bool),
 }
 
 impl Setting {
@@ -346,6 +386,9 @@ impl Setting {
             Self::Splash(on) => set_value(doc, "splash", on),
             Self::Opacity(opacity) => set_value(doc, "opacity", float(opacity.into())),
             Self::Blur(on) => set_value(doc, "blur", on),
+            Self::CommandsRun(on) => set_value(doc, "commands_run", on),
+            Self::CommandsAssumeYes(on) => set_value(doc, "commands_assume_yes", on),
+            Self::CommandsWarned(on) => set_value(doc, "commands_warned", on),
         }
     }
 }
@@ -397,7 +440,7 @@ fn write_shortcut(doc: &mut toml_edit::DocumentMut, name: &str, bindings: Option
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, Setting, write_shortcut};
+    use super::{Config, Family, Setting, write_shortcut};
     use crate::shortcuts::Bindings;
 
     #[test]
@@ -434,6 +477,9 @@ mod tests {
             Setting::CursorBlinkInterval(450),
             Setting::Opacity(0.85),
             Setting::Blur(false),
+            Setting::CommandsRun(false),
+            Setting::CommandsAssumeYes(true),
+            Setting::CommandsWarned(true),
         ] {
             setting.write(&mut doc);
         }
@@ -451,6 +497,24 @@ mod tests {
         assert_eq!(config.cursor_blink_interval_ms, 450);
         assert_eq!(config.opacity(), 0.85);
         assert!(!config.blur);
+        assert!(!config.commands_run);
+        assert!(config.commands_assume_yes);
+        assert!(config.commands_warned);
+    }
+
+    /// The system for the built-in commands, as the settings write it.
+    #[test]
+    fn the_system_is_written_and_removed_again() {
+        let mut doc: toml_edit::DocumentMut = "font_size = 12
+".parse().unwrap();
+        super::write_text(&mut doc, "system", Some(Family::Debian.key()));
+        let config: Config = toml::from_str(&doc.to_string()).unwrap();
+        assert_eq!(config.system(), Some(Family::Debian));
+        // Written by hand, and nonsense at that: detect it instead.
+        let config: Config = toml::from_str("system = \"plan9\"\n").unwrap();
+        assert_eq!(config.system(), None);
+        super::write_text(&mut doc, "system", None);
+        assert_eq!(doc.to_string().trim(), "font_size = 12");
     }
 
     #[test]

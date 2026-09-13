@@ -46,6 +46,7 @@ use ssh2::{
     KnownHostFileKind, MethodType, Prompt, Session,
 };
 
+use crate::commands::{self, System, Target};
 use crate::i18n::t;
 use crate::ssh::agent_forward::AgentForwarding;
 use crate::ssh::forward::Forwards;
@@ -55,6 +56,8 @@ use crate::terminal::listener::EventProxyListener;
 
 /// For the blocking phase (handshake, auth); the pump loop is non-blocking.
 const SESSION_TIMEOUT_MS: u32 = 20_000;
+/// The system probe is a nicety: give it a moment, never the tab.
+const PROBE_TIMEOUT_MS: u32 = 2_000;
 /// How long to sleep when nothing at all is scheduled (no keepalives).
 const IDLE_POLL: Duration = Duration::from_secs(3600);
 /// How much of a `ProxyCommand`'s stderr to keep for error messages.
@@ -85,9 +88,23 @@ enum Msg {
 pub struct SshHandle {
     tx: Sender<Msg>,
     wake: UnixStream,
+    /// What the host turned out to be, for the built-in commands
+    /// (`crate::commands`): set by the host's options, else by the probe
+    /// after login. `None` until then.
+    system: Arc<Mutex<Option<System>>>,
+    /// `user@host`, for the sidebar's hint.
+    label: String,
+    /// The system came from the host's options, not the probe.
+    configured: bool,
 }
 
 impl SshHandle {
+    /// What the buttons of the built-in commands should build for.
+    pub fn target(&self) -> Target {
+        let system = *self.system.lock().unwrap_or_else(PoisonError::into_inner);
+        Target { system, host: Some(self.label.clone()), configured: self.configured }
+    }
+
     pub fn send_input(&self, bytes: Vec<u8>) {
         self.send(Msg::Input(bytes));
     }
@@ -116,9 +133,24 @@ pub fn spawn(
     let (wake_tx, wake_rx) = UnixStream::pair()?;
     wake_tx.set_nonblocking(true)?;
     let name = format!("ssh {}", target.label);
-    let worker = Worker { target, term, listener, parser: Processor::new(), rx, wake: wake_rx, size, proxy: None };
+    // A host that says what it is needs no probe -- and being root is
+    // something only the probe could tell, so go by the user name.
+    let configured = target.settings.system;
+    let label = target.label.clone();
+    let system = Arc::new(Mutex::new(configured.map(|family| System { family, root: target.user == "root" })));
+    let worker = Worker {
+        target,
+        term,
+        listener,
+        parser: Processor::new(),
+        rx,
+        wake: wake_rx,
+        size,
+        proxy: None,
+        system: system.clone(),
+    };
     std::thread::Builder::new().name(name).spawn(move || worker.run())?;
-    Ok(SshHandle { tx, wake: wake_tx })
+    Ok(SshHandle { tx, wake: wake_tx, system, label, configured: configured.is_some() })
 }
 
 /// How a connection ended without an error.
@@ -175,6 +207,8 @@ struct Worker {
     wake: UnixStream,
     size: WindowSize,
     proxy: Option<Proxy>,
+    /// Shared with the handle; see [`SshHandle::system`].
+    system: Arc<Mutex<Option<System>>>,
 }
 
 /// A running `ProxyCommand`, and what it wrote to stderr so far.
@@ -312,6 +346,7 @@ impl Worker {
             session.set_keepalive(true, interval);
         }
         log::debug!("{}: shell started", self.target.label);
+        self.probe_system(&session);
 
         let end = self.pump(&session, &mut channel, socket, &mut forwards)?;
         // Say goodbye properly; best effort, the other side may be gone.
@@ -323,6 +358,35 @@ impl Worker {
         // listeners would wait for the server one by one.
         drop(forwards);
         Ok(end)
+    }
+
+    /// Ask the host what it is, for the built-in commands, unless its
+    /// options already say. One `exec` channel of its own, so nothing of
+    /// this shows up in the tab; a server that refuses to run it (or
+    /// takes too long) simply leaves the system unknown.
+    fn probe_system(&mut self, session: &Session) {
+        if self.system.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
+            return;
+        }
+        let previous = session.timeout();
+        session.set_timeout(PROBE_TIMEOUT_MS);
+        let output = (|| -> Result<String, io::Error> {
+            let mut channel = session.channel_session()?;
+            channel.exec(commands::PROBE)?;
+            let mut output = String::new();
+            channel.read_to_string(&mut output)?;
+            let _ = channel.close();
+            Ok(output)
+        })();
+        session.set_timeout(previous);
+        match output {
+            Ok(output) => {
+                let system = commands::probe(&output);
+                log::debug!("{}: system is {:?} (root: {})", self.target.label, system.family, system.root);
+                *self.system.lock().unwrap_or_else(PoisonError::into_inner) = Some(system);
+            }
+            Err(err) => log::debug!("{}: system probe failed: {err}", self.target.label),
+        }
     }
 
     /// `ForwardAgent`: ask the server to forward the agent, and say in the
