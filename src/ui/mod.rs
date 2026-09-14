@@ -9,6 +9,7 @@
 //! work with: its events come in through [`UiLayer::on_layer_event`] and
 //! are turned into egui's input here.
 
+pub mod command_palette;
 pub mod commands_panel;
 pub mod context_menu;
 pub mod files_panel;

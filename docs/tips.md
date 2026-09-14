@@ -60,6 +60,9 @@
   shell** to `tmux new -A -s main`. Dropped connections no longer lose your work.
 - **Skip the system check:** set **Advanced → Session → System** for hosts you
   connect to often – the tab starts up to two seconds faster on slow links.
+- **Mark production:** give the host **Advanced → Look → Warning color** red, or a
+  theme of its own (a light one stands out well from a dark window). Every tab
+  and split pane on it is then hard to mistake for a test box.
 - **Old servers:** `kex_algorithms = "+diffie-hellman-group14-sha1"` or
   `host_key_algorithms = "+ssh-rsa"` in Advanced → Algorithms, instead of
   loosening your global config.

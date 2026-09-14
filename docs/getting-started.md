@@ -61,6 +61,9 @@ Just want to try it? `cargo run --release` starts it without installing.
 3. **Choose a look.** Press <kbd>Ctrl</kbd>+<kbd>,</kbd>, go to **Appearance** and
    try the themes – they apply immediately.
 4. **Add a server.** Follow [Your first SSH host](tutorials/01-your-first-ssh-host.md).
+5. **Find anything.** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> opens the
+   [command palette](guides/command-palette.md): a few letters find a tab, a
+   host, a snippet, an action or a theme.
 
 Everything you change in the settings is saved to
 `~/.config/terminaal/config.toml` right away, keeping any comments you wrote

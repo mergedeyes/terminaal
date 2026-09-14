@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use alacritty_terminal::vte::ansi::Rgb;
 use serde::{Deserialize, Serialize};
 
 use super::{expand_tilde, glob};
@@ -96,6 +97,35 @@ pub struct Options {
     /// keyword; unset: ask the host when connecting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
+    /// A warning color for this host's tabs and terminals: one of
+    /// [`HOST_COLORS`] or `#rrggbb`. Terminaal's own, like `system`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// The theme this host's terminals are drawn in, by name; unset: the
+    /// window's. Terminaal's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+}
+
+/// The named colors a host can be marked with, independent of the theme
+/// so "red" means the same everywhere.
+pub const HOST_COLORS: [(&str, Rgb); 6] = [
+    ("red", Rgb { r: 0xe0, g: 0x3c, b: 0x31 }),
+    ("orange", Rgb { r: 0xf0, g: 0x8c, b: 0x1a }),
+    ("yellow", Rgb { r: 0xe8, g: 0xc5, b: 0x1c }),
+    ("green", Rgb { r: 0x3f, g: 0xb9, b: 0x50 }),
+    ("blue", Rgb { r: 0x3a, g: 0x86, b: 0xf0 }),
+    ("purple", Rgb { r: 0xa2, g: 0x5d, b: 0xdc }),
+];
+
+/// A host's `color`: a name from [`HOST_COLORS`] (any case) or a hex color.
+pub fn parse_host_color(value: &str) -> Option<Rgb> {
+    let value = value.trim();
+    HOST_COLORS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(value))
+        .map(|(_, rgb)| *rgb)
+        .or_else(|| crate::theme::parse_hex(value))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -490,6 +520,10 @@ pub struct Settings {
     /// The system for the built-in commands, where the host says; unset:
     /// found out on login (`commands::PROBE`).
     pub system: Option<Family>,
+    /// Warning color for its tabs and terminals.
+    pub color: Option<Rgb>,
+    /// Name of the theme its terminals are drawn in.
+    pub theme: Option<String>,
 }
 
 impl Default for Settings {
@@ -510,6 +544,8 @@ impl Default for Settings {
             forward_agent: ForwardAgent::Off,
             algorithms: Vec::new(),
             system: None,
+            color: None,
+            theme: None,
         }
     }
 }
@@ -624,6 +660,11 @@ impl Options {
             forward_agent: ForwardAgent::parse(self.forward_agent.as_deref()),
             algorithms,
             system: non_empty(&self.system).and_then(Family::parse).filter(|family| *family != Family::Unknown),
+            color: match non_empty(&self.color) {
+                Some(value) => Some(parse_host_color(value).ok_or_else(|| t!("opt-bad-color", value = value))?),
+                None => None,
+            },
+            theme: non_empty(&self.theme).map(str::to_string),
         })
     }
 }
@@ -742,6 +783,8 @@ mod tests {
             dynamic_forward: vec!["1080".into()],
             ciphers: Some("^aes256-gcm@openssh.com".into()),
             forward_agent: Some("$MY_AGENT".into()),
+            color: Some(" Red".into()),
+            theme: Some("Nord".into()),
             ..Options::default()
         };
         let expand = |value: &str| value.replace("%h", "example.org").replace("%p", "22");
@@ -756,6 +799,8 @@ mod tests {
         assert_eq!(kinds, [ForwardKind::Local, ForwardKind::Remote, ForwardKind::Dynamic]);
         assert_eq!(settings.algorithms, [(AlgorithmKind::Cipher, "^aes256-gcm@openssh.com".to_string())]);
         assert_eq!(settings.forward_agent, ForwardAgent::Socket("$MY_AGENT".into()));
+        assert_eq!(settings.color, Some(HOST_COLORS[0].1));
+        assert_eq!(settings.theme.as_deref(), Some("Nord"));
         assert_eq!(settings.for_jump().forward_agent, ForwardAgent::Off);
 
         let defaults = Options::default().settings(&no_expand).unwrap();
@@ -772,6 +817,9 @@ mod tests {
         assert!(bad(Options { preferred_authentications: Some("gssapi-with-mic".into()), ..Options::default() }).contains("keine Methode"));
         assert!(bad(Options { preferred_authentications: Some("magic".into()), ..Options::default() }).contains("magic"));
         assert!(bad(Options { macs: Some("-".into()), ..Options::default() }).contains("MACs"));
+        assert!(bad(Options { color: Some("pink".into()), ..Options::default() }).contains("pink"));
+        let hex = Options { color: Some("#102030".into()), ..Options::default() }.settings(&no_expand).unwrap();
+        assert_eq!(hex.color, Some(Rgb { r: 0x10, g: 0x20, b: 0x30 }));
     }
 
     #[test]

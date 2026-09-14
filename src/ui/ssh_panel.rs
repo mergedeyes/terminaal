@@ -18,7 +18,9 @@ use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margi
 
 use crate::commands::Family;
 use crate::i18n::t;
-use crate::ssh::options::{AddressFamily, Forward, ForwardAgent, ForwardKind, HostKeyCheck, Options, Target};
+use crate::ssh::options::{
+    AddressFamily, Forward, ForwardAgent, ForwardKind, HOST_COLORS, HostKeyCheck, Options, Target, parse_host_color,
+};
 use crate::ssh::{self, Catalog, Host, Login, keys, known_hosts};
 use crate::ssh::forward::ForwardState;
 use crate::ui::sidebar::{SidebarAction, TabForwards};
@@ -94,6 +96,8 @@ pub struct SshPanel {
     /// The selected host's known_hosts entries, while shown.
     host_keys: Option<HostKeys>,
     status: Option<Status>,
+    /// Every theme's name, for a host's own theme.
+    theme_names: Vec<String>,
 }
 
 /// Where a host's key is stored and what's stored for it.
@@ -350,6 +354,72 @@ struct Advanced {
     /// The system the built-in commands build for; `None`: ask the host
     /// when connecting. Terminaal's own, not an ssh_config keyword.
     system: Option<Family>,
+    /// Warning color for the host's tabs and terminals.
+    color: ColorChoice,
+    /// The host's own console theme, by name.
+    theme: Option<String>,
+}
+
+/// A host's `color` as picked in the form.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ColorChoice {
+    #[default]
+    None,
+    /// Index into [`HOST_COLORS`].
+    Named(usize),
+    Custom([u8; 3]),
+}
+
+impl ColorChoice {
+    fn parse(value: Option<&str>) -> Self {
+        let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else { return Self::None };
+        if let Some(i) = HOST_COLORS.iter().position(|(name, _)| name.eq_ignore_ascii_case(value)) {
+            return Self::Named(i);
+        }
+        match parse_host_color(value) {
+            Some(rgb) => Self::Custom([rgb.r, rgb.g, rgb.b]),
+            None => Self::None,
+        }
+    }
+
+    /// As written to hosts.toml.
+    fn spec(self) -> Option<String> {
+        match self {
+            Self::None => None,
+            Self::Named(i) => Some(HOST_COLORS[i].0.to_string()),
+            Self::Custom([r, g, b]) => Some(format!("#{r:02x}{g:02x}{b:02x}")),
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::None => t!("adv-color-none"),
+            Self::Named(i) => color_name(i),
+            Self::Custom(_) => t!("adv-color-custom"),
+        }
+    }
+
+    fn rgb(self) -> Option<[u8; 3]> {
+        match self {
+            Self::None => None,
+            Self::Named(i) => {
+                let rgb = HOST_COLORS[i].1;
+                Some([rgb.r, rgb.g, rgb.b])
+            }
+            Self::Custom(rgb) => Some(rgb),
+        }
+    }
+}
+
+fn color_name(index: usize) -> String {
+    match HOST_COLORS[index].0 {
+        "red" => t!("adv-color-red"),
+        "orange" => t!("adv-color-orange"),
+        "yellow" => t!("adv-color-yellow"),
+        "green" => t!("adv-color-green"),
+        "blue" => t!("adv-color-blue"),
+        _ => t!("adv-color-purple"),
+    }
 }
 
 impl Advanced {
@@ -384,6 +454,8 @@ impl Advanced {
             ciphers: text(&options.ciphers),
             macs: text(&options.macs),
             system: options.system.as_deref().and_then(Family::parse).filter(|family| *family != Family::Unknown),
+            color: ColorChoice::parse(options.color.as_deref()),
+            theme: options.theme.clone().filter(|name| !name.trim().is_empty()),
         }
     }
 
@@ -413,6 +485,8 @@ impl Advanced {
             + usize::from(self.address_family != AddressFamily::Any)
             + usize::from(self.host_key_check != HostKeyCheck::Ask)
             + usize::from(self.system.is_some())
+            + usize::from(self.color != ColorChoice::None)
+            + usize::from(self.theme.is_some())
     }
 }
 
@@ -553,6 +627,8 @@ impl HostEditor {
             ciphers: text(&advanced.ciphers),
             macs: text(&advanced.macs),
             system: advanced.system.map(|family| family.key().to_string()),
+            color: advanced.color.spec(),
+            theme: advanced.theme.clone(),
         };
         Ok(Host {
             name,
@@ -613,7 +689,12 @@ impl SshPanel {
         } else {
             None
         };
-        Self { selected, editor: None, confirm_delete: None, host_keys: None, status: None }
+        Self { selected, editor: None, confirm_delete: None, host_keys: None, status: None, theme_names: Vec::new() }
+    }
+
+    /// The themes a host can pick, after they were (re)loaded.
+    pub fn set_theme_names(&mut self, names: Vec<String>) {
+        self.theme_names = names;
     }
 
     pub fn report(&mut self, result: Result<String, String>) {
@@ -885,7 +966,7 @@ impl SshPanel {
 
             ui.add_space(4.0);
             forwards_ui(ui, editor);
-            advanced_ui(ui, editor);
+            advanced_ui(ui, editor, &self.theme_names);
 
             if let Some(err) = &editor.error {
                 ui.label(RichText::new(err).color(theme::colors().error));
@@ -1084,7 +1165,7 @@ fn forwards_ui(ui: &mut Ui, editor: &mut HostEditor) {
 }
 
 /// Everything else, grouped; the ssh_config keyword next to each label.
-fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor) {
+fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor, theme_names: &[String]) {
     let count = editor.advanced.count_set();
     let title = t!("host-advanced", count = count);
     let id = editor.id;
@@ -1159,6 +1240,9 @@ fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor) {
             },
         );
 
+        group(ui, &t!("adv-look"));
+        look_ui(ui, a, id, theme_names);
+
         group(ui, &t!("adv-algorithms"));
         option_field(ui, &t!("adv-kex"), "KexAlgorithms", &mut a.kex, &default);
         option_field(ui, &t!("adv-host-key-types"), "HostKeyAlgorithms", &mut a.host_key_algorithms, &default);
@@ -1166,6 +1250,49 @@ fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor) {
         option_field(ui, &t!("adv-macs"), "MACs", &mut a.macs, &default);
         ui.label(weak(t!("adv-algorithms-note")).size(11.0));
     });
+}
+
+/// Warning color and theme: Terminaal's own options.
+fn look_ui(ui: &mut Ui, a: &mut Advanced, id: u64, theme_names: &[String]) {
+    ui.label(weak(t!("adv-color"))).on_hover_text(t!("adv-color-hint"));
+    ui.horizontal(|ui| {
+        if let Some([r, g, b]) = a.color.rgb() {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, CornerRadius::same(3), egui::Color32::from_rgb(r, g, b));
+        }
+        ComboBox::from_id_salt(("ssh-color", id)).width(ui.available_width().min(160.0)).selected_text(a.color.label()).show_ui(
+            ui,
+            |ui| {
+                ui.selectable_value(&mut a.color, ColorChoice::None, t!("adv-color-none"));
+                for i in 0..HOST_COLORS.len() {
+                    ui.selectable_value(&mut a.color, ColorChoice::Named(i), color_name(i));
+                }
+                let custom = match a.color {
+                    ColorChoice::Custom(rgb) => rgb,
+                    other => other.rgb().unwrap_or([0x80; 3]),
+                };
+                ui.selectable_value(&mut a.color, ColorChoice::Custom(custom), t!("adv-color-custom"));
+            },
+        );
+        if let ColorChoice::Custom(rgb) = &mut a.color {
+            ui.color_edit_button_srgb(rgb);
+        }
+    });
+
+    ui.label(weak(t!("adv-theme"))).on_hover_text(t!("adv-theme-hint"));
+    let window = t!("adv-theme-window");
+    let selected = a.theme.clone().unwrap_or_else(|| window.clone());
+    ComboBox::from_id_salt(("ssh-theme", id)).width(ui.available_width()).selected_text(selected).show_ui(ui, |ui| {
+        ui.selectable_value(&mut a.theme, None, window);
+        // A theme that's gone stays pickable, so opening the form keeps it.
+        if let Some(name) = a.theme.clone().filter(|name| !theme_names.iter().any(|n| n.eq_ignore_ascii_case(name))) {
+            ui.selectable_value(&mut a.theme, Some(name.clone()), name);
+        }
+        for name in theme_names {
+            ui.selectable_value(&mut a.theme, Some(name.clone()), name);
+        }
+    });
+    ui.label(weak(t!("adv-look-note")).size(11.0));
 }
 
 fn group(ui: &mut Ui, title: &str) {
@@ -1286,11 +1413,15 @@ mod tests {
             ciphers: Some("aes256-ctr".into()),
             macs: Some("hmac-sha2-256".into()),
             system: Some("debian".into()),
+            color: Some("orange".into()),
+            theme: Some("Nord".into()),
             ..Options::default()
         };
         assert_eq!(HostEditor::from_host(&host, None).to_host(&data).unwrap(), host);
         let cfg = data.catalog.config[0].clone();
         assert_eq!(HostEditor::from_host(&cfg, None).to_host(&data).unwrap(), cfg);
+        host.options.color = Some("#1a2b3c".into());
+        assert_eq!(HostEditor::from_host(&host, None).to_host(&data).unwrap(), host);
     }
 
     #[test]

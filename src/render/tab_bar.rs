@@ -46,6 +46,18 @@ pub enum TabBarHit {
     NewTab,
 }
 
+/// What a tab shows besides its place.
+#[derive(Clone, Copy, Debug)]
+pub struct TabLook<'a> {
+    pub title: &'a str,
+    /// One of its terminals takes part in the broadcast.
+    pub broadcast: bool,
+    /// Its host's warning color.
+    pub accent: Option<Rgb>,
+    /// Its terminal's background, where its host has a theme of its own.
+    pub background: Option<Rgb>,
+}
+
 pub struct TabSlot {
     pub rect: Rect,
     /// `None` when the tab is too narrow to fit one.
@@ -152,7 +164,7 @@ impl TabBar {
     pub fn build<'t>(
         &mut self,
         layout: &TabBarLayout,
-        titles: impl Iterator<Item = (&'t str, bool)>,
+        tabs: impl Iterator<Item = TabLook<'t>>,
         active: usize,
         hovered: Option<TabBarHit>,
         text: &mut TextRendererState,
@@ -208,34 +220,37 @@ impl TabBar {
 
         let text_top = ((h - text.metrics.line_height) * 0.5).round();
 
-        for (i, (slot, (title, broadcast))) in layout.tabs.iter().zip(titles).enumerate() {
+        for (i, (slot, look)) in layout.tabs.iter().zip(tabs).enumerate() {
+            let TabLook { title, broadcast, accent, background } = look;
             let r = slot.rect;
             let is_active = i == active;
             let is_hovered = matches!(hovered, Some(TabBarHit::Tab(j) | TabBarHit::Close(j)) if j == i);
 
-            // A tab in the broadcast gets a line in the error color on top,
-            // thicker than the active tab's -- typing goes further than it seems.
-            if broadcast {
-                let line = quad(Rect { x: r.x, y: 0.0, w: r.w, h: 3.0 * px }, c.error);
-                if is_active {
-                    quads.push(fill(r, self.terminal_bg));
-                }
-                quads.push(line);
-            }
-            if is_active && !broadcast {
+            if is_active {
                 // Covers the bottom border too, so the active tab opens
-                // straight into the terminal below.
-                quads.push(fill(r, self.terminal_bg));
-                quads.push(quad(Rect { x: r.x, y: 0.0, w: r.w, h: 2.0 * px }, c.accent));
-            } else if !is_active {
-                if is_hovered {
-                    quads.push(fill(Rect { h: h - px, ..r }, c.hover));
-                }
-                // Separator on the right edge, unless the neighbour is
-                // the active tab (its own background already delimits it).
-                if i + 1 != active {
-                    quads.push(separator(r.x + r.w));
-                }
+                // straight into the terminal below. A marked host's tab is
+                // tinted in its color on top of that; in the background,
+                // its line alone marks it.
+                let background = background.unwrap_or(self.terminal_bg);
+                quads.push(fill(r, accent.map_or(background, |accent| mix(background, accent, 0.22))));
+            } else if is_hovered {
+                quads.push(fill(Rect { h: h - px, ..r }, c.hover));
+            }
+            // A tab in the broadcast gets a line in the error color on top,
+            // thicker than the active tab's -- typing goes further than it
+            // seems. A marked host's tab gets one in its color, active or not.
+            let line = match (broadcast, accent) {
+                (true, _) => Some((c.error, 3.0)),
+                (false, Some(accent)) => Some((accent, 3.0)),
+                (false, None) => is_active.then_some((c.accent, 2.0)),
+            };
+            if let Some((color, thickness)) = line {
+                quads.push(quad(Rect { x: r.x, y: 0.0, w: r.w, h: thickness * px }, color));
+            }
+            // Separator on the right edge, unless the neighbour is the
+            // active tab (its own background already delimits it).
+            if !is_active && i + 1 != active {
+                quads.push(separator(r.x + r.w));
             }
 
             let show_close = is_active || is_hovered;

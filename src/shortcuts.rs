@@ -43,6 +43,8 @@ pub enum Action {
     OpenFiles,
     ToggleSidebar,
     OpenSettings,
+    /// Search actions, hosts, snippets, tabs and themes.
+    CommandPalette,
     Copy,
     Paste,
     PasteAndRun,
@@ -90,7 +92,7 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 40] = [
+    pub const ALL: [Action; 41] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -118,6 +120,7 @@ impl Action {
         Action::OpenFiles,
         Action::ToggleSidebar,
         Action::OpenSettings,
+        Action::CommandPalette,
         Action::Copy,
         Action::Paste,
         Action::PasteAndRun,
@@ -155,6 +158,7 @@ impl Action {
             Action::OpenFiles => "open_files",
             Action::ToggleSidebar => "toggle_sidebar",
             Action::OpenSettings => "open_settings",
+            Action::CommandPalette => "command_palette",
             Action::Copy => "copy",
             Action::Paste => "paste",
             Action::PasteAndRun => "paste_and_run",
@@ -196,6 +200,7 @@ impl Action {
             Action::OpenFiles => t!("shortcut-open-files"),
             Action::ToggleSidebar => t!("shortcut-toggle-sidebar"),
             Action::OpenSettings => t!("shortcut-open-settings"),
+            Action::CommandPalette => t!("shortcut-command-palette"),
             Action::Copy => t!("shortcut-copy"),
             Action::Paste => t!("shortcut-paste"),
             Action::PasteAndRun => t!("shortcut-paste-and-run"),
@@ -228,7 +233,7 @@ impl Action {
             | Action::FocusPane(_)
             | Action::ZoomPane
             | Action::ToggleBroadcast => Group::Panes,
-            Action::ToggleSidebar | Action::OpenSettings => Group::Window,
+            Action::ToggleSidebar | Action::OpenSettings | Action::CommandPalette => Group::Window,
             Action::Copy | Action::Paste | Action::PasteAndRun => Group::Clipboard,
             Action::ScrollPageUp
             | Action::ScrollPageDown
@@ -273,6 +278,7 @@ impl Action {
             Action::OpenFiles => &["Ctrl+Shift+O"],
             Action::ToggleSidebar => &["Ctrl+Shift+B"],
             Action::OpenSettings => &["Ctrl+,"],
+            Action::CommandPalette => &["Ctrl+Shift+P"],
             Action::Copy => &["Ctrl+Shift+C"],
             Action::Paste => &["Ctrl+Shift+V"],
             Action::PasteAndRun => &[],

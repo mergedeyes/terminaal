@@ -82,6 +82,17 @@ A *changed* host key always aborts the connection. See [Host keys](host-keys.md)
 | Pass on variables | `SendEnv` | names, `*` and `?` allowed; the server must accept them (`AcceptEnv`) |
 | System (for the commands) | – | Terminaal's own; skips detecting the system after login |
 
+### Look
+
+Both are Terminaal's own options, not `ssh_config` keywords. They apply to
+terminals opened after saving the host – split panes and restored sessions
+included; tabs already open keep their look.
+
+| Option | In hosts.toml | Notes |
+| --- | --- | --- |
+| Warning color | `color` | `red`, `orange`, `yellow`, `green`, `blue`, `purple`, or **Custom** (`"#rrggbb"`). The host's tabs get a line in that color on top – the tab in front is tinted as well, also when only one pane of a split is on that host – and its terminals a frame. A broadcast's red line and frame win over it |
+| Theme | `theme` | The name of any theme from **Settings → Appearance**. Only the console colors of the host's terminals change; tab bar and sidebar keep the window's theme. An unknown name falls back to the window's theme |
+
 ### Algorithms
 
 `KexAlgorithms`, `HostKeyAlgorithms`, `Ciphers`, `MACs` – empty means libssh2's

@@ -81,6 +81,9 @@ in a sidebar, and never have secrets written to disk.
 - Right-click menu in the terminal: copy, paste, paste and run, joining or
   leaving the broadcast, splitting and closing the pane, the files of an SSH
   connection
+- A **command palette** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>): type a few
+  letters to switch to a tab, connect to a host with any of its logins, run a
+  snippet, trigger an action or pick a theme
 - A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
 - **Themes** for the console and the interface alike: seven built in, and your
   own in Alacritty's format (its themes work as they are)
@@ -129,6 +132,9 @@ in a sidebar, and never have secrets written to disk.
   timeouts, keepalives, compression, address family, authentication order,
   agent forwarding (`ForwardAgent`), `StrictHostKeyChecking`, `RemoteCommand`, `SetEnv`/`SendEnv`, and the
   algorithm lists (kex, host key, ciphers, MACs)
+- **A color per host**: a warning color marks the host's tabs and frames its
+  terminals, and a theme of its own gives them different console colors – so a
+  production server never looks like a test box
 - The sidebar shows the active tab's **port forwards** – running, paused or
   failed and why – and pauses, starts or retries each while connected
 - Host keys are checked against `~/.ssh/known_hosts`, and new entries are appended.
@@ -218,6 +224,7 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Files of the SSH connection (SFTP) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> | Command palette |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
@@ -300,6 +307,7 @@ Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
 `move_tab_right`, `split_right`, `split_down`, `close_pane`,
 `focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down`,
 `zoom_pane`, `toggle_broadcast`, `open_files`, `toggle_sidebar`, `open_settings`,
+`command_palette`,
 `copy`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
 `scroll_to_top`, `scroll_to_bottom`, `search`, `previous_prompt`,
 `next_prompt`, `font_bigger`, `font_smaller`, `font_reset`). Key
@@ -445,12 +453,12 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Drop-down (Quake) window: a layer surface toggled by `terminaal --quake`
 - [x] Startup commands: snippets that run with every new shell, or after an SSH login
 - [x] Separate update buttons for Flatpak and for AUR helpers (yay/paru)
+- [x] A color per host: a warning color on tab and frame, or a theme of its own
+- [x] Command palette: fuzzy search over actions, hosts and logins, snippets, tabs, themes and shells
 
 ### Planned
 
 **Everyday comfort**
-- [ ] A color per host: a warning frame or tab color, or a theme of its own – so a production server never looks like a test box
-- [ ] Command palette (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>): fuzzy search over actions, hosts and logins, snippets, open tabs and themes
 - [ ] Working with command output through the prompt marks: copy the last output, click a prompt to select its output, show how long a command ran
 - [ ] A warning before pasting several lines or risky commands (`sudo`, `curl … | sh`), especially with broadcast on
 - [ ] Activity in background tabs: a mark for new output, the bell, or silence for a while

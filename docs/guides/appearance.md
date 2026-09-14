@@ -17,6 +17,10 @@ editing, click **Reload**. Errors in a file show under the theme list.
 
 The full format, step by step: [Make your own theme](../tutorials/05-make-your-own-theme.md).
 
+A saved SSH host can have a theme of its own for its terminals, and a warning
+color for its tabs: **Advanced → Look** in the host form, see
+[SSH hosts](ssh-hosts.md#look).
+
 Summary of what a theme file can contain:
 
 | Table | Keys | Required |

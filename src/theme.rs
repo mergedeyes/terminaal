@@ -259,6 +259,11 @@ impl Themes {
         Self { list, errors }
     }
 
+    /// The theme called `name` (any case), if there is one.
+    pub fn find(&self, name: &str) -> Option<&Theme> {
+        self.list.iter().find(|theme| theme.name.eq_ignore_ascii_case(name))
+    }
+
     pub fn all(&self) -> &[Theme] {
         &self.list
     }
@@ -326,7 +331,7 @@ fn color(key: &str, value: &Option<String>) -> Result<Option<Rgb>, String> {
     parse_hex(value).map(Some).ok_or_else(|| t!("theme-bad-color", key = key, value = value.as_str()))
 }
 
-fn parse_hex(value: &str) -> Option<Rgb> {
+pub fn parse_hex(value: &str) -> Option<Rgb> {
     let value = value.trim();
     let hex = value.strip_prefix('#').or_else(|| value.strip_prefix("0x")).or_else(|| value.strip_prefix("0X"))?;
     if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {

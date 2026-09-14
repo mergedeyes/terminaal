@@ -133,6 +133,8 @@ host_key_algorithms = "^ssh-ed25519"
 ciphers = "aes256-gcm@openssh.com"
 macs = "hmac-sha2-256"
 system = "debian"             # Terminaal's own: skip detecting the system
+color = "red"                 # Terminaal's own: red, orange, yellow, green, blue, purple or "#rrggbb"
+theme = "Dracula"             # Terminaal's own: console colors of this host's terminals
 ```
 
 `proxy_jump` and `proxy_command` exclude each other. Details on every option:

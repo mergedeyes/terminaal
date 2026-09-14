@@ -165,6 +165,28 @@ impl Sidebar {
 
     /// Show the outcome of something `app.rs` did for a [`SidebarAction`]
     /// in the section it came from (the one showing).
+    /// Saved hosts and those from `~/.ssh/config`.
+    pub fn catalog(&self) -> &crate::ssh::Catalog {
+        &self.data.catalog
+    }
+
+    /// Run a command line as a button in the shell section would: right
+    /// away, or -- before the first one ever ran -- once the warning there
+    /// is acknowledged. Empty then, and that section shows.
+    pub fn activate_command(&mut self, line: &str, config: &Config) -> Vec<SidebarAction> {
+        let mut actions = Vec::new();
+        self.commands.activate(line, config, &mut actions);
+        if actions.is_empty() {
+            self.section = Section::Shells;
+        }
+        actions
+    }
+
+    /// The themes a host can pick in its form.
+    pub fn set_theme_names(&mut self, names: Vec<String>) {
+        self.ssh.set_theme_names(names);
+    }
+
     pub fn report(&mut self, result: Result<String, String>) {
         match self.section {
             Section::Shells => self.status = Some(Status::from_result(result)),

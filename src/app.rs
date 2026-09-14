@@ -18,7 +18,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::TermMode;
-use alacritty_terminal::vte::ansi::NamedColor;
+use alacritty_terminal::vte::ansi::{NamedColor, Rgb};
 use arboard::Clipboard;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
@@ -63,7 +63,7 @@ use crate::render::grid::{self, CursorStyle, GridText, PaneText};
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::{QuadInstance, QuadRenderer};
 use crate::render::search_bar::{SearchBar, SearchBarView};
-use crate::render::tab_bar::{self, TabBar, TabBarHit, TabBarLayout};
+use crate::render::tab_bar::{self, TabBar, TabBarHit, TabBarLayout, TabLook};
 use crate::render::text::{CellMetrics, FontFamilies, TextRendererState};
 use crate::theme::{Theme, Themes};
 use crate::ui::theme::FontFace;
@@ -81,6 +81,7 @@ use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::sftp::edit::EditAction;
 use crate::sftp::session::{Command as SftpCommand, Remote};
 use crate::ssh::connection::Opener;
+use crate::ui::command_palette::{self, CommandPalette};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
 use crate::ui::files_panel::{FilesAction, FilesPanel, FilesView};
 use crate::ui::settings_panel::{SettingsPanel, SettingsView, Transparency};
@@ -244,6 +245,23 @@ impl Tab {
     fn broadcast(&self) -> bool {
         self.panes().is_some_and(|panes| panes.panes.iter().any(|pane| pane.broadcast))
     }
+
+    /// How the tab bar draws it.
+    fn look(&self) -> TabLook<'_> {
+        let panes = self.panes();
+        TabLook {
+            title: self.title(),
+            broadcast: self.broadcast(),
+            // The focused terminal's color, else any other's: a split with
+            // a marked host in it is marked too.
+            accent: panes.and_then(|panes| {
+                std::iter::once(panes.focused()).chain(&panes.panes).find_map(|pane| pane.look.accent)
+            }),
+            background: panes
+                .and_then(|panes| panes.focused().look.palette.as_ref())
+                .map(|palette| palette.named(NamedColor::Background)),
+        }
+    }
 }
 
 /// A tab's terminals and how they share its area.
@@ -308,6 +326,8 @@ struct Pane {
     /// Takes part in the broadcast: input typed into one such terminal
     /// goes to all of them.
     broadcast: bool,
+    /// Its host's color and theme.
+    look: PaneLook,
     /// Where it sits in the window, in physical pixels, and its grid there
     /// ([`AppState::layout_panes`]).
     rect: LabelRect,
@@ -336,6 +356,15 @@ impl Startup {
             _ => self.since + STARTUP_TIMEOUT,
         }
     }
+}
+
+/// What a terminal's host asks of its looks (`color`, `theme`).
+#[derive(Clone, Default)]
+struct PaneLook {
+    /// Warning color for its frame and tab.
+    accent: Option<Rgb>,
+    /// Console colors of its own instead of the window's theme.
+    palette: Option<Box<Palette>>,
 }
 
 #[derive(Clone)]
@@ -452,6 +481,8 @@ struct AppState {
     splash_redraw_at: Option<Instant>,
     /// Right-click menu over the grid, while it's open.
     context_menu: Option<ContextMenu>,
+    /// The open command palette; it has the keyboard while open.
+    command_palette: Option<CommandPalette>,
     /// This machine's name, to tell its working directories from others'.
     hostname: String,
     /// The window has the keyboard focus.
@@ -577,6 +608,7 @@ impl AppState {
             splash,
             splash_redraw_at: None,
             context_menu: None,
+            command_palette: None,
             hostname: hostname(),
             focused: true,
             prompt_labels: Labels::default(),
@@ -655,6 +687,20 @@ impl AppState {
         Ok(())
     }
 
+    /// The color and theme `origin`'s host asks for.
+    fn pane_look(&self, origin: &PaneOrigin) -> PaneLook {
+        let PaneOrigin::Ssh(target) = origin else { return PaneLook::default() };
+        let settings = &target.settings;
+        let palette = settings.theme.as_deref().and_then(|name| {
+            let theme = self.themes.find(name);
+            if theme.is_none() {
+                log::warn!("host {:?}: unknown theme {name:?}, using the window's", target.name);
+            }
+            theme.map(|theme| Box::new(Palette::new(&theme.terminal)))
+        });
+        PaneLook { accent: settings.color, palette }
+    }
+
     /// Open a tab that connects to `target` over SSH and switch to it.
     /// Connecting plays out in the tab itself (progress, prompts,
     /// errors), so this only fails if the worker thread can't start.
@@ -695,6 +741,7 @@ impl AppState {
             }
         };
         let start_cwd = cwd.filter(|_| matches!(origin, PaneOrigin::Shell(_)));
+        let look = self.pane_look(&origin);
         // SSH terminals wait for their login instead (`pane_output`).
         let startup = match &origin {
             PaneOrigin::Shell(shell) => Some(Startup::new(shell.kind != ShellKind::Other)),
@@ -713,6 +760,7 @@ impl AppState {
             startup,
             startup_connection: 0,
             broadcast: false,
+            look,
             rect,
             size,
         })
@@ -1033,6 +1081,7 @@ impl AppState {
         window.redraw.set(false);
         self.focused = false;
         self.close_context_menu();
+        self.close_palette();
         self.drag = None;
     }
 
@@ -1553,6 +1602,10 @@ impl AppState {
         self.context_menu.as_ref().is_some_and(|menu| menu.contains(self.to_points(pos)))
     }
 
+    fn over_palette(&self, pos: (f64, f64)) -> bool {
+        self.command_palette.as_ref().is_some_and(|palette| palette.contains(self.to_points(pos)))
+    }
+
     /// The settings page is at `pos`: everything below the tab bar right
     /// of the sidebar, while the settings tab is showing.
     fn over_settings(&self, (x, y): (f64, f64)) -> bool {
@@ -1562,7 +1615,7 @@ impl AppState {
     /// egui owns the mouse at `pos`: the sidebar, the settings page or the
     /// open context menu.
     fn over_ui(&self, pos: (f64, f64)) -> bool {
-        self.over_sidebar(pos.0) || self.over_settings(pos) || self.over_context_menu(pos)
+        self.over_sidebar(pos.0) || self.over_settings(pos) || self.over_context_menu(pos) || self.over_palette(pos)
     }
 
     /// Key presses go to egui rather than the terminal: the user clicked
@@ -1875,6 +1928,177 @@ impl AppState {
         }
     }
 
+    /// Open the command palette over the console, with what can be picked
+    /// right now; a second press closes it.
+    fn open_palette(&mut self) {
+        if self.command_palette.is_some() {
+            self.close_palette();
+            return;
+        }
+        use command_palette::{Entry, Item};
+        let mut entries = Vec::new();
+        for (i, tab) in self.tabs.iter().enumerate() {
+            entries.push(Entry {
+                kind: t!("palette-kind-tab"),
+                title: tab.title().to_string(),
+                detail: t!("palette-tab-number", number = i + 1),
+                item: Item::Tab(i),
+            });
+        }
+        let catalog = self.sidebar.catalog();
+        let saved = catalog.saved.iter().enumerate().map(|(i, host)| (true, i, host));
+        let config = catalog.config.iter().enumerate().map(|(i, host)| (false, i, host));
+        let mut names: Vec<&str> = Vec::new();
+        for (saved, index, host) in saved.chain(config) {
+            // A saved host hides the `~/.ssh/config` one of its name.
+            if names.contains(&host.name.as_str()) {
+                continue;
+            }
+            names.push(&host.name);
+            for (login, entry) in host.all_logins().iter().enumerate() {
+                let user = if entry.user.is_empty() { String::new() } else { format!("{}@", entry.user) };
+                entries.push(Entry {
+                    kind: t!("palette-kind-host"),
+                    title: host.name.clone(),
+                    detail: format!("{user}{}", host.host),
+                    item: Item::Connect { saved, index, login },
+                });
+            }
+        }
+        if let Some(target) = self.command_target() {
+            for snippet in self.sidebar.snippets().iter().filter(|snippet| snippet.applies(&target)) {
+                entries.push(Entry {
+                    kind: t!("palette-kind-snippet"),
+                    title: snippet.name.clone(),
+                    detail: snippet.command.clone(),
+                    item: Item::Snippet(snippet.command.clone()),
+                });
+            }
+        }
+        for action in Action::ALL.into_iter().filter(|action| !matches!(action, Action::SelectTab(_) | Action::CommandPalette)) {
+            entries.push(Entry {
+                kind: action.group().label(),
+                title: action.label(),
+                detail: self.keymap.label(action).unwrap_or_default(),
+                item: Item::Action(action),
+            });
+        }
+        for theme in self.themes.all() {
+            let current = theme.name == self.theme.name;
+            entries.push(Entry {
+                kind: t!("palette-kind-theme"),
+                title: theme.name.clone(),
+                detail: if current { t!("palette-theme-current") } else { String::new() },
+                item: Item::Theme(theme.name.clone()),
+            });
+        }
+        for (i, shell) in self.sidebar.shells().iter().enumerate() {
+            entries.push(Entry {
+                kind: t!("palette-kind-shell"),
+                title: t!("palette-new-tab", shell = &shell.name),
+                detail: shell.path.display().to_string(),
+                item: Item::Shell(i),
+            });
+        }
+        self.close_context_menu();
+        self.search = None;
+        // It keeps the keyboard itself; egui gets none meanwhile.
+        self.give_keyboard_to_terminal();
+        log::debug!(target: "terminaal::palette", "open with {} entries", entries.len());
+        self.command_palette = Some(CommandPalette::new(entries));
+        self.window.request_redraw();
+    }
+
+    fn close_palette(&mut self) {
+        if self.command_palette.take().is_some() {
+            self.window.request_redraw();
+        }
+    }
+
+    /// A key while the palette is open: all of them are its.
+    fn palette_key(&mut self, event: &KeyInput) {
+        let combo = KeyCombo::from_event(event, self.modifiers);
+        let action = combo.as_ref().and_then(|combo| self.keymap.action(combo));
+        let mods = self.modifiers;
+        let plain = !(mods.control_key() || mods.alt_key() || mods.super_key());
+        let Some(palette) = self.command_palette.as_mut() else { return };
+        match &event.logical_key {
+            Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super) => return,
+            _ if action == Some(Action::CommandPalette) => return self.close_palette(),
+            Key::Named(NamedKey::Escape) => return self.close_palette(),
+            Key::Named(NamedKey::Enter) => {
+                let item = palette.selected().cloned();
+                self.close_palette();
+                if let Some(item) = item {
+                    self.run_palette_item(item);
+                }
+                return;
+            }
+            Key::Named(NamedKey::ArrowUp) => palette.move_selection(-1),
+            Key::Named(NamedKey::ArrowDown) => palette.move_selection(1),
+            Key::Named(NamedKey::Tab) => palette.move_selection(if mods.shift_key() { -1 } else { 1 }),
+            Key::Named(NamedKey::PageUp) => palette.page(false),
+            Key::Named(NamedKey::PageDown) => palette.page(true),
+            Key::Named(NamedKey::Backspace) => palette.pop(),
+            _ if matches!(action, Some(Action::Paste)) || (mods.control_key() && event.key_without_modifiers == Key::Character("v".into())) => {
+                if let Some(text) = self.clipboard.as_mut().and_then(|clipboard| clipboard.get_text().ok()) {
+                    palette.push_str(&text);
+                }
+            }
+            _ => match &event.text {
+                Some(text) if plain => palette.push_str(text),
+                _ => return,
+            },
+        }
+        self.window.request_redraw();
+    }
+
+    /// Carry out what was picked in the palette.
+    fn run_palette_item(&mut self, item: command_palette::Item) {
+        use command_palette::Item;
+        match item {
+            Item::Action(action) => {
+                self.run_shortcut(action);
+            }
+            Item::Tab(index) => self.select_tab(index),
+            Item::Connect { saved, index, login } => {
+                let catalog = self.sidebar.catalog();
+                let hosts = if saved { &catalog.saved } else { &catalog.config };
+                let Some(host) = hosts.get(index).and_then(|host| host.with_login(login)) else { return };
+                match catalog.target(&host) {
+                    Ok(target) => self.apply_action(SidebarAction::Connect(Box::new(target)), Origin::Sidebar),
+                    Err(err) => self.report_elsewhere(err),
+                }
+            }
+            Item::Snippet(line) => {
+                let actions = self.sidebar.activate_command(&line, &self.config);
+                // The warning before the first command waits in the sidebar.
+                if actions.is_empty() && !self.sidebar_visible {
+                    self.toggle_sidebar();
+                }
+                for action in actions {
+                    self.apply_action(action, Origin::Sidebar);
+                }
+            }
+            Item::Theme(name) => self.apply_action(SidebarAction::SetTheme(name), Origin::Sidebar),
+            Item::Shell(index) => {
+                if let Some(shell) = self.sidebar.shells().get(index).cloned() {
+                    self.apply_action(SidebarAction::OpenTab(shell), Origin::Sidebar);
+                }
+            }
+        }
+        self.window.request_redraw();
+    }
+
+    /// A message about something done outside the sidebar: shown there,
+    /// which comes up for it.
+    fn report_elsewhere(&mut self, err: String) {
+        if !self.sidebar_visible {
+            self.toggle_sidebar();
+        }
+        self.sidebar.report(Err(err));
+    }
+
     fn handle_keyboard_input(&mut self, event: KeyInput) {
         if event.state != ElementState::Pressed {
             return;
@@ -1882,6 +2106,10 @@ impl AppState {
         // The settings page waits for a new shortcut: this key is it.
         if self.settings.recording().is_some() {
             self.record_shortcut(&event);
+            return;
+        }
+        if self.command_palette.is_some() {
+            self.palette_key(&event);
             return;
         }
         // A key closes the context menu -- modifiers aside, they may be
@@ -1942,6 +2170,7 @@ impl AppState {
             Action::ToggleBroadcast => self.toggle_broadcast(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::OpenSettings => self.open_settings(),
+            Action::CommandPalette => self.open_palette(),
             Action::Copy => self.copy_selection(),
             Action::Paste => self.paste_clipboard(false),
             Action::PasteAndRun => self.paste_clipboard(true),
@@ -2207,6 +2436,13 @@ impl AppState {
             }
             return;
         }
+        // Presses on the palette are egui's; one anywhere else closes it.
+        if self.command_palette.is_some() {
+            if !self.over_palette(self.last_cursor_pos) {
+                self.close_palette();
+            }
+            return;
+        }
         // Presses on the open context menu are egui's; one anywhere
         // else just closes it -- unless it's a right-click, which
         // goes on to open the menu anew there.
@@ -2382,8 +2618,16 @@ impl AppState {
             (!forwards.is_empty()).then(|| TabForwards { label: pane.default_title.clone(), forwards })
         });
         let mut splash_next = None;
+        let ppp = self.ui.ctx.pixels_per_point();
+        let console = self.console_rect();
+        let console = egui::Rect::from_min_size(
+            egui::pos2(console.x / ppp, console.y / ppp),
+            egui::vec2(console.w / ppp, console.h / ppp),
+        );
         let context_menu = &mut self.context_menu;
         let mut menu_action = None;
+        let palette = &mut self.command_palette;
+        let mut palette_pick = None;
         let mut files_tab = match self.tabs.get_mut(active_tab).map(|tab| &mut tab.content) {
             Some(TabContent::Files(files)) => Some(files),
             _ => None,
@@ -2438,6 +2682,9 @@ impl AppState {
             if let Some(menu) = context_menu.as_mut() {
                 menu_action = menu.show(ui.ctx()).or(menu_action);
             }
+            if let Some(palette) = palette.as_mut() {
+                palette_pick = palette.show(ui.ctx(), console).or(palette_pick.take());
+            }
             // Painted last, on egui's foreground layer: over the sidebar
             // as well as the grid and tab bar drawn before egui.
             if let Some(splash) = splash {
@@ -2476,6 +2723,10 @@ impl AppState {
         if let Some(action) = menu_action {
             self.close_context_menu();
             self.apply_menu_action(action);
+        }
+        if let Some(item) = palette_pick {
+            self.close_palette();
+            self.run_palette_item(item);
         }
 
         // egui just set the cursor for its own widgets; the tab bar isn't
@@ -2577,6 +2828,20 @@ impl AppState {
         self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity());
         self.search_bar = SearchBar::new(self.theme.ui);
         crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.opacity());
+        self.sidebar.set_theme_names(self.themes.all().iter().map(|theme| theme.name.clone()).collect());
+        // A host's theme may have changed with the others.
+        let looks: Vec<Vec<PaneLook>> = self
+            .tabs
+            .iter()
+            .map(|tab| tab.panes().map(|panes| panes.panes.iter().map(|pane| self.pane_look(&pane.origin)).collect()).unwrap_or_default())
+            .collect();
+        for (tab, looks) in self.tabs.iter_mut().zip(looks) {
+            if let Some(panes) = tab.panes_mut() {
+                for (pane, look) in panes.panes.iter_mut().zip(looks) {
+                    pane.look = look;
+                }
+            }
+        }
         self.window.request_redraw();
     }
 
@@ -2635,7 +2900,8 @@ impl AppState {
             face.map(|(data, index)| FontFace { data, index })
         };
         let (ui, monospace) = (face(self.config.font(FontSlot::Ui)), face(self.config.font(FontSlot::Terminal)));
-        crate::ui::theme::set_fonts(&self.ui.ctx, ui, monospace);
+        let fallback = face(Some(self.text.default_family()));
+        crate::ui::theme::set_fonts(&self.ui.ctx, ui, monospace, fallback);
     }
 
     /// Show an action's outcome where it was triggered.
@@ -2741,8 +3007,9 @@ impl AppState {
         geometry: grid::GridGeometry,
         cols: usize,
         covered: Option<std::ops::Range<usize>>,
+        palette: &Palette,
     ) {
-        let red = self.palette.named(NamedColor::Red);
+        let red = palette.named(NamedColor::Red);
         let color = glyphon::Color::rgb(red.r, red.g, red.b);
         let cell = geometry.cell;
         for &(row, exit) in prompts {
@@ -2771,6 +3038,7 @@ impl AppState {
             (true, false) => CursorStyle::Hidden,
         };
         let link = self.link.as_ref().filter(|(id, _)| *id == pane.id).map(|(_, link)| &link.cells);
+        let palette = pane.palette.as_deref().unwrap_or(&self.palette);
         // The lock only covers copying the grid out; shaping happens after
         // it's released, so the PTY thread isn't blocked from parsing new
         // output meanwhile.
@@ -2785,7 +3053,7 @@ impl AppState {
             let offset = term.grid().display_offset() as i32;
             let focus_rows = focus.map(|m| (m.start().line.0 + offset, m.end().line.0 + offset));
             let rows =
-                grid::build_frame(&term, selection_range, highlight, cursor, &self.palette, &mut self.quads, geometry);
+                grid::build_frame(&term, selection_range, highlight, cursor, palette, &mut self.quads, geometry);
             (rows, focus_rows, prompts)
         };
         let row_lengths: std::collections::HashMap<usize, usize> =
@@ -2816,7 +3084,8 @@ impl AppState {
             cutout = self.search_bar.cutout();
         }
         let covered = cutout.as_ref().map(|(rows, _)| rows.clone());
-        self.build_prompt_labels(&prompts, &row_lengths, geometry, pane.size.columns, covered);
+        let palette = *pane.palette.as_deref().unwrap_or(&self.palette);
+        self.build_prompt_labels(&prompts, &row_lengths, geometry, pane.size.columns, covered, &palette);
         // Only the pane's own area, so nothing from its grid can bleed into
         // a neighbour, the tab bar or under the sidebar.
         let r = pane.rect;
@@ -2831,18 +3100,28 @@ impl AppState {
 
     /// The lines between the panes of a split tab, and a frame in the
     /// error color around those in the broadcast -- in the tab bar, the
-    /// tab's line alone wouldn't say which of them.
-    fn build_pane_borders(&mut self, views: &[PaneView], area: LabelRect) {
+    /// tab's line alone wouldn't say which of them -- or else in their
+    /// host's color.
+    fn build_pane_borders(&mut self, views: &[PaneView], area: LabelRect, split: bool) {
         let gap = self.divider_gap();
         let Some(panes) = self.tabs.get(self.active_tab).and_then(Tab::panes) else { return };
         let solid = |rect: LabelRect, color| QuadInstance { offset: [rect.x, rect.y], size: [rect.w, rect.h], color };
-        let border = to_linear(self.theme.ui.border_strong, 1.0);
-        let lines: Vec<QuadInstance> =
-            panes.layout.dividers(area, gap).into_iter().map(|divider| solid(divider.rect, border)).collect();
-        self.quads.extend(lines);
-        let error = to_linear(self.theme.ui.error, 1.0);
+        if split {
+            let border = to_linear(self.theme.ui.border_strong, 1.0);
+            let lines: Vec<QuadInstance> =
+                panes.layout.dividers(area, gap).into_iter().map(|divider| solid(divider.rect, border)).collect();
+            self.quads.extend(lines);
+        }
         let t = 2.0 * gap;
-        for LabelRect { x, y, w, h } in views.iter().filter(|view| view.broadcast).map(|view| view.rect) {
+        for view in views {
+            // The broadcast only needs telling apart in a split.
+            let color = match (view.broadcast && split, view.accent) {
+                (true, _) => self.theme.ui.error,
+                (false, Some(accent)) => accent,
+                (false, None) => continue,
+            };
+            let error = to_linear(color, 1.0);
+            let LabelRect { x, y, w, h } = view.rect;
             for edge in [
                 LabelRect { x, y, w, h: t },
                 LabelRect { x, y: y + h - t, w, h: t },
@@ -2887,6 +3166,8 @@ impl AppState {
                         size: pane.size,
                         focused: pane.id == panes.focus,
                         broadcast: pane.broadcast,
+                        accent: pane.look.accent,
+                        palette: pane.look.palette.clone(),
                     })
                     .collect::<Vec<_>>(),
                 panes.panes.len() > 1 && !panes.zoomed,
@@ -2900,12 +3181,20 @@ impl AppState {
         // sidebar's is egui's -- one under the other would double up.
         let opacity = self.opacity();
         let area = self.console_rect();
-        if opacity < 1.0 && show_grid {
-            self.quads.push(QuadInstance {
-                offset: [area.x, area.y],
-                size: [area.w, area.h],
-                color: to_linear(self.palette.named(NamedColor::Background), opacity),
-            });
+        // Panes and the lines between them cover the console; a pane whose
+        // host has a theme of its own gets its background (the clear color
+        // is the window's). See-through, every pane gets one, so nothing
+        // lies under another.
+        for view in &views {
+            let own = view.palette.as_deref();
+            if opacity < 1.0 || own.is_some() {
+                let bg = own.unwrap_or(&self.palette).named(NamedColor::Background);
+                self.quads.push(QuadInstance {
+                    offset: [view.rect.x, view.rect.y],
+                    size: [view.rect.w, view.rect.h],
+                    color: to_linear(bg, opacity),
+                });
+            }
         }
 
         let mut pane_rows = Vec::with_capacity(views.len());
@@ -2918,14 +3207,12 @@ impl AppState {
         if show_grid {
             self.grid_text.update(&mut self.text, pane_rows);
         }
-        if split {
-            self.build_pane_borders(&views, area);
-        }
+        self.build_pane_borders(&views, area, split);
 
         if let Some(layout) = self.tab_bar_layout() {
             self.tab_bar.build(
                 &layout,
-                self.tabs.iter().map(|t| (t.title(), t.broadcast())),
+                self.tabs.iter().map(Tab::look),
                 self.active_tab,
                 self.hovered,
                 &mut self.text,
@@ -3067,6 +3354,8 @@ struct PaneView {
     size: GridSize,
     focused: bool,
     broadcast: bool,
+    accent: Option<Rgb>,
+    palette: Option<Box<Palette>>,
 }
 
 /// Host, port and user of an SSH target: what makes two terminals the same
@@ -3484,7 +3773,8 @@ impl ApplicationHandler<UserEvent> for App {
             // Alacritty does this deliberately for the same reason.
             TermEvent::PtyWrite(text) => pane.terminal.send_input(text.into_bytes()),
             TermEvent::ColorRequest(index, format) => {
-                let response = format(state.palette.get(index));
+                let palette = pane.look.palette.as_deref().unwrap_or(&state.palette);
+                let response = format(palette.get(index));
                 pane.terminal.send_input(response.into_bytes());
             }
             TermEvent::TextAreaSizeRequest(format) => {

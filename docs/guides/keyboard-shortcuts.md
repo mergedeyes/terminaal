@@ -19,6 +19,7 @@
 | Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
 | Show/hide sidebar | `toggle_sidebar` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Open settings | `open_settings` | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
+| Command palette | `command_palette` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Copy | `copy` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> |
 | Paste | `paste` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
 | Paste and run | `paste_and_run` | none |

@@ -145,14 +145,24 @@ pub struct FontFace {
 
 /// Draw the chrome's text in `proportional` and its monospace bits in
 /// `monospace`, ahead of egui's own fonts -- those stay as the fallback
-/// for glyphs a font lacks. `None` keeps egui's.
-pub fn set_fonts(ctx: &egui::Context, proportional: Option<FontFace>, monospace: Option<FontFace>) {
+/// for glyphs a font lacks. `None` keeps egui's. `fallback` comes after
+/// all of them: egui's fonts have no arrows (shortcuts like Ctrl+Alt+↑)
+/// or block elements.
+pub fn set_fonts(ctx: &egui::Context, proportional: Option<FontFace>, monospace: Option<FontFace>, fallback: Option<FontFace>) {
     let mut fonts = FontDefinitions::default();
+    let font = |face: FontFace| Arc::new(FontData { index: face.index, ..FontData::from_owned(face.data) });
     for (family, face) in [(FontFamily::Proportional, proportional), (FontFamily::Monospace, monospace)] {
         let Some(face) = face else { continue };
         let name = format!("terminaal-{family:?}");
-        fonts.font_data.insert(name.clone(), Arc::new(FontData { index: face.index, ..FontData::from_owned(face.data) }));
+        fonts.font_data.insert(name.clone(), font(face));
         fonts.families.entry(family).or_default().insert(0, name);
+    }
+    if let Some(face) = fallback {
+        let name = "terminaal-fallback".to_string();
+        fonts.font_data.insert(name.clone(), font(face));
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push(name.clone());
+        }
     }
     ctx.set_fonts(fonts);
 }

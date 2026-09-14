@@ -31,6 +31,8 @@ Look something up, or get one thing done.
 - [Configuration reference](guides/configuration.md) – every file and every key
 - [Keyboard shortcuts](guides/keyboard-shortcuts.md) – defaults, changing them,
   what's allowed
+- [Command palette](guides/command-palette.md) – what it finds, how matching
+  works, keys
 - [SSH hosts and `~/.ssh/config`](guides/ssh-hosts.md) – what's read, per-host
   options, logins, jump hosts
 - [Host keys and `known_hosts`](guides/host-keys.md) – new hosts, changed keys

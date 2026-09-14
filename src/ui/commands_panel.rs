@@ -476,7 +476,7 @@ impl CommandsPanel {
     /// A button was clicked: off it goes, unless the warning still has to
     /// be acknowledged. That warning is about running things unasked, so
     /// it only applies while that's what a click does.
-    fn activate(&mut self, line: &str, config: &Config, actions: &mut Vec<SidebarAction>) {
+    pub fn activate(&mut self, line: &str, config: &Config, actions: &mut Vec<SidebarAction>) {
         if config.commands_run && !config.commands_warned {
             self.pending = Some(line.to_string());
         } else {
