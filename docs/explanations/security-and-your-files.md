@@ -62,8 +62,9 @@ running the rest as typed commands.
 
 ## Broadcast
 
-Input goes to other tabs only while the **active** tab is in the broadcast group,
-and tabs in the group are marked red. Replies to terminal queries and mouse
+Input goes to other terminals only while the **focused** one is in the broadcast
+group, and terminals in the group are marked red (the tab in the tab bar, the
+pane in a split tab). Replies to terminal queries and mouse
 events are never broadcast.
 
 ## Agent forwarding

@@ -4,20 +4,26 @@ You have several servers and want to check their disk space, update them, or
 follow their logs – all at once. You'll combine two features:
 
 - **Snippets**: your own command buttons in the sidebar
-- **Broadcast**: input typed in one tab goes to a whole group of tabs
+- **Broadcast**: input typed in one terminal goes to a whole group of them
 
 ## 1. Open the servers
 
 Connect to each server (`web1`, `web2`, `web3`) from the SSH section. Each gets
 its own tab.
 
+Prefer to see all three at once? Connect to `web1`, press
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> to split the tab, and connect the new
+pane to the next server – or just keep it on `web1` too: a pane split off an SSH
+session connects to the same host. See [Split panes](../guides/split-panes.md).
+
 ## 2. Put the tabs into a broadcast group
 
 In each tab, press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> – or right-click
-into the terminal and choose **Broadcast to this tab**.
+into the terminal and choose **Broadcast to this terminal**.
 
-Tabs in the group get a thick red line on top in the tab bar. That's your
-warning: typing in one of them types in all of them.
+Tabs with a terminal in the group get a thick red line on top in the tab bar, and
+in a split tab the panes in the group get a red frame. That's your warning:
+typing in one of them types in all of them.
 
 Try it: in any of the three tabs, type `hostname` and press Enter. All three
 answer.
@@ -46,7 +52,7 @@ A **Disk hogs** button now sits under "Your commands".
 ## 4. Run it everywhere
 
 With a tab of the broadcast group active, click **Disk hogs**. The sidebar says
-*Broadcast: goes to 3 tabs* above the buttons, and all three servers run it.
+*Broadcast: goes to 3 terminals* above the buttons, and all three servers run it.
 
 The first time you run a command from the sidebar, Terminaal explains that it
 goes straight to the shell and asks you to confirm. If you'd rather review each

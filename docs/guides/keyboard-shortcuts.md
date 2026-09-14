@@ -5,12 +5,17 @@
 | Action | Name in `config.toml` | Default |
 | --- | --- | --- |
 | New tab | `new_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
-| Close tab | `close_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
+| Close tab with all its panes | `close_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd> |
 | Next tab | `next_tab` | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> |
 | Previous tab | `previous_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | Go to tab 1…9 | `tab_1` … `tab_9` | <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> |
 | Move tab left / right | `move_tab_left`, `move_tab_right` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> |
-| Broadcast on/off for the tab | `toggle_broadcast` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
+| Split right | `split_right` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> |
+| Split down | `split_down` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> |
+| Close pane (the tab with its last one) | `close_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
+| Focus pane on the left / right / above / below | `focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down` | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd> |
+| Maximize pane / restore | `zoom_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> |
+| Broadcast on/off for the terminal | `toggle_broadcast` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
 | Show/hide sidebar | `toggle_sidebar` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Open settings | `open_settings` | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
 | Copy | `copy` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> |
@@ -52,7 +57,7 @@ Hover an action's name to see its key in `config.toml`.
 [shortcuts]
 new_tab = "Ctrl+Alt+N"
 copy = ["Ctrl+Shift+C", "Ctrl+Insert"]
-paste_and_run = "Ctrl+Shift+Enter"
+paste_and_run = "Ctrl+Shift+Alt+V"
 tab_9 = []
 ```
 
@@ -72,7 +77,7 @@ tab_9 = []
   settings tab strikes the combination through at the other one.
 - **Clipboard, scrolling, search and prompt jumps** don't fire while a text field
   in the sidebar or settings has the keyboard – <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
-  pastes into the field then. Tab, window and font shortcuts work everywhere.
+  pastes into the field then. Tab, pane, window and font shortcuts work everywhere.
 - **Full-screen programs** (`less`, `vim`, `htop`) get the scrolling and
   prompt-jump keys themselves – they have no scrollback of their own in Terminaal.
 - **Font zoom** isn't saved: it resets when Terminaal quits, or when you set a new

@@ -17,6 +17,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::i18n::t;
+use crate::panes::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -28,7 +29,16 @@ pub enum Action {
     SelectTab(u8),
     MoveTabLeft,
     MoveTabRight,
-    /// Take part in the broadcast (input to all such tabs) or not.
+    /// Split the focused pane: the new one right of it / below it.
+    SplitRight,
+    SplitDown,
+    /// Close the focused pane; the tab with its last one.
+    ClosePane,
+    /// Move the keyboard to the pane in that direction.
+    FocusPane(Direction),
+    /// Show the focused pane alone over the whole tab, or all again.
+    ZoomPane,
+    /// Take part in the broadcast (input to all such terminals) or not.
     ToggleBroadcast,
     ToggleSidebar,
     OpenSettings,
@@ -53,6 +63,7 @@ pub enum Action {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
     Tabs,
+    Panes,
     Window,
     Clipboard,
     Scrolling,
@@ -60,11 +71,13 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [Group::Tabs, Group::Window, Group::Clipboard, Group::Scrolling, Group::Font];
+    pub const ALL: [Group; 6] =
+        [Group::Tabs, Group::Panes, Group::Window, Group::Clipboard, Group::Scrolling, Group::Font];
 
     pub fn label(self) -> String {
         match self {
             Group::Tabs => t!("shortcuts-group-tabs"),
+            Group::Panes => t!("shortcuts-group-panes"),
             Group::Window => t!("shortcuts-group-window"),
             Group::Clipboard => t!("shortcuts-group-clipboard"),
             Group::Scrolling => t!("shortcuts-group-scroll"),
@@ -76,7 +89,7 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 31] = [
+    pub const ALL: [Action; 39] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -92,6 +105,14 @@ impl Action {
         Action::SelectTab(9),
         Action::MoveTabLeft,
         Action::MoveTabRight,
+        Action::SplitRight,
+        Action::SplitDown,
+        Action::ClosePane,
+        Action::FocusPane(Direction::Left),
+        Action::FocusPane(Direction::Right),
+        Action::FocusPane(Direction::Up),
+        Action::FocusPane(Direction::Down),
+        Action::ZoomPane,
         Action::ToggleBroadcast,
         Action::ToggleSidebar,
         Action::OpenSettings,
@@ -120,6 +141,14 @@ impl Action {
             Action::SelectTab(number) => return Cow::Owned(format!("tab_{number}")),
             Action::MoveTabLeft => "move_tab_left",
             Action::MoveTabRight => "move_tab_right",
+            Action::SplitRight => "split_right",
+            Action::SplitDown => "split_down",
+            Action::ClosePane => "close_pane",
+            Action::FocusPane(Direction::Left) => "focus_pane_left",
+            Action::FocusPane(Direction::Right) => "focus_pane_right",
+            Action::FocusPane(Direction::Up) => "focus_pane_up",
+            Action::FocusPane(Direction::Down) => "focus_pane_down",
+            Action::ZoomPane => "zoom_pane",
             Action::ToggleBroadcast => "toggle_broadcast",
             Action::ToggleSidebar => "toggle_sidebar",
             Action::OpenSettings => "open_settings",
@@ -152,6 +181,14 @@ impl Action {
             Action::SelectTab(number) => t!("shortcut-select-tab", number = u32::from(number)),
             Action::MoveTabLeft => t!("shortcut-move-tab-left"),
             Action::MoveTabRight => t!("shortcut-move-tab-right"),
+            Action::SplitRight => t!("shortcut-split-right"),
+            Action::SplitDown => t!("shortcut-split-down"),
+            Action::ClosePane => t!("shortcut-close-pane"),
+            Action::FocusPane(Direction::Left) => t!("shortcut-focus-pane-left"),
+            Action::FocusPane(Direction::Right) => t!("shortcut-focus-pane-right"),
+            Action::FocusPane(Direction::Up) => t!("shortcut-focus-pane-up"),
+            Action::FocusPane(Direction::Down) => t!("shortcut-focus-pane-down"),
+            Action::ZoomPane => t!("shortcut-zoom-pane"),
             Action::ToggleBroadcast => t!("shortcut-toggle-broadcast"),
             Action::ToggleSidebar => t!("shortcut-toggle-sidebar"),
             Action::OpenSettings => t!("shortcut-open-settings"),
@@ -179,8 +216,13 @@ impl Action {
             | Action::PreviousTab
             | Action::SelectTab(_)
             | Action::MoveTabLeft
-            | Action::MoveTabRight
-            | Action::ToggleBroadcast => Group::Tabs,
+            | Action::MoveTabRight => Group::Tabs,
+            Action::SplitRight
+            | Action::SplitDown
+            | Action::ClosePane
+            | Action::FocusPane(_)
+            | Action::ZoomPane
+            | Action::ToggleBroadcast => Group::Panes,
             Action::ToggleSidebar | Action::OpenSettings => Group::Window,
             Action::Copy | Action::Paste | Action::PasteAndRun => Group::Clipboard,
             Action::ScrollPageUp
@@ -204,7 +246,7 @@ impl Action {
     pub fn defaults(self) -> Vec<KeyCombo> {
         let combos: &[&str] = match self {
             Action::NewTab => &["Ctrl+Shift+T"],
-            Action::CloseTab => &["Ctrl+Shift+W"],
+            Action::CloseTab => &["Ctrl+Shift+Alt+W"],
             Action::NextTab => &["Ctrl+Tab"],
             Action::PreviousTab => &["Ctrl+Shift+Tab"],
             Action::SelectTab(number) => {
@@ -213,6 +255,15 @@ impl Action {
             }
             Action::MoveTabLeft => &["Ctrl+Shift+PageUp"],
             Action::MoveTabRight => &["Ctrl+Shift+PageDown"],
+            // Like Tabby.
+            Action::SplitRight => &["Ctrl+Shift+D"],
+            Action::SplitDown => &["Ctrl+Shift+Alt+D"],
+            Action::ClosePane => &["Ctrl+Shift+W"],
+            Action::FocusPane(Direction::Left) => &["Ctrl+Alt+Left"],
+            Action::FocusPane(Direction::Right) => &["Ctrl+Alt+Right"],
+            Action::FocusPane(Direction::Up) => &["Ctrl+Alt+Up"],
+            Action::FocusPane(Direction::Down) => &["Ctrl+Alt+Down"],
+            Action::ZoomPane => &["Ctrl+Shift+Enter"],
             Action::ToggleBroadcast => &["Ctrl+Shift+I"],
             Action::ToggleSidebar => &["Ctrl+Shift+B"],
             Action::OpenSettings => &["Ctrl+,"],

@@ -332,9 +332,9 @@ pub struct Target {
     /// The system was set in the config or the host's options rather than
     /// detected -- then the hint points at a different place.
     pub configured: bool,
-    /// How many tabs a command goes to: more than one while the active
-    /// tab takes part in a broadcast.
-    pub tabs: usize,
+    /// How many terminals a command goes to: more than one while the
+    /// focused one takes part in a broadcast.
+    pub terminals: usize,
 }
 
 /// Every command this system has, in button order. With `assume_yes` the

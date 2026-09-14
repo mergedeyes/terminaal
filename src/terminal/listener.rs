@@ -7,12 +7,12 @@
 //! ourselves here -- we just forward all of them to the winit event loop
 //! via an `EventLoopProxy`, which wakes the main thread up so `app.rs` can
 //! decide what to do (redraw, update the window title, answer a
-//! PTY-write/color/size/clipboard request, close the tab, ...).
+//! PTY-write/color/size/clipboard request, close the pane, ...).
 //!
-//! `tab_id` is stamped onto every forwarded event because multiple tabs
+//! `pane_id` is stamped onto every forwarded event because multiple panes
 //! each run their own PTY-reader thread against the same
 //! `EventLoopProxy<UserEvent>` -- without it, `App::user_event` would
-//! have no way to tell which tab's `Term`/PTY an event belongs to.
+//! have no way to tell which pane's `Term`/PTY an event belongs to.
 
 use alacritty_terminal::event::{Event, EventListener};
 use winit::event_loop::EventLoopProxy;
@@ -23,17 +23,17 @@ use crate::terminal::integration::ShellEvent;
 #[derive(Clone)]
 pub struct EventProxyListener {
     proxy: EventLoopProxy<UserEvent>,
-    tab_id: usize,
+    pane_id: usize,
 }
 
 impl EventProxyListener {
-    pub fn new(proxy: EventLoopProxy<UserEvent>, tab_id: usize) -> Self {
-        Self { proxy, tab_id }
+    pub fn new(proxy: EventLoopProxy<UserEvent>, pane_id: usize) -> Self {
+        Self { proxy, pane_id }
     }
 
     /// What the shell told about itself (`terminal::integration`).
     pub fn send_shell(&self, event: ShellEvent) {
-        let _ = self.proxy.send_event(UserEvent::Shell(self.tab_id, event));
+        let _ = self.proxy.send_event(UserEvent::Shell(self.pane_id, event));
     }
 }
 
@@ -41,6 +41,6 @@ impl EventListener for EventProxyListener {
     fn send_event(&self, event: Event) {
         // The event loop may already be gone (window closing); nothing
         // useful to do if the send fails.
-        let _ = self.proxy.send_event(UserEvent::Terminal(self.tab_id, event));
+        let _ = self.proxy.send_event(UserEvent::Terminal(self.pane_id, event));
     }
 }

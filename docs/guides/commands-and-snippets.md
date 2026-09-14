@@ -93,9 +93,9 @@ host = "web1"
 
 ## With broadcast
 
-When the active tab is in the broadcast group (red line in the tab bar), the
-buttons send to every tab of the group, and the sidebar says *Broadcast: goes to
-N tabs*.
+When the focused terminal is in the broadcast group (red line in the tab bar,
+red frame in a split tab), the buttons send to every terminal of the group, and
+the sidebar says *Broadcast: goes to N terminals*.
 
 - Snippets are sent as they are.
 - Built-in commands send the line for the **active** tab's system. Don't mix

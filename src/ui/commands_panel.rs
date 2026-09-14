@@ -102,8 +102,8 @@ impl CommandsPanel {
             ui.label(weak(t!("cmd-no-tab")));
             return;
         };
-        if target.tabs > 1 {
-            ui.label(RichText::new(t!("cmd-broadcast", count = target.tabs)).color(theme::colors().error));
+        if target.terminals > 1 {
+            ui.label(RichText::new(t!("cmd-broadcast", count = target.terminals)).color(theme::colors().error));
             ui.add_space(4.0);
         }
 
@@ -468,7 +468,7 @@ mod tests {
             Snippet { name: "Deploy".into(), command: "cd /srv\n./deploy".into(), system: None, host: Some("web1".into()) },
         ];
         let hosts = vec!["web1".to_string()];
-        let broadcast = Target { tabs: 3, ..target(Family::Arch) };
+        let broadcast = Target { terminals: 3, ..target(Family::Arch) };
         for (managing, editor) in [(false, None), (true, None), (true, Some(0))] {
             panel.managing = managing;
             panel.editor = editor.map(|i| SnippetEditor::new(Some(i), &panel.snippets[i]));

@@ -16,14 +16,16 @@ contribute, or just wonder why it behaves the way it does.
           ┌─────────────────┼──────────────────┐
           │                 │                  │
  ┌────────┴────────┐ ┌──────┴───────┐  ┌───────┴────────┐
- │ PTY event loop  │ │ PTY filter   │  │ SSH worker     │  one per SSH tab
+ │ PTY event loop  │ │ PTY filter   │  │ SSH worker     │  one per SSH pane
  │ (alacritty)     │◀┤ thread       │  │ (libssh2)      │
- │ parses into Term│ │ per local tab│  │ parses into    │
- └─────────────────┘ └──────────────┘  │ Term, forwards │
+ │ parses into Term│ │ per local    │  │ parses into    │
+ │                 │ │ pane         │  │ Term, forwards │
+ └─────────────────┘ └──────────────┘  │                │
                                        └────────────────┘
 ```
 
-- **`alacritty_terminal`** is the "brain" of each tab: it parses the byte stream
+- **`alacritty_terminal`** is the "brain" of each terminal – every pane of every
+  tab has its own: it parses the byte stream
   (VT sequences) into a grid of cells with a scrollback. Terminaal doesn't use
   Alacritty's renderer – only this library.
 - **The renderer** is Terminaal's own, on **wgpu**: colored rectangles
@@ -31,7 +33,12 @@ contribute, or just wonder why it behaves the way it does.
   text.
 - **egui** draws only the chrome – sidebar, settings, context menu – in a
   separate pass on top.
-- **libssh2** (through the `ssh2` crate) runs SSH, on a worker thread per tab.
+- **libssh2** (through the `ssh2` crate) runs SSH, on a worker thread per SSH pane.
+- **Split panes** are a binary tree per tab (`src/panes.rs`): each split halves
+  its rectangle side by side or one above the other at a draggable ratio, the
+  leaves are the terminals. Every layout change resizes only the terminals whose
+  grid actually changed. A frame builds the visible panes one after another into
+  the same quads and shares one shaping cache between them.
 
 ## One frame
 
@@ -107,7 +114,8 @@ data buffered.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/app.rs` | Event loop, tabs, input routing, frame assembly |
+| `src/app.rs` | Event loop, tabs and their panes, input routing, frame assembly |
+| `src/panes.rs` | Split-pane layout: tree, rectangles, dividers, neighbours |
 | `src/render/` | Grid, tab bar, search bar, labels, quads, palette |
 | `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links |
 | `src/ssh/` | Host catalog, `~/.ssh/config` parser, connection worker, forwards, SOCKS, agent forwarding, keys, `known_hosts` |

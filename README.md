@@ -32,6 +32,11 @@ in a sidebar, and never have secrets written to disk.
 - Redraws only when something changes (output, input, cursor blink), so it stays
   idle when you do
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
+- **Split panes**: divide a tab into several terminals side by side or one above
+  the other (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd>, or the right-click menu). A new pane
+  runs the same shell in the same folder, or connects to the same host. Drag the
+  line between panes to resize them, click or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+arrow key to move
+  between them, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> shows one pane over the whole tab
 - Scrollback with the mouse wheel (speed adjustable in the settings), mouse selection,
   clipboard copy and paste
 - **Search the scrollback** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>): matches
@@ -47,10 +52,11 @@ in a sidebar, and never have secrets written to disk.
   - a failed command gets its exit code (`✘ 1`) next to its prompt
   - a desktop notification when a long command finishes in a tab you're not
     looking at (after 10 seconds by default, adjustable)
-- **Broadcast**: put tabs into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
+- **Broadcast**: put terminals into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
   or the right-click menu), and what you type, paste or send with a command
   button in one of them goes to all of them – the same command on ten servers
-  at once. Tabs in the group are marked red in the tab bar
+  at once, in separate tabs or in the panes of one. Tabs holding a terminal of
+  the group are marked red in the tab bar, panes get a red frame
 - **Clickable links**: hold <kbd>Ctrl</kbd> to underline URLs, hyperlinks
   (OSC 8) and existing files under the mouse; <kbd>Ctrl</kbd>+click opens them
   with your default application. File names count relative to the shell's
@@ -58,8 +64,8 @@ in a sidebar, and never have secrets written to disk.
 - Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
   reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
-- Right-click menu in the terminal: copy, paste, paste and run, and joining or
-  leaving the broadcast
+- Right-click menu in the terminal: copy, paste, paste and run, joining or
+  leaving the broadcast, splitting and closing the pane
 - A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
 - **Themes** for the console and the interface alike: seven built in, and your
   own in Alacritty's format (its themes work as they are)
@@ -178,11 +184,15 @@ cargo run --release
 | Shortcut | Action |
 | --- | --- |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | New tab with the default shell |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close tab |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close the pane (the tab, when it's the only one) |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd> | Close the tab with all its panes |
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
 | <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> | Go to tab 1 … 9 |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Move the tab left / right |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> | Tab joins / leaves the broadcast |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> | Split right / split down |
+| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> | Go to the pane in that direction |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Maximize the pane / show all panes again |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> | Terminal joins / leaves the broadcast |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
@@ -206,7 +216,8 @@ the shell.
 
 Hold <kbd>Ctrl</kbd> and click a link or file name to open it (not a
 configurable shortcut). Tabs can also be closed with a middle click; the ☰
-button in the tab bar toggles the sidebar as well.
+button in the tab bar toggles the sidebar as well. Clicking into a pane gives
+it the keyboard; the mouse wheel scrolls the pane under the mouse.
 
 ### Command line
 
@@ -251,13 +262,15 @@ commands_assume_yes = false   # let them skip confirmations (-y, --noconfirm)
 [shortcuts]                   # only what differs from the defaults
 new_tab = "Ctrl+Alt+N"
 copy = ["Ctrl+Shift+C", "Ctrl+Insert"]
-paste_and_run = "Ctrl+Shift+Enter"
+paste_and_run = "Ctrl+Shift+Alt+V"
 tab_9 = []                    # no shortcut
 ```
 
 Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
 `close_tab`, `next_tab`, `previous_tab`, `tab_1` … `tab_9`, `move_tab_left`,
-`move_tab_right`, `toggle_broadcast`, `toggle_sidebar`, `open_settings`,
+`move_tab_right`, `split_right`, `split_down`, `close_pane`,
+`focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down`,
+`zoom_pane`, `toggle_broadcast`, `toggle_sidebar`, `open_settings`,
 `copy`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
 `scroll_to_top`, `scroll_to_bottom`, `search`, `previous_prompt`,
 `next_prompt`, `font_bigger`, `font_smaller`, `font_reset`). Key
@@ -358,8 +371,10 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   marks and the working directory only work if the remote shell sends them
 - A paused remote port forward keeps listening on the server and turns
   connections away; libssh2 can't cancel it cleanly mid-session
-- With broadcast on, the built-in command buttons send the line for the active
-  tab's system to every tab in the group
+- With broadcast on, the built-in command buttons send the line for the focused
+  terminal's system to every terminal in the group
+- Split panes are resized with the mouse only, and the layout isn't kept when
+  Terminaal quits
 
 ## Roadmap
 
@@ -377,8 +392,10 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   notifications, plus clickable URLs and paths
 - [x] Own commands: named snippets bound to a system or host, input broadcast
   to several tabs, and a live list of a session's port forwards
-- [ ] The bigger ones: SFTP browser, split panes, restoring the last session,
-  drop-down (Quake) window
+- [x] Split panes: several terminals in one tab, resizable, with keyboard focus
+  moves and a maximized view
+- [ ] The bigger ones: SFTP browser, restoring the last session, drop-down
+  (Quake) window
 
 ## Development
 

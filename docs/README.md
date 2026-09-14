@@ -38,6 +38,7 @@ Look something up, or get one thing done.
   shells, remote servers
 - [Built-in commands and snippets](guides/commands-and-snippets.md)
 - [Search, links and the scrollback](guides/search-and-links.md)
+- [Split panes](guides/split-panes.md) – several terminals in one tab
 - [Appearance](guides/appearance.md) – themes, COSMIC, translucency, fonts
 
 ## Explanations

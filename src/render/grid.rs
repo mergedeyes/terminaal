@@ -23,6 +23,8 @@
 use std::collections::HashMap;
 use std::ops::{Range, RangeInclusive};
 
+use alacritty_terminal::event::EventListener;
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::index::Point;
@@ -37,7 +39,6 @@ use glyphon::{
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::QuadInstance;
 use crate::render::text::{CellMetrics, TextRendererState};
-use crate::terminal::listener::EventProxyListener;
 
 /// Shaped rows kept around beyond the visible ones, as a multiple of the
 /// visible row count (with a floor for tiny windows). Covers scrolling
@@ -122,25 +123,35 @@ pub struct Highlights<'a> {
     pub link: Option<&'a RangeInclusive<Point>>,
 }
 
-/// Rebuild `quads` from the terminal's current state and return the text
-/// of every visible, non-blank row as `(row index, text)` for
+/// How the cursor is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorStyle {
+    /// A block, in the pane with the keyboard.
+    Block,
+    /// An outline, in the other panes of a split tab.
+    Outline,
+    /// Not at all: the "off" half of a blink cycle.
+    Hidden,
+}
+
+/// Append the terminal's current state to `quads` and return the text of
+/// every visible, non-blank row as `(row index, text)` for
 /// [`GridText::update`]. Cells in `selection_range` (already resolved from
 /// `Term::selection` via `Selection::to_range`) and in a search match get
-/// the theme's colors for them, the selection winning; `cursor_visible`
-/// is `false` on the "off" half of a blink cycle.
-pub fn build_frame(
-    term: &Term<EventProxyListener>,
+/// the theme's colors for them, the selection winning.
+pub fn build_frame<T: EventListener>(
+    term: &Term<T>,
     selection_range: Option<SelectionRange>,
     search: Highlights,
-    cursor_visible: bool,
+    cursor: CursorStyle,
     palette: &Palette,
     quads: &mut Vec<QuadInstance>,
     geometry: GridGeometry,
 ) -> Vec<(usize, RowText)> {
     let GridGeometry { origin_x, origin_y, cell } = geometry;
     let (cell_w, cell_h) = (cell.width, cell.height);
-    quads.clear();
 
+    let screen_lines = term.screen_lines() as i32;
     let content = term.renderable_content();
     let display_offset = content.display_offset as i32;
     let default_bg = palette.named(NamedColor::Background);
@@ -230,17 +241,29 @@ pub fn build_frame(
     // shouldn't be drawn at all (blur/unfocused/vi-mode/etc handled by
     // `renderable_content()` itself); `cursor_visible` additionally
     // covers the "off" half of a blink cycle.
-    if cursor_visible && content.cursor.shape != CursorShape::Hidden {
+    if cursor != CursorStyle::Hidden && content.cursor.shape != CursorShape::Hidden {
         let cursor_row = content.cursor.point.line.0 + display_offset;
-        if cursor_row >= 0 {
+        // Scrolled into the history, the cursor is below the screen -- and
+        // drawn there, it would land in the pane underneath.
+        if (0..screen_lines).contains(&cursor_row) {
             let cursor_row = cursor_row as usize;
             let cursor_col = content.cursor.point.column.0;
             let cursor_color = palette.named(NamedColor::Cursor);
-            quads.push(QuadInstance {
-                offset: [origin_x + cursor_col as f32 * cell_w, origin_y + cursor_row as f32 * cell_h],
-                size: [cell_w, cell_h],
-                color: to_linear(cursor_color, 0.55),
-            });
+            let (x, y) = (origin_x + cursor_col as f32 * cell_w, origin_y + cursor_row as f32 * cell_h);
+            if cursor == CursorStyle::Block {
+                quads.push(QuadInstance { offset: [x, y], size: [cell_w, cell_h], color: to_linear(cursor_color, 0.55) });
+            } else {
+                let t = (cell_h / 16.0).round().max(1.0);
+                let color = to_linear(cursor_color, 1.0);
+                for (offset, size) in [
+                    ([x, y], [cell_w, t]),
+                    ([x, y + cell_h - t], [cell_w, t]),
+                    ([x, y], [t, cell_h]),
+                    ([x + cell_w - t, y], [t, cell_h]),
+                ] {
+                    quads.push(QuadInstance { offset, size, color });
+                }
+            }
         }
     }
 
@@ -253,23 +276,33 @@ struct CachedRow {
     last_used: u64,
 }
 
+/// Where one pane's rows go: its grid, what its text is clipped to and
+/// where rows are covered (see [`GridText::text_areas`]).
+#[derive(Clone, Debug)]
+pub struct PaneText {
+    pub geometry: GridGeometry,
+    pub bounds: TextBounds,
+    pub cutout: Option<(Range<usize>, f32)>,
+}
+
 /// Shaped glyphon buffers for the grid's rows, one per row, cached by
-/// content across frames.
+/// content across frames -- and across panes, which share the cache.
 #[derive(Default)]
 pub struct GridText {
     cache: HashMap<RowText, CachedRow>,
-    /// This frame's rows, looked up in `cache` by [`GridText::text_areas`].
-    visible: Vec<(usize, RowText)>,
+    /// This frame's rows per pane, looked up in `cache` by
+    /// [`GridText::text_areas`].
+    visible: Vec<Vec<(usize, RowText)>>,
     frame: u64,
 }
 
 impl GridText {
     /// Make sure every row from [`build_frame`] is shaped, shaping only
-    /// the ones not already in the cache.
-    pub fn update(&mut self, text: &mut TextRendererState, rows: Vec<(usize, RowText)>) {
+    /// the ones not already in the cache. One list of rows per pane.
+    pub fn update(&mut self, text: &mut TextRendererState, panes: Vec<Vec<(usize, RowText)>>) {
         self.frame += 1;
         let default_attrs = text.default_attrs();
-        for (_, row) in &rows {
+        for (_, row) in panes.iter().flatten() {
             match self.cache.get_mut(row) {
                 Some(cached) => cached.last_used = self.frame,
                 None => {
@@ -278,38 +311,44 @@ impl GridText {
                 }
             }
         }
-        if self.cache.len() > (rows.len() * CACHE_ROWS_FACTOR).max(CACHE_MIN) {
+        let rows: usize = panes.iter().map(Vec::len).sum();
+        if self.cache.len() > (rows * CACHE_ROWS_FACTOR).max(CACHE_MIN) {
             let frame = self.frame;
             self.cache.retain(|_, cached| cached.last_used == frame);
         }
-        self.visible = rows;
+        self.visible = panes;
     }
 
-    /// One text area per visible row, clipped to `bounds`. The rows in
-    /// `cutout` end at its x: something is drawn over them from there
-    /// (the search bar), and text always comes out on top of quads.
-    pub fn text_areas(
-        &self,
-        geometry: GridGeometry,
-        bounds: TextBounds,
-        cutout: Option<(Range<usize>, f32)>,
+    /// One text area per visible row, pane by pane as in `panes` (same
+    /// order as given to [`GridText::update`]), clipped to the pane's
+    /// bounds. The rows in a cutout end at its x: something is drawn over
+    /// them from there (the search bar), and text always comes out on top
+    /// of quads.
+    pub fn text_areas<'a>(
+        &'a self,
+        panes: &'a [PaneText],
         default_color: TextColor,
-    ) -> impl Iterator<Item = TextArea<'_>> {
-        self.visible.iter().filter_map(move |(row, text)| {
-            let cached = self.cache.get(text)?;
-            let bounds = match &cutout {
-                Some((rows, x)) if rows.contains(row) => TextBounds { right: bounds.right.min(*x as i32), ..bounds },
-                _ => bounds,
-            };
-            Some(TextArea {
-                buffer: &cached.buffer,
-                left: geometry.origin_x,
-                top: geometry.origin_y + *row as f32 * geometry.cell.height,
-                scale: 1.0,
-                bounds,
-                default_color,
-                custom_glyphs: &[],
-            })
+    ) -> impl Iterator<Item = TextArea<'a>> {
+        self.visible.iter().zip(panes).flat_map(move |(rows, pane)| {
+            rows.iter().filter_map(move |(row, text)| self.text_area(pane, *row, text, default_color))
+        })
+    }
+
+    fn text_area(&self, pane: &PaneText, row: usize, text: &RowText, default_color: TextColor) -> Option<TextArea<'_>> {
+        let PaneText { geometry, bounds, cutout } = pane;
+        let cached = self.cache.get(text)?;
+        let bounds = match cutout {
+            Some((rows, x)) if rows.contains(&row) => TextBounds { right: bounds.right.min(*x as i32), ..*bounds },
+            _ => *bounds,
+        };
+        Some(TextArea {
+            buffer: &cached.buffer,
+            left: geometry.origin_x,
+            top: geometry.origin_y + row as f32 * geometry.cell.height,
+            scale: 1.0,
+            bounds,
+            default_color,
+            custom_glyphs: &[],
         })
     }
 }
@@ -395,6 +434,41 @@ mod tests {
                 assert!(drift.abs() < 0.01, "scale {scale}: column {col} is {drift} px off");
             }
         }
+    }
+
+    /// Quads `build_frame` draws for the cursor of a 20×5 terminal whose
+    /// output left the cursor on its last row, scrolled up `scroll` lines.
+    fn cursor_quads(scroll: i32, cursor: CursorStyle) -> Vec<QuadInstance> {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::grid::Scroll;
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::Processor;
+
+        use crate::terminal::GridSize;
+
+        let size = GridSize { columns: 20, screen_lines: 5 };
+        let mut term = Term::new(Config { scrolling_history: 100, ..Config::default() }, &size, VoidListener);
+        let output: String = (0..12).map(|i| format!("line {i}\r\n")).collect();
+        Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new().advance(&mut term, output.as_bytes());
+        term.scroll_display(Scroll::Delta(scroll));
+        let palette = Palette::new(&crate::theme::Themes::builtin().get(None).terminal);
+        let geometry = GridGeometry { origin_x: 0.0, origin_y: 0.0, cell: CellMetrics { width: 10.0, height: 20.0 } };
+        let mut quads = Vec::new();
+        build_frame(&term, None, Highlights::default(), cursor, &palette, &mut quads, geometry);
+        quads
+    }
+
+    #[test]
+    fn the_cursor_stays_inside_the_grid() {
+        for style in [CursorStyle::Block, CursorStyle::Outline] {
+            let on_screen = cursor_quads(0, style);
+            assert!(!on_screen.is_empty(), "{style:?}");
+            assert!(on_screen.iter().all(|q| q.offset[1] >= 80.0 && q.offset[1] + q.size[1] <= 100.0), "{style:?}");
+            // Scrolled away, it's below the grid: into the pane underneath,
+            // if drawn.
+            assert!(cursor_quads(2, style).is_empty(), "{style:?}");
+        }
+        assert!(cursor_quads(0, CursorStyle::Hidden).is_empty());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Right-click menu over the terminal grid: copy, paste, paste and run,
-//! and whether the tab takes part in the broadcast.
+//! whether the terminal takes part in the broadcast, and splitting or
+//! closing its pane.
 //!
 //! `app.rs` opens it at the mouse (right-click on the grid) and closes it
 //! on a pick, a click anywhere else or a key press. It never takes the
@@ -19,7 +20,13 @@ pub enum MenuAction {
     Paste,
     PasteAndRun,
     ToggleBroadcast,
+    SplitRight,
+    SplitDown,
+    ClosePane,
 }
+
+/// Entries in the menu, top to bottom.
+const ENTRIES: usize = 7;
 
 pub struct ContextMenu {
     /// Where the right-click happened, in points; the menu's top-left
@@ -27,10 +34,10 @@ pub struct ContextMenu {
     pos: Pos2,
     can_copy: bool,
     can_paste: bool,
-    /// The tab takes part in the broadcast.
+    /// The terminal takes part in the broadcast.
     broadcast: bool,
     /// The shortcuts shown beside the entries.
-    shortcuts: [Option<String>; 4],
+    shortcuts: [Option<String>; ENTRIES],
     /// Where the menu ended up in the last pass, in points.
     rect: Option<Rect>,
 }
@@ -38,9 +45,14 @@ pub struct ContextMenu {
 impl ContextMenu {
     /// `can_copy`: there's a selection; `can_paste`: the clipboard holds
     /// text. Both are decided once, when the menu opens. `shortcuts`:
-    /// the combinations for copy, paste, paste-and-run and the broadcast,
-    /// where bound.
-    pub fn new(pos: Pos2, can_copy: bool, can_paste: bool, broadcast: bool, shortcuts: [Option<String>; 4]) -> Self {
+    /// the combinations for the entries in their order, where bound.
+    pub fn new(
+        pos: Pos2,
+        can_copy: bool,
+        can_paste: bool,
+        broadcast: bool,
+        shortcuts: [Option<String>; ENTRIES],
+    ) -> Self {
         Self { pos, can_copy, can_paste, broadcast, shortcuts, rect: None }
     }
 
@@ -51,13 +63,16 @@ impl ContextMenu {
 
     /// Show the menu; returns the entry clicked in this pass, if any.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<MenuAction> {
-        let [copy, paste, paste_and_run, broadcast] = self.shortcuts.clone();
+        let [copy, paste, paste_and_run, broadcast, split_right, split_down, close_pane] = self.shortcuts.clone();
         let broadcast_label = if self.broadcast { t!("menu-broadcast-off") } else { t!("menu-broadcast-on") };
         let items = [
             (MenuAction::Copy, t!("menu-copy"), copy, self.can_copy),
             (MenuAction::Paste, t!("menu-paste"), paste, self.can_paste),
             (MenuAction::PasteAndRun, t!("menu-paste-run"), paste_and_run, self.can_paste),
             (MenuAction::ToggleBroadcast, broadcast_label, broadcast, true),
+            (MenuAction::SplitRight, t!("menu-split-right"), split_right, true),
+            (MenuAction::SplitDown, t!("menu-split-down"), split_down, true),
+            (MenuAction::ClosePane, t!("menu-close-pane"), close_pane, true),
         ];
         let mut picked = None;
         let response = Area::new(Id::new("context_menu"))
@@ -131,17 +146,31 @@ mod tests {
 
     #[test]
     fn clicks_pick_their_entry() {
-        assert_eq!(click(true, true, 1.0 / 8.0), Some(MenuAction::Copy));
-        assert_eq!(click(true, true, 3.0 / 8.0), Some(MenuAction::Paste));
-        assert_eq!(click(true, true, 5.0 / 8.0), Some(MenuAction::PasteAndRun));
-        assert_eq!(click(false, false, 7.0 / 8.0), Some(MenuAction::ToggleBroadcast));
+        let entries = [
+            MenuAction::Copy,
+            MenuAction::Paste,
+            MenuAction::PasteAndRun,
+            MenuAction::ToggleBroadcast,
+            MenuAction::SplitRight,
+            MenuAction::SplitDown,
+            MenuAction::ClosePane,
+        ];
+        for (i, action) in entries.into_iter().enumerate() {
+            assert_eq!(click(true, true, entry(i)), Some(action), "entry {i}");
+        }
+        assert_eq!(click(false, false, entry(3)), Some(MenuAction::ToggleBroadcast));
+    }
+
+    /// The middle of entry `i`, as a fraction of the menu's height.
+    fn entry(i: usize) -> f32 {
+        (2 * i + 1) as f32 / (2 * ENTRIES) as f32
     }
 
     #[test]
     fn disabled_entries_ignore_clicks() {
-        assert_eq!(click(false, true, 1.0 / 8.0), None);
-        assert_eq!(click(true, false, 3.0 / 8.0), None);
-        assert_eq!(click(true, false, 5.0 / 8.0), None);
+        assert_eq!(click(false, true, entry(0)), None);
+        assert_eq!(click(true, false, entry(1)), None);
+        assert_eq!(click(true, false, entry(2)), None);
     }
 
     #[test]

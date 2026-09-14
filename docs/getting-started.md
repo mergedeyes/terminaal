@@ -54,6 +54,8 @@ Just want to try it? `cargo run --release` starts it without installing.
 1. **Open a few tabs.** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> opens a tab
    in the directory you're in; <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> jumps to a
    tab; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> closes one.
+   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> splits a tab into two terminals
+   side by side (see [Split panes](guides/split-panes.md)).
 2. **Pick your shell.** In the sidebar's Shells section, double-click a shell to
    open a tab with it, or select it and click **Make default**.
 3. **Choose a look.** Press <kbd>Ctrl</kbd>+<kbd>,</kbd>, go to **Appearance** and

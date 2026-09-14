@@ -46,8 +46,11 @@ app-language-changed = Sprache umgestellt.
 menu-copy = Kopieren
 menu-paste = Einfügen
 menu-paste-run = Einfügen und ausführen
-menu-broadcast-on = Broadcast für diesen Tab
+menu-broadcast-on = Broadcast für dieses Terminal
 menu-broadcast-off = Broadcast beenden
+menu-split-right = Rechts teilen
+menu-split-down = Unten teilen
+menu-close-pane = Bereich schließen
 
 ## Suche im Scrollback (render/search_bar.rs)
 
@@ -175,18 +178,27 @@ theme-bad-color = { $key }: „{ $value }“ ist keine Farbe (#rrggbb).
 ## Einstellungen: Tastenkürzel
 
 shortcuts-group-tabs = Tabs
+shortcuts-group-panes = Geteilte Ansicht
 shortcuts-group-window = Fenster
 shortcuts-group-clipboard = Zwischenablage
 shortcuts-group-scroll = Scrollen
 shortcuts-group-font = Schriftgröße
 shortcut-new-tab = Neuer Tab mit der Standard-Shell
-shortcut-close-tab = Tab schließen
+shortcut-close-tab = Tab mit allen Bereichen schließen
 shortcut-next-tab = Nächster Tab
 shortcut-previous-tab = Vorheriger Tab
 shortcut-select-tab = Tab { $number }
 shortcut-move-tab-left = Tab nach links verschieben
 shortcut-move-tab-right = Tab nach rechts verschieben
-shortcut-toggle-broadcast = Broadcast an/aus (Eingabe an alle markierten Tabs)
+shortcut-split-right = Rechts teilen
+shortcut-split-down = Unten teilen
+shortcut-close-pane = Bereich schließen (mit dem letzten den Tab)
+shortcut-focus-pane-left = Zum Bereich links
+shortcut-focus-pane-right = Zum Bereich rechts
+shortcut-focus-pane-up = Zum Bereich oben
+shortcut-focus-pane-down = Zum Bereich unten
+shortcut-zoom-pane = Bereich vergrößern/wiederherstellen
+shortcut-toggle-broadcast = Broadcast an/aus (Eingabe an alle markierten Terminals)
 shortcut-toggle-sidebar = Seitenleiste ein-/ausblenden
 shortcut-open-settings = Einstellungen öffnen
 shortcut-copy = Kopieren
@@ -250,7 +262,7 @@ shells-saved = „{ $name }“ gespeichert – gilt für neue { $shell }-Tabs.
 ## Seitenleiste: Befehle (commands.rs)
 
 cmd-title = Befehle
-cmd-broadcast = Broadcast: geht an { $count } Tabs
+cmd-broadcast = Broadcast: geht an { $count } Terminals
 snip-title = Eigene Befehle
 snip-manage = Verwalten
 snip-manage-done = Fertig

@@ -5,6 +5,7 @@ mod config;
 mod gpu;
 mod i18n;
 mod input;
+mod panes;
 mod render;
 mod shells;
 mod shortcuts;

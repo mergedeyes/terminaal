@@ -46,8 +46,11 @@ app-language-changed = Language changed.
 menu-copy = Copy
 menu-paste = Paste
 menu-paste-run = Paste and run
-menu-broadcast-on = Broadcast to this tab
+menu-broadcast-on = Broadcast to this terminal
 menu-broadcast-off = Stop broadcasting
+menu-split-right = Split right
+menu-split-down = Split down
+menu-close-pane = Close pane
 
 ## Scrollback search (render/search_bar.rs)
 
@@ -175,18 +178,27 @@ theme-bad-color = { $key }: “{ $value }” is not a color (#rrggbb).
 ## Settings: keyboard shortcuts
 
 shortcuts-group-tabs = Tabs
+shortcuts-group-panes = Split panes
 shortcuts-group-window = Window
 shortcuts-group-clipboard = Clipboard
 shortcuts-group-scroll = Scrolling
 shortcuts-group-font = Font size
 shortcut-new-tab = New tab with the default shell
-shortcut-close-tab = Close tab
+shortcut-close-tab = Close tab with all its panes
 shortcut-next-tab = Next tab
 shortcut-previous-tab = Previous tab
 shortcut-select-tab = Tab { $number }
 shortcut-move-tab-left = Move tab left
 shortcut-move-tab-right = Move tab right
-shortcut-toggle-broadcast = Broadcast on/off (input to all marked tabs)
+shortcut-split-right = Split right
+shortcut-split-down = Split down
+shortcut-close-pane = Close pane (the tab with its last one)
+shortcut-focus-pane-left = Focus pane on the left
+shortcut-focus-pane-right = Focus pane on the right
+shortcut-focus-pane-up = Focus pane above
+shortcut-focus-pane-down = Focus pane below
+shortcut-zoom-pane = Maximize pane / restore
+shortcut-toggle-broadcast = Broadcast on/off (input to all marked terminals)
 shortcut-toggle-sidebar = Show or hide the sidebar
 shortcut-open-settings = Open settings
 shortcut-copy = Copy
@@ -250,7 +262,7 @@ shells-saved = Saved “{ $name }” – applies to new { $shell } tabs.
 ## Sidebar: built-in commands (commands.rs)
 
 cmd-title = Commands
-cmd-broadcast = Broadcast: goes to { $count } tabs
+cmd-broadcast = Broadcast: goes to { $count } terminals
 snip-title = Your commands
 snip-manage = Manage
 snip-manage-done = Done
