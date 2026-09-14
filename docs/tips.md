@@ -45,7 +45,8 @@
 
 - **Paste and run** (right-click menu) removes trailing newlines and presses Enter
   exactly once – handy for commands copied from docs. Bind it to a key under
-  Settings → Shortcuts, e.g. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>.
+  Settings → Shortcuts, e.g. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>
+  (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> is already taken by maximizing a pane).
 - **Multi-line pastes** are inserted, not executed line by line, in bash, zsh,
   fish and editors – review, then press Enter.
 

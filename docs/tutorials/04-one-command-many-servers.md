@@ -44,7 +44,8 @@ Typing the same long command every time gets old. Make it a button:
    du -xh / 2>/dev/null | sort -rh | head -15
    ```
 
-5. Leave **Only on system** and **Only on host** on "All".
+5. Leave **Only on system** as it is, and **Where** on **Everywhere (local and
+   all hosts)**.
 6. **Save**, then **Done**.
 
 A **Disk hogs** button now sits under "Your commands".

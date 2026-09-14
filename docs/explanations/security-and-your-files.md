@@ -30,6 +30,7 @@ deliberately doesn't – to keep them safe.
 | Your shell configs (`.bashrc`, `.zshrc`, fish config) | Never touched. Terminaal's aliases and integration live in separate files that only Terminaal loads |
 | `hosts.toml`, `keys.toml`, `snippets.toml` | Rewritten whole, atomically. If one can't be read, Terminaal refuses to save over it |
 | Files on a server (SFTP) | Copies never overwrite: a taken name gets a number. Deleting asks twice and only removes files and empty folders. Edited files are uploaded only after checking nobody changed them meanwhile, written next to the original and renamed over it (or in place where that would change the owner) |
+
 ## Host keys
 
 - A **changed** host key always aborts the connection, no matter what
@@ -53,9 +54,9 @@ the file to list your hosts – would run commands from it.
 - **File links in SSH tabs** are never resolved: the names refer to the server,
   and opening a local file of the same name would be misleading.
 - **Command buttons** show their exact line on hover; the first run explains that
-  commands go straight to the shell. **Update the system** is the only built-in
-  command that changes anything, and confirmation prompts stay on unless you turn
-  that off.
+  commands go straight to the shell. The update buttons (**Update the system**,
+  **Update Flatpaks**, **Update AUR packages**) are the only built-in commands
+  that change anything, and confirmation prompts stay on unless you turn that off.
 
 ## Pasting
 

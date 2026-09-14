@@ -156,8 +156,10 @@ in a sidebar, and never have secrets written to disk.
 The [`docs/`](docs/README.md) folder has more: a
 [getting started](docs/getting-started.md) guide, tutorials (your first SSH host,
 keys and agents, port forwarding, one command on many servers, your own theme),
-reference guides for configuration, shortcuts, SSH options and shell integration,
-background on the architecture and security model, plus
+guides for configuration, shortcuts, SSH hosts and host keys, shell integration,
+commands and snippets, search and links, split panes, restoring the session, the
+drop-down window, files over SFTP and appearance, background on the architecture,
+the security model and prompt marks, plus
 [tips](docs/tips.md) and [troubleshooting](docs/troubleshooting.md).
 
 ## Installation
@@ -443,6 +445,49 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Drop-down (Quake) window: a layer surface toggled by `terminaal --quake`
 - [x] Startup commands: snippets that run with every new shell, or after an SSH login
 - [x] Separate update buttons for Flatpak and for AUR helpers (yay/paru)
+
+### Planned
+
+**Everyday comfort**
+- [ ] A color per host: a warning frame or tab color, or a theme of its own – so a production server never looks like a test box
+- [ ] Command palette (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>): fuzzy search over actions, hosts and logins, snippets, open tabs and themes
+- [ ] Working with command output through the prompt marks: copy the last output, click a prompt to select its output, show how long a command ran
+- [ ] A warning before pasting several lines or risky commands (`sudo`, `curl … | sh`), especially with broadcast on
+- [ ] Activity in background tabs: a mark for new output, the bell, or silence for a while
+- [ ] Reopen a closed tab
+- [ ] Resize and swap panes with the keyboard
+- [ ] Search: number of matches, optional regex
+
+**Terminal protocols**
+- [ ] OSC 52: programs (also over SSH) may set the clipboard, after asking
+- [ ] Kitty keyboard protocol
+- [ ] Synchronized output (mode 2026)
+- [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter to copy or open them
+- [ ] Vi mode for selecting and copying in the scrollback
+- [ ] Images in the terminal (Kitty graphics protocol or Sixel)
+
+**SSH**
+- [ ] Folders and tags for hosts, search in the sidebar
+- [ ] X11 forwarding
+- [ ] Add a port forward on the fly from a connected tab
+- [ ] Connection quality in the tab (latency, reconnecting)
+- [ ] Import hosts from Termius, PuTTY and Remmina
+- [ ] More session types: serial console (`/dev/ttyUSB*`), containers (`docker`/`podman exec`, distrobox/toolbox, `kubectl exec`)
+
+**Files (SFTP)**
+- [ ] Drag and drop between the local and the server side
+- [ ] Sort by name, type, size and date
+- [ ] Filters that combine: hidden files, folders or files only, name pattern, size (below, above or between), modification date range, file type
+- [ ] Change permissions in a small dialog: tick read/write/execute for owner, group and others (plus setuid/setgid/sticky), with the octal mode shown alongside and editable; recursively for folders; owner and group too
+- [ ] Preview text and images
+- [ ] Sync a folder one way, with a preview of what would be copied
+
+**Bigger pieces**
+- [ ] Workspaces: named layouts with splits, folders, hosts and startup commands, opened with one click
+- [ ] Recording a tab's output as an asciinema cast or a log file, optionally per host
+- [ ] tmux control mode (`tmux -CC`): a server's tmux windows and panes as real tabs and splits
+- [ ] Detach a tab into a window of its own
+- [ ] Profiles: font, theme and environment per shell or host
 
 ## Development
 
