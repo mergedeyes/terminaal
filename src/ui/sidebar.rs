@@ -62,6 +62,9 @@ pub enum SidebarAction {
     RunCommand(String),
     /// Pause the active tab's port forward at this index, or start it.
     SetForward(usize, bool),
+    /// The command files from the server are edited with (persisted);
+    /// empty for the desktop's default.
+    SetEditor(String),
 }
 
 /// The active SSH tab's port forwards.

@@ -16,6 +16,7 @@
 | Focus pane on the left / right / above / below | `focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down` | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd> |
 | Maximize pane / restore | `zoom_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> |
 | Broadcast on/off for the terminal | `toggle_broadcast` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
+| Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
 | Show/hide sidebar | `toggle_sidebar` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Open settings | `open_settings` | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
 | Copy | `copy` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> |

@@ -62,6 +62,12 @@ and keeps your comments and formatting. A missing file means defaults.
 | `commands_warned` | `false` | Set once you confirmed the first-run warning |
 | `system` | detected | Which system local tabs' commands are for: `arch`, `debian`, `fedora`, `suse`, `alpine`, `void`, `gentoo`, `nixos`, `macos`, `freebsd` |
 
+### Files
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `editor` | unset | Command a server file edited locally opens with, its path appended (`code`, `gedit`, `alacritty -e nvim`). Unset: the desktop's default application. See [Files on a server](files-and-sftp.md) |
+
 ### Shortcuts
 
 ```toml

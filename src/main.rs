@@ -7,6 +7,7 @@ mod i18n;
 mod input;
 mod panes;
 mod render;
+mod sftp;
 mod shells;
 mod shortcuts;
 mod snippets;

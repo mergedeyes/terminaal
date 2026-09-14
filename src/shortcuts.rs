@@ -40,6 +40,8 @@ pub enum Action {
     ZoomPane,
     /// Take part in the broadcast (input to all such terminals) or not.
     ToggleBroadcast,
+    /// The files of the focused SSH connection (SFTP).
+    OpenFiles,
     ToggleSidebar,
     OpenSettings,
     Copy,
@@ -89,7 +91,7 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 39] = [
+    pub const ALL: [Action; 40] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -114,6 +116,7 @@ impl Action {
         Action::FocusPane(Direction::Down),
         Action::ZoomPane,
         Action::ToggleBroadcast,
+        Action::OpenFiles,
         Action::ToggleSidebar,
         Action::OpenSettings,
         Action::Copy,
@@ -150,6 +153,7 @@ impl Action {
             Action::FocusPane(Direction::Down) => "focus_pane_down",
             Action::ZoomPane => "zoom_pane",
             Action::ToggleBroadcast => "toggle_broadcast",
+            Action::OpenFiles => "open_files",
             Action::ToggleSidebar => "toggle_sidebar",
             Action::OpenSettings => "open_settings",
             Action::Copy => "copy",
@@ -190,6 +194,7 @@ impl Action {
             Action::FocusPane(Direction::Down) => t!("shortcut-focus-pane-down"),
             Action::ZoomPane => t!("shortcut-zoom-pane"),
             Action::ToggleBroadcast => t!("shortcut-toggle-broadcast"),
+            Action::OpenFiles => t!("shortcut-open-files"),
             Action::ToggleSidebar => t!("shortcut-toggle-sidebar"),
             Action::OpenSettings => t!("shortcut-open-settings"),
             Action::Copy => t!("shortcut-copy"),
@@ -216,7 +221,8 @@ impl Action {
             | Action::PreviousTab
             | Action::SelectTab(_)
             | Action::MoveTabLeft
-            | Action::MoveTabRight => Group::Tabs,
+            | Action::MoveTabRight
+            | Action::OpenFiles => Group::Tabs,
             Action::SplitRight
             | Action::SplitDown
             | Action::ClosePane
@@ -265,6 +271,7 @@ impl Action {
             Action::FocusPane(Direction::Down) => &["Ctrl+Alt+Down"],
             Action::ZoomPane => &["Ctrl+Shift+Enter"],
             Action::ToggleBroadcast => &["Ctrl+Shift+I"],
+            Action::OpenFiles => &["Ctrl+Shift+O"],
             Action::ToggleSidebar => &["Ctrl+Shift+B"],
             Action::OpenSettings => &["Ctrl+,"],
             Action::Copy => &["Ctrl+Shift+C"],

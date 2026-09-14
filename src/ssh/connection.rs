@@ -20,6 +20,13 @@
 //! job is to wake the thread's `poll()` when something was queued.
 //! Dropping the handle (closing the tab) ends the thread.
 //!
+//! When the connection drops, the tab stays: the worker tries again on its
+//! own, after growing pauses ([`retry_delay`]), as long as logging in needs
+//! no input (agent, keys without passphrase, a known host key). Enter tries
+//! right away -- prompts allowed --, Ctrl+D closes the tab; a connection that
+//! fails for other reasons (login refused, host key changed) offers the same
+//! without trying on its own. The `Term` and its scrollback carry over.
+//!
 //! A `ProxyCommand` replaces the first hop's TCP connection the same way
 //! a jump does: the command's stdin/stdout are one end of a socketpair.
 //! Port forwards ([`super::forward`]) run on the target's session inside
@@ -33,8 +40,9 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -87,11 +95,82 @@ enum Msg {
     Resize(WindowSize),
     /// Pause the forward at this index, or start it (again).
     SetForward(usize, bool),
+    /// Run the SFTP subsystem, tied to this socket.
+    OpenSftp(UnixStream),
+    /// Run this command on the server, its stdin and output tied to this
+    /// socket.
+    Exec(String, UnixStream),
+}
+
+/// Terminal escape sequences that undo what a program may have left on
+/// when its connection died: the alternate screen, mouse reporting,
+/// bracketed paste, a hidden cursor, colors.
+const RESET_MODES: &str = "\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?25h\x1b[0m";
+
+/// Before automatic attempt `n` (1-based): 2 s, 4 s, 8 s, ... up to a minute.
+pub fn retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs(2u64.saturating_pow(attempt.min(6)).min(60))
+}
+
+/// What the handle and its openers share; the worker ends once the handle
+/// drops it (the tab closed), however many openers are around.
+struct Link {
+    tx: Sender<Msg>,
+    wake: UnixStream,
+}
+
+impl Link {
+    fn send(&self, msg: Msg) -> bool {
+        if self.tx.send(msg).is_err() {
+            return false;
+        }
+        // Non-blocking: if the socket buffer is full, a wakeup is pending anyway.
+        let _ = (&self.wake).write(&[1]);
+        true
+    }
+}
+
+/// Opens channels on a connection for others (the files tab), without
+/// keeping the tab's worker alive.
+#[derive(Clone)]
+pub struct Opener {
+    link: Weak<Link>,
+    connected: Arc<AtomicU64>,
+}
+
+impl Opener {
+    /// Which connection is up: a number that changes with each reconnect,
+    /// 0 while there's none.
+    pub fn connection(&self) -> u64 {
+        if self.link.strong_count() == 0 { 0 } else { self.connected.load(Ordering::Relaxed) }
+    }
+
+    /// A socket that speaks SFTP with the server; it closes at once if
+    /// there's no connection or no SFTP.
+    pub fn open_sftp(&self) -> io::Result<UnixStream> {
+        let (ours, theirs) = UnixStream::pair()?;
+        self.send(Msg::OpenSftp(theirs))?;
+        Ok(ours)
+    }
+
+    /// Run `command` on the server: write its input to the socket, read its
+    /// output (stderr included) until it closes.
+    pub fn exec(&self, command: &str) -> io::Result<UnixStream> {
+        let (ours, theirs) = UnixStream::pair()?;
+        self.send(Msg::Exec(command.to_string(), theirs))?;
+        Ok(ours)
+    }
+
+    fn send(&self, msg: Msg) -> io::Result<()> {
+        let link = self.link.upgrade().ok_or_else(|| io::Error::other("the terminal is closed"))?;
+        if link.send(msg) { Ok(()) } else { Err(io::Error::other("the connection is gone")) }
+    }
 }
 
 pub struct SshHandle {
-    tx: Sender<Msg>,
-    wake: UnixStream,
+    link: Arc<Link>,
+    /// See [`Opener::connection`].
+    connected: Arc<AtomicU64>,
     /// What the host turned out to be, for the built-in commands
     /// (`crate::commands`): set by the host's options, else by the probe
     /// after login. `None` until then.
@@ -136,12 +215,14 @@ impl SshHandle {
         self.send(Msg::SetForward(index, enabled));
     }
 
+    /// Opens channels on this connection -- and on the ones after a
+    /// reconnect -- for as long as the tab is open.
+    pub fn opener(&self) -> Opener {
+        Opener { link: Arc::downgrade(&self.link), connected: self.connected.clone() }
+    }
+
     fn send(&self, msg: Msg) {
-        if self.tx.send(msg).is_ok() {
-            // Non-blocking: if the socket buffer is full, a wakeup is
-            // pending anyway.
-            let _ = (&self.wake).write(&[1]);
-        }
+        self.link.send(msg);
     }
 }
 
@@ -162,6 +243,7 @@ pub fn spawn(
     let (label, host_name) = (target.label.clone(), target.name.clone());
     let forwards = Arc::new(Mutex::new(Vec::new()));
     let system = Arc::new(Mutex::new(configured.map(|family| System { family, root: target.user == "root" })));
+    let connected = Arc::new(AtomicU64::new(0));
     let worker = Worker {
         target,
         term,
@@ -174,9 +256,13 @@ pub fn spawn(
         proxy: None,
         system: system.clone(),
         forward_statuses: forwards.clone(),
+        connected: connected.clone(),
+        connections: 0,
+        unattended: false,
     };
     std::thread::Builder::new().name(name).spawn(move || worker.run())?;
-    Ok(SshHandle { tx, wake: wake_tx, system, label, name: host_name, configured: configured.is_some(), forwards })
+    let link = Arc::new(Link { tx, wake: wake_tx });
+    Ok(SshHandle { link, connected, system, label, name: host_name, configured: configured.is_some(), forwards })
 }
 
 /// How a connection ended without an error.
@@ -188,8 +274,12 @@ enum End {
 }
 
 enum Stop {
-    /// Shown in the tab until a key is pressed.
+    /// Shown in the tab; Enter tries again.
     Failed(String),
+    /// The network let us down: once connected, tried again on its own.
+    Lost(String),
+    /// Logging in wants a prompt answered, but this attempt runs unattended.
+    NeedsInput,
     /// Ctrl+C/Ctrl+D at a prompt: close the tab, like `ssh` exits.
     Cancelled,
     TabClosed,
@@ -239,6 +329,20 @@ struct Worker {
     system: Arc<Mutex<Option<System>>>,
     /// Shared with the handle; see [`SshHandle::forwards`].
     forward_statuses: Arc<Mutex<Vec<ForwardStatus>>>,
+    /// Shared with the handle; see [`Opener::connection`].
+    connected: Arc<AtomicU64>,
+    /// Shells started so far; the last one's number is `connected`.
+    connections: u64,
+    /// An automatic retry: no one's there to answer prompts.
+    unattended: bool,
+}
+
+/// What the user chose after a failed or lost connection.
+enum Choice {
+    /// Try again; `true` when it was the pause running out, not Enter.
+    Retry { automatic: bool },
+    Close,
+    TabClosed,
 }
 
 /// A running `ProxyCommand`, and what it wrote to stderr so far.
@@ -253,20 +357,78 @@ fn secs(n: u32) -> Duration {
 
 impl Worker {
     fn run(mut self) {
-        let result = self.connect_and_pump();
-        if let Some(mut proxy) = self.proxy.take() {
-            let _ = proxy.child.kill();
-            let _ = proxy.child.wait();
-        }
-        match result {
-            Ok(End::Exited) | Err(Stop::Cancelled) => self.term.lock().exit(),
-            Ok(End::TabClosed) | Err(Stop::TabClosed) => {}
-            Err(Stop::Failed(message)) => {
-                log::info!("{}: {message}", self.target.label);
-                self.print(&format!("\n\x1b[31m{message}\x1b[0m\n\x1b[2m{}\x1b[0m", t!("conn-any-key-closes")));
-                if self.wait_for_key() {
-                    self.term.lock().exit();
+        // The automatic attempt this is, if it is one.
+        let mut attempt: Option<u32> = None;
+        loop {
+            self.unattended = attempt.is_some();
+            self.filter = Filter::default();
+            let result = self.connect_and_pump();
+            if let Some(mut proxy) = self.proxy.take() {
+                let _ = proxy.child.kill();
+                let _ = proxy.child.wait();
+            }
+            let was_up = self.connected.swap(0, Ordering::Relaxed) != 0;
+            if was_up {
+                self.print(RESET_MODES);
+            }
+            let (message, pause) = match result {
+                Ok(End::Exited) | Err(Stop::Cancelled) => return self.term.lock().exit(),
+                Ok(End::TabClosed) | Err(Stop::TabClosed) => return,
+                // Once it has worked, a network failure is worth waiting out.
+                Err(Stop::Lost(message)) if self.connections > 0 => {
+                    let next = attempt.map_or(1, |n| n + 1);
+                    attempt = Some(next);
+                    (message, Some(retry_delay(next)))
                 }
+                Err(Stop::Lost(message) | Stop::Failed(message)) => {
+                    attempt = None;
+                    (message, None)
+                }
+                Err(Stop::NeedsInput) => {
+                    attempt = None;
+                    (t!("conn-needs-input"), None)
+                }
+            };
+            log::info!("{}: {message}", self.target.label);
+            let hint = match pause {
+                Some(pause) => t!("conn-retry-in", secs = pause.as_secs()),
+                None => t!("conn-retry-or-close"),
+            };
+            self.print(&format!("\n\x1b[31m{message}\x1b[0m\n\x1b[2m{hint}\x1b[0m\n"));
+            match self.wait_choice(pause) {
+                Choice::Retry { automatic: true } => {}
+                // Enter: with prompts, and the pauses start over.
+                Choice::Retry { automatic: false } => attempt = None,
+                Choice::Close => return self.term.lock().exit(),
+                Choice::TabClosed => return,
+            }
+        }
+    }
+
+    /// Wait for Enter (try again) or Ctrl+D (close) -- or with `pause`, for
+    /// that long at most.
+    fn wait_choice(&mut self, pause: Option<Duration>) -> Choice {
+        let deadline = pause.map(|pause| Instant::now() + pause);
+        loop {
+            let msg = match deadline {
+                Some(deadline) => match self.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                    Ok(msg) => msg,
+                    Err(RecvTimeoutError::Timeout) => return Choice::Retry { automatic: true },
+                    Err(RecvTimeoutError::Disconnected) => return Choice::TabClosed,
+                },
+                None => match self.rx.recv() {
+                    Ok(msg) => msg,
+                    Err(_) => return Choice::TabClosed,
+                },
+            };
+            match msg {
+                Msg::Input(bytes) if bytes.contains(&0x04) => return Choice::Close,
+                Msg::Input(bytes) if bytes.contains(&b'\r') || bytes.contains(&b'\n') => {
+                    return Choice::Retry { automatic: false };
+                }
+                Msg::Resize(size) => self.size = size,
+                // Not connected: dropped, their sockets close.
+                Msg::Input(_) | Msg::SetForward(..) | Msg::OpenSftp(_) | Msg::Exec(..) => {}
             }
         }
     }
@@ -280,6 +442,11 @@ impl Worker {
             t!("conn-connecting", target = &self.target.label)
         } else {
             t!("conn-connecting-via", target = &self.target.label, hops = via.join(" → "))
+        };
+        let connecting = match (self.unattended, self.connections) {
+            (true, _) => t!("conn-reconnecting-auto", target = &self.target.label),
+            (false, 1..) => t!("conn-reconnecting", target = &self.target.label),
+            (false, 0) => connecting,
         };
         self.print(&format!("\x1b[2m{connecting}\x1b[0m\n"));
 
@@ -329,7 +496,7 @@ impl Worker {
                 message.push('\n');
                 message.push_str(&t!("conn-proxy-says", output = output));
             }
-            Stop::Failed(message)
+            Stop::Lost(message)
         })?;
         self.verify_host_key(&session, hop)?;
         self.authenticate(&session, hop)?;
@@ -377,6 +544,8 @@ impl Worker {
             session.set_keepalive(true, interval);
         }
         log::debug!("{}: shell started", self.target.label);
+        self.connections += 1;
+        self.connected.store(self.connections, Ordering::Relaxed);
         self.probe_system(&session);
 
         let end = self.pump(&session, &mut channel, socket, &mut forwards)?;
@@ -488,7 +657,7 @@ impl Worker {
         let family = hop.settings.address_family;
         let addrs: Vec<SocketAddr> = (host, port)
             .to_socket_addrs()
-            .map_err(|err| Stop::Failed(t!("conn-resolve-failed", host = host, err = err.to_string())))?
+            .map_err(|err| Stop::Lost(t!("conn-resolve-failed", host = host, err = err.to_string())))?
             .filter(|addr| family.allows(addr))
             .collect();
         let mut last_err = None;
@@ -501,7 +670,7 @@ impl Worker {
                 Err(err) => last_err = Some(err),
             }
         }
-        Err(Stop::Failed(match last_err {
+        Err(Stop::Lost(match last_err {
             Some(err) => t!("conn-connect-failed", host = host, port = port, err = err.to_string()),
             None => t!("conn-no-address", host = host, family = family.label()),
         }))
@@ -610,8 +779,7 @@ impl Worker {
                             fingerprint = &fingerprint,
                             file = &file
                         );
-                        self.print(&format!("{question} "));
-                        let answer = self.read_line(true)?.trim().to_lowercase();
+                        let answer = self.ask(&format!("{question} "), true)?.trim().to_lowercase();
                         if !matches!(answer.as_str(), "ja" | "j" | "yes" | "y") {
                             return Err(Stop::Failed(t!("conn-host-key-rejected")));
                         }
@@ -682,8 +850,7 @@ impl Worker {
                 // as often.
                 AuthMethod::Password if offered("password") && !asked_interactively => {
                     for _ in 0..3 {
-                        self.print(&format!("{} ", t!("conn-password-prompt", target = &hop.label)));
-                        let password = self.read_line(false)?;
+                        let password = self.ask(&format!("{} ", t!("conn-password-prompt", target = &hop.label)), false)?;
                         if session.userauth_password(&user, &password).is_ok() && session.authenticated() {
                             return Ok(());
                         }
@@ -803,8 +970,8 @@ impl Worker {
                     if passphrase.is_some() {
                         self.print(&format!("{}\n", t!("conn-wrong-passphrase")));
                     }
-                    self.print(&format!("{} ", t!("conn-passphrase-prompt", path = key.display().to_string())));
-                    passphrase = Some(self.read_line(false)?);
+                    let prompt = format!("{} ", t!("conn-passphrase-prompt", path = key.display().to_string()));
+                    passphrase = Some(self.ask(&prompt, false)?);
                 }
                 Err(err) => {
                     log::debug!("key {} not accepted: {err} ({:?})", key.display(), err.code());
@@ -842,6 +1009,8 @@ impl Worker {
                     Ok(Msg::Input(bytes)) => outgoing.extend(bytes),
                     Ok(Msg::Resize(size)) => resize = Some(size),
                     Ok(Msg::SetForward(index, enabled)) => forwards.set_enabled(index, enabled, session),
+                    Ok(Msg::OpenSftp(stream)) => forwards.open_subsystem("sftp", stream),
+                    Ok(Msg::Exec(command, stream)) => forwards.open_exec(command, stream),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => return Ok(End::TabClosed),
                 }
@@ -854,7 +1023,7 @@ impl Worker {
                 && now >= deadline
             {
                 if count_max > 0 && unanswered >= count_max {
-                    return Err(Stop::Failed(t!("conn-keepalive-dead", target = &self.target.label, count = count_max)));
+                    return Err(Stop::Lost(t!("conn-keepalive-dead", target = &self.target.label, count = count_max)));
                 }
                 let to_next = session.keepalive_send().unwrap_or(1).max(1);
                 // libssh2 sends only when one is due, and then says the full
@@ -880,7 +1049,7 @@ impl Worker {
                 match channel.write(&outgoing) {
                     Ok(n) => drop(outgoing.drain(..n)),
                     Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-                    Err(err) => return Err(Stop::Failed(t!("conn-lost", err = err.to_string()))),
+                    Err(err) => return Err(Stop::Lost(t!("conn-lost", err = err.to_string()))),
                 }
             }
 
@@ -900,7 +1069,7 @@ impl Worker {
                         processed += n;
                     }
                     Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-                    Err(err) => return Err(Stop::Failed(t!("conn-lost", err = err.to_string()))),
+                    Err(err) => return Err(Stop::Lost(t!("conn-lost", err = err.to_string()))),
                 }
             }
             // Last before sleeping; see `Forwards::accept_remote`.
@@ -965,8 +1134,21 @@ impl Worker {
         self.listener.send_event(Event::Wakeup);
     }
 
+    /// Show `prompt` and read the answer -- unless nobody's there to give one.
+    fn ask(&mut self, prompt: &str, echo: bool) -> Result<String, Stop> {
+        if self.unattended {
+            return Err(Stop::NeedsInput);
+        }
+        self.print(prompt);
+        self.read_line(echo)
+    }
+
     /// One line typed into the tab; secrets (`echo == false`) stay hidden.
+    /// Not on an automatic retry: nobody's there to type.
     fn read_line(&mut self, echo: bool) -> Result<String, Stop> {
+        if self.unattended {
+            return Err(Stop::NeedsInput);
+        }
         let mut line = String::new();
         loop {
             let bytes = match self.rx.recv() {
@@ -975,7 +1157,8 @@ impl Worker {
                     self.size = size;
                     continue;
                 }
-                Ok(Msg::SetForward(..)) => continue,
+                // Not connected yet: dropped, the socket closes.
+                Ok(Msg::SetForward(..) | Msg::OpenSftp(_) | Msg::Exec(..)) => continue,
                 Ok(Msg::Input(bytes)) => bytes,
             };
             // Arrow keys and friends arrive as one escape sequence each.
@@ -1009,16 +1192,6 @@ impl Worker {
         }
     }
 
-    /// `false` if the tab was closed instead.
-    fn wait_for_key(&mut self) -> bool {
-        loop {
-            match self.rx.recv() {
-                Ok(Msg::Input(_)) => return true,
-                Ok(Msg::Resize(_) | Msg::SetForward(..)) => {}
-                Err(_) => return false,
-            }
-        }
-    }
 }
 
 /// keyboard-interactive auth (e.g. password + one-time code) prompts
@@ -1040,8 +1213,7 @@ impl KeyboardInteractivePrompt for Prompter<'_> {
                 if self.stop.is_some() {
                     return String::new();
                 }
-                self.worker.print(&prompt.text);
-                self.worker.read_line(prompt.echo).unwrap_or_else(|stop| {
+                self.worker.ask(&prompt.text, prompt.echo).unwrap_or_else(|stop| {
                     self.stop = Some(stop);
                     String::new()
                 })

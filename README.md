@@ -52,6 +52,12 @@ in a sidebar, and never have secrets written to disk.
   - a failed command gets its exit code (`✘ 1`) next to its prompt
   - a desktop notification when a long command finishes in a tab you're not
     looking at (after 10 seconds by default, adjustable)
+- **Files on the server (SFTP)** over the terminal's own connection
+  (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> or the right-click menu): browse,
+  upload and download files and folders (also by dragging files onto the window),
+  and **edit a server file in your local editor** – every save goes back, with a
+  check that nobody changed it meanwhile. Files only root may change go through
+  sudo in the terminal, where it asks for the password as usual
 - **Broadcast**: put terminals into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
   or the right-click menu), and what you type, paste or send with a command
   button in one of them goes to all of them – the same command on ten servers
@@ -65,7 +71,8 @@ in a sidebar, and never have secrets written to disk.
   reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
 - Right-click menu in the terminal: copy, paste, paste and run, joining or
-  leaving the broadcast, splitting and closing the pane
+  leaving the broadcast, splitting and closing the pane, the files of an SSH
+  connection
 - A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
 - **Themes** for the console and the interface alike: seven built in, and your
   own in Alacritty's format (its themes work as they are)
@@ -193,6 +200,7 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> | Go to the pane in that direction |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Maximize the pane / show all panes again |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> | Terminal joins / leaves the broadcast |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Files of the SSH connection (SFTP) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
@@ -258,6 +266,8 @@ commands_run = true           # command buttons run at once; off: typed into the
 commands_assume_yes = false   # let them skip confirmations (-y, --noconfirm)
 # system = "debian"           # what the built-in commands build for
                               # (default: from /etc/os-release)
+# editor = "code"             # opens server files edited locally
+                              # (default: the desktop's default app)
 
 [shortcuts]                   # only what differs from the defaults
 new_tab = "Ctrl+Alt+N"
@@ -270,7 +280,7 @@ Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
 `close_tab`, `next_tab`, `previous_tab`, `tab_1` … `tab_9`, `move_tab_left`,
 `move_tab_right`, `split_right`, `split_down`, `close_pane`,
 `focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down`,
-`zoom_pane`, `toggle_broadcast`, `toggle_sidebar`, `open_settings`,
+`zoom_pane`, `toggle_broadcast`, `open_files`, `toggle_sidebar`, `open_settings`,
 `copy`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
 `scroll_to_top`, `scroll_to_bottom`, `search`, `previous_prompt`,
 `next_prompt`, `font_bigger`, `font_smaller`, `font_reset`). Key
@@ -375,6 +385,10 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   terminal's system to every terminal in the group
 - Split panes are resized with the mouse only, and the layout isn't kept when
   Terminaal quits
+- SFTP never overwrites on copying (taken names get a number), deletes only
+  files and empty folders, and doesn't resume a transfer after a dropped
+  connection. Editing through sudo pastes a command into the terminal, so that
+  terminal should be at a shell prompt
 
 ## Roadmap
 
@@ -394,8 +408,9 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   to several tabs, and a live list of a session's port forwards
 - [x] Split panes: several terminals in one tab, resizable, with keyboard focus
   moves and a maximized view
-- [ ] The bigger ones: SFTP browser, restoring the last session, drop-down
-  (Quake) window
+- [x] SFTP: browse, transfer, edit server files locally with conflict check,
+  through sudo where needed
+- [ ] The bigger ones: restoring the last session, drop-down (Quake) window
 
 ## Development
 

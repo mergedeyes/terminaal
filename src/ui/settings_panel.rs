@@ -97,6 +97,8 @@ pub struct SettingsPanel {
     sidebar_width: Option<f32>,
     /// The action the next key press becomes a shortcut for.
     recording: Option<Action>,
+    /// The editor command while it's being typed.
+    editor: Option<String>,
 }
 
 impl SettingsPanel {
@@ -139,7 +141,7 @@ impl SettingsPanel {
             Page::General => general(ui, view, actions),
             Page::Appearance => self.appearance(ui, view, actions),
             Page::Terminal => terminal(ui, view.config, actions),
-            Page::Shell => shell(ui, view, actions),
+            Page::Shell => self.shell(ui, view, actions),
             Page::Shortcuts => self.shortcuts(ui, view.keymap, actions),
         }
 
@@ -386,6 +388,32 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     });
     change(actions, moved, Setting::NotifyAfter(secs));
     ui.label(weak(t!("settings-integration-note")).size(11.0));
+}
+
+impl SettingsPanel {
+    fn shell(&mut self, ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
+        shell(ui, view, actions);
+        ui.add_space(SECTION_GAP);
+        section_title(ui, &t!("settings-editor"));
+        let mut text = self.editor.clone().unwrap_or_else(|| view.config.editor().unwrap_or_default().to_string());
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .desired_width(COMBO_WIDTH)
+                .hint_text(t!("settings-editor-default"))
+                .font(TextStyle::Monospace),
+        );
+        let field = field.on_hover_text(key_hint("editor"));
+        if field.has_focus() {
+            self.editor = Some(text.clone());
+        }
+        if field.lost_focus() {
+            self.editor = None;
+            if text.trim() != view.config.editor().unwrap_or_default() {
+                actions.push(SidebarAction::SetEditor(text));
+            }
+        }
+        ui.label(weak(t!("settings-editor-hint")).size(11.0));
+    }
 }
 
 fn shell(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {

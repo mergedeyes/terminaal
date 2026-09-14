@@ -142,6 +142,15 @@ impl TerminalSession {
         }
     }
 
+    /// Opens channels on the SSH connection (the files tab); `None` for a
+    /// local shell.
+    pub fn opener(&self) -> Option<crate::ssh::connection::Opener> {
+        match &self.backend {
+            Backend::Local(_) => None,
+            Backend::Ssh(handle) => Some(handle.opener()),
+        }
+    }
+
     /// A local shell rather than an SSH connection.
     pub fn is_local(&self) -> bool {
         matches!(self.backend, Backend::Local(_))

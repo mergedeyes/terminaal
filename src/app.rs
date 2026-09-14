@@ -75,7 +75,11 @@ use crate::terminal::integration::{self, ShellEvent};
 use crate::terminal::{links, prompts};
 use crate::terminal::search::Search;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
+use crate::sftp::edit::EditAction;
+use crate::sftp::session::{Command as SftpCommand, Remote};
+use crate::ssh::connection::Opener;
 use crate::ui::context_menu::{ContextMenu, MenuAction};
+use crate::ui::files_panel::{FilesAction, FilesPanel, FilesView};
 use crate::ui::settings_panel::{SettingsPanel, SettingsView, Transparency};
 use crate::ui::sidebar::{Sidebar, SidebarAction, TabForwards};
 use crate::ui::splash::{self, Splash, SplashFrames};
@@ -97,6 +101,8 @@ pub enum UserEvent {
     CosmicThemeChanged,
     /// A pane's shell said something about itself (`terminal::integration`).
     Shell(usize, ShellEvent),
+    /// A files tab's SFTP session has something new to show.
+    Files,
 }
 
 pub struct App {
@@ -127,20 +133,53 @@ enum TabContent {
     /// The settings page (`ui::settings_panel`), drawn by egui where the
     /// grid would be. At most one tab has it.
     Settings { title: String },
+    /// The files of an SSH connection (`ui::files_panel`), drawn by egui
+    /// like the settings.
+    Files(Box<FilesTab>),
+}
+
+/// A files tab: an SFTP session over the connection of one SSH pane.
+struct FilesTab {
+    /// The pane whose connection it uses; sudo commands run in its terminal.
+    pane: usize,
+    /// Host, port and user: another terminal connected with these can take
+    /// over once the pane is gone.
+    login: (String, u16, String),
+    /// `user@host`.
+    label: String,
+    remote: Remote,
+    panel: FilesPanel,
+    /// As shown: marked while an edit needs the user.
+    title: String,
+    /// It needed the user last time the title was made.
+    attention: bool,
+}
+
+impl FilesTab {
+    /// Make the title from the session's state; `true` when an edit just
+    /// started to need the user.
+    fn refresh_title(&mut self) -> bool {
+        let attention = FilesPanel::needs_attention(&self.remote.state());
+        let title = if attention { t!("files-tab-attention", host = &self.label) } else { t!("files-tab", host = &self.label) };
+        self.title = title;
+        let started = attention && !self.attention;
+        self.attention = attention;
+        started
+    }
 }
 
 impl Tab {
     fn panes(&self) -> Option<&Panes> {
         match &self.content {
             TabContent::Terminals(panes) => Some(panes),
-            TabContent::Settings { .. } => None,
+            TabContent::Settings { .. } | TabContent::Files(_) => None,
         }
     }
 
     fn panes_mut(&mut self) -> Option<&mut Panes> {
         match &mut self.content {
             TabContent::Terminals(panes) => Some(panes),
-            TabContent::Settings { .. } => None,
+            TabContent::Settings { .. } | TabContent::Files(_) => None,
         }
     }
 
@@ -153,11 +192,24 @@ impl Tab {
         matches!(self.content, TabContent::Settings { .. })
     }
 
+    /// egui draws the whole page below the tab bar: settings or files.
+    fn is_page(&self) -> bool {
+        !matches!(self.content, TabContent::Terminals(_))
+    }
+
+    fn files(&self) -> Option<&FilesTab> {
+        match &self.content {
+            TabContent::Files(files) => Some(files),
+            _ => None,
+        }
+    }
+
     /// As shown in the tab bar: the focused pane's title.
     fn title(&self) -> &str {
         match &self.content {
             TabContent::Terminals(panes) => &panes.focused().title,
             TabContent::Settings { title } => title,
+            TabContent::Files(files) => &files.title,
         }
     }
 
@@ -529,6 +581,9 @@ impl AppState {
             PaneOrigin::Ssh(target) => {
                 let terminal =
                     TerminalSession::connect_ssh(listener, (**target).clone(), size, cell.width, cell.height, scrollback)?;
+                if let Some(opener) = terminal.opener() {
+                    self.adopt_files_tabs(id, &login_of(target), &opener);
+                }
                 (terminal, target.label.clone())
             }
         };
@@ -680,6 +735,127 @@ impl AppState {
         self.switched_pane();
     }
 
+    /// The files tab of the focused SSH pane: switched to if it's open,
+    /// opened otherwise. Not for a local shell or the settings.
+    fn open_files(&mut self) -> bool {
+        let Some(pane) = self.current_pane() else { return false };
+        let (Some(opener), PaneOrigin::Ssh(target)) = (pane.terminal.opener(), &pane.origin) else { return false };
+        let (id, label) = (pane.id, pane.default_title.clone());
+        let login = login_of(target);
+        if let Some(idx) = self.tabs.iter().position(|tab| tab.files().is_some_and(|files| files.pane == id)) {
+            self.select_tab(idx);
+            return true;
+        }
+        let proxy = self.proxy.clone();
+        let wake = Arc::new(move || drop(proxy.send_event(UserEvent::Files)));
+        match Remote::spawn(Arc::new(opener), &label, wake) {
+            Ok(remote) => {
+                let panel = FilesPanel::new();
+                let mut files = FilesTab { pane: id, login, label, remote, panel, title: String::new(), attention: false };
+                files.refresh_title();
+                self.push_tab(TabContent::Files(Box::new(files)));
+            }
+            Err(err) => log::error!("failed to start SFTP for {label}: {err}"),
+        }
+        true
+    }
+
+    /// A terminal logged in to `login` is there: files tabs of that login
+    /// whose own terminal is gone use it from now on.
+    fn adopt_files_tabs(&mut self, pane: usize, login: &(String, u16, String), opener: &Opener) {
+        let orphaned: Vec<usize> = (0..self.tabs.len())
+            .filter(|&idx| self.tabs[idx].files().is_some_and(|files| &files.login == login && self.locate(files.pane).is_none()))
+            .collect();
+        for idx in orphaned {
+            if let TabContent::Files(files) = &mut self.tabs[idx].content {
+                files.pane = pane;
+                files.remote.send(SftpCommand::Rebind(Arc::new(opener.clone())));
+            }
+        }
+    }
+
+    /// A file dropped onto the window: uploaded into the folder a files tab
+    /// shows, if that's the tab in view.
+    fn dropped_file(&mut self, path: PathBuf) {
+        let Some(files) = self.tabs.get(self.active_tab).and_then(Tab::files) else { return };
+        let remote_dir = files.remote.state().dir.clone();
+        if !remote_dir.is_empty() {
+            files.remote.send(SftpCommand::Upload { local: path, remote_dir });
+        }
+    }
+
+    /// A files tab's session changed: new titles, and a nudge when an edit
+    /// needs the user while its tab isn't in view.
+    fn files_changed(&mut self) {
+        let mut nudge = false;
+        for (idx, tab) in self.tabs.iter_mut().enumerate() {
+            if let TabContent::Files(files) = &mut tab.content
+                && files.refresh_title()
+                && (idx != self.active_tab || !self.focused)
+            {
+                nudge = true;
+            }
+        }
+        if nudge {
+            self.window.request_user_attention(Some(UserAttentionType::Informational));
+        }
+        self.update_window_title();
+        self.window.request_redraw();
+    }
+
+    /// What the files tab at `tab_idx` asked for.
+    fn apply_files_action(&mut self, tab_idx: usize, action: FilesAction) {
+        let Some(TabContent::Files(files)) = self.tabs.get(tab_idx).map(|tab| &tab.content) else { return };
+        let (pane, label) = (files.pane, files.label.clone());
+        match action {
+            FilesAction::Remote(command) => files.remote.send(command),
+            // Try again on its terminal -- or on any other with that login.
+            FilesAction::Reconnect => {
+                let login = files.login.clone();
+                let own = self.locate(pane).map(|(tab, idx)| (pane, tab, idx));
+                let any = self.tabs.iter().enumerate().find_map(|(tab, t)| {
+                    let panes = t.panes()?;
+                    panes.panes.iter().enumerate().find_map(|(idx, p)| match &p.origin {
+                        PaneOrigin::Ssh(target) if login_of(target) == login => Some((p.id, tab, idx)),
+                        _ => None,
+                    })
+                });
+                match own.or(any) {
+                    Some((id, tab, idx)) => {
+                        let opener = self.tabs[tab].panes().expect("found").panes[idx].terminal.opener();
+                        if let (Some(opener), Some(TabContent::Files(files))) =
+                            (opener, self.tabs.get_mut(tab_idx).map(|tab| &mut tab.content))
+                        {
+                            files.pane = id;
+                            files.remote.send(SftpCommand::Rebind(Arc::new(opener)));
+                        }
+                    }
+                    None => log::info!("no terminal logged in to {label} to reconnect files over"),
+                }
+            }
+            // Into the terminal like a paste, run; then over to that terminal,
+            // where sudo asks for the password.
+            FilesAction::RunSudo { edit, command } => {
+                let Some((pane_tab, idx)) = self.locate(pane) else { return };
+                let terminal = &self.tabs[pane_tab].panes().expect("located").panes[idx].terminal;
+                let bytes = {
+                    let mut term = terminal.term.lock();
+                    if term.renderable_content().display_offset != 0 {
+                        term.scroll_display(Scroll::Bottom);
+                    }
+                    input::paste_to_bytes(&command, *term.mode(), true)
+                };
+                if let Some(bytes) = bytes {
+                    terminal.send_input(bytes);
+                }
+                files.remote.send(SftpCommand::EditAction { id: edit, action: EditAction::SudoStarted });
+                self.select_tab(pane_tab);
+                self.focus_pane(pane);
+            }
+        }
+        self.window.request_redraw();
+    }
+
     /// Give the keyboard to the pane with this id in the active tab.
     fn focus_pane(&mut self, id: usize) {
         let Some(panes) = self.tabs.get_mut(self.active_tab).and_then(Tab::panes_mut) else { return };
@@ -821,6 +997,11 @@ impl AppState {
         self.tabs.get(self.active_tab).is_some_and(Tab::is_settings)
     }
 
+    /// The active tab is a page egui draws: settings or files.
+    fn page_active(&self) -> bool {
+        self.tabs.get(self.active_tab).is_some_and(Tab::is_page)
+    }
+
     fn toggle_sidebar(&mut self) {
         self.sidebar_visible = !self.sidebar_visible;
         let scale_factor = self.window.scale_factor() as f32;
@@ -849,7 +1030,7 @@ impl AppState {
     /// The settings page is at `pos`: everything below the tab bar right
     /// of the sidebar, while the settings tab is showing.
     fn over_settings(&self, (x, y): (f64, f64)) -> bool {
-        self.settings_active() && !self.over_sidebar(x) && y >= self.tab_bar_height as f64
+        self.page_active() && !self.over_sidebar(x) && y >= self.tab_bar_height as f64
     }
 
     /// egui owns the mouse at `pos`: the sidebar, the settings page or the
@@ -1117,6 +1298,7 @@ impl AppState {
     fn open_context_menu(&mut self) {
         let Some(terminal) = self.current_terminal() else { return };
         let can_copy = terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
+        let ssh = !terminal.is_local();
         let can_paste = self.clipboard.as_mut().is_some_and(|c| c.get_text().is_ok_and(|text| !text.is_empty()));
         let shortcuts = [
             Action::Copy,
@@ -1126,11 +1308,12 @@ impl AppState {
             Action::SplitRight,
             Action::SplitDown,
             Action::ClosePane,
+            Action::OpenFiles,
         ]
         .map(|action| self.keymap.label(action));
         let broadcast = self.current_pane().is_some_and(|pane| pane.broadcast);
         let pos = self.to_points(self.last_cursor_pos);
-        self.context_menu = Some(ContextMenu::new(pos, can_copy, can_paste, broadcast, shortcuts));
+        self.context_menu = Some(ContextMenu::new(pos, can_copy, can_paste, broadcast, ssh, shortcuts));
         self.set_hovered(None);
         self.window.request_redraw();
     }
@@ -1150,6 +1333,7 @@ impl AppState {
             MenuAction::SplitRight => self.split_pane(Axis::Horizontal),
             MenuAction::SplitDown => self.split_pane(Axis::Vertical),
             MenuAction::ClosePane => self.close_focused_pane(),
+            MenuAction::OpenFiles => drop(self.open_files()),
         }
     }
 
@@ -1216,6 +1400,7 @@ impl AppState {
             Action::ClosePane => self.close_focused_pane(),
             Action::FocusPane(direction) => return self.focus_pane_towards(direction),
             Action::ZoomPane => return self.toggle_zoom(),
+            Action::OpenFiles => return self.open_files(),
             Action::ToggleBroadcast => self.toggle_broadcast(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::OpenSettings => self.open_settings(),
@@ -1628,6 +1813,10 @@ impl AppState {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let window_size = [size.width, size.height];
         let settings_active = self.settings_active();
+        let files_terminal = self.tabs.get(self.active_tab).and_then(Tab::files).map(|files| self.locate(files.pane).is_some());
+        let editor = self.config.editor().map(str::to_string);
+        let mut files_actions = Vec::new();
+        let active_tab = self.active_tab;
         // The settings page starts below the tab bar.
         let page_top = self.tab_bar_height / scale_factor;
 
@@ -1648,6 +1837,10 @@ impl AppState {
         let mut splash_next = None;
         let context_menu = &mut self.context_menu;
         let mut menu_action = None;
+        let mut files_tab = match self.tabs.get_mut(active_tab).map(|tab| &mut tab.content) {
+            Some(TabContent::Files(files)) => Some(files),
+            _ => None,
+        };
         let repaint = self.ui.run(&self.window, &self.gpu.device, &self.gpu.queue, |ui| {
             // egui may run this more than once per frame; only the last
             // pass counts.
@@ -1677,6 +1870,20 @@ impl AppState {
                         },
                     };
                     self.settings.show_tab(ui, &view, &mut settings_actions);
+                });
+            }
+            if let Some(files) = files_tab.as_deref_mut() {
+                files_actions.clear();
+                let page = egui::Rect::from_min_max(egui::pos2(right_edge, page_top), ui.max_rect().max);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+                    let state = files.remote.state();
+                    let view = FilesView {
+                        state: &state,
+                        label: &files.label,
+                        terminal: files_terminal.unwrap_or(false),
+                        editor: editor.as_deref(),
+                    };
+                    files.panel.show_tab(ui, &view, &mut files_actions);
                 });
             }
             // A click only registers in the pass that saw it, so keep it
@@ -1714,6 +1921,9 @@ impl AppState {
         }
         for action in settings_actions {
             self.apply_action(action, Origin::Settings);
+        }
+        for action in files_actions {
+            self.apply_files_action(active_tab, action);
         }
         // The menu is in this frame already; the redraw takes it away.
         if let Some(action) = menu_action {
@@ -1791,6 +2001,11 @@ impl AppState {
                     None => t!("cmd-system-detect"),
                 });
                 self.report(origin, result);
+            }
+            SidebarAction::SetEditor(editor) => {
+                if let Err(err) = self.config.save_editor(&editor) {
+                    self.report(origin, Err(err));
+                }
             }
             SidebarAction::SetFont(slot, family) => {
                 if let Err(err) = self.config.save_font(slot, family.as_deref()) {
@@ -2274,6 +2489,12 @@ struct PaneView {
     broadcast: bool,
 }
 
+/// Host, port and user of an SSH target: what makes two terminals the same
+/// login for a files tab.
+fn login_of(target: &SshTarget) -> (String, u16, String) {
+    (target.host.clone(), target.port, target.user.clone())
+}
+
 /// This machine's host name, as shells put it into OSC 7.
 fn hostname() -> String {
     let mut buf = [0u8; 256];
@@ -2535,6 +2756,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::MouseInput { state: button_state, button, .. } => state.on_mouse_input(button, button_state),
             WindowEvent::MouseWheel { delta, .. } => state.on_mouse_wheel(delta),
+            WindowEvent::DroppedFile(path) => state.dropped_file(path),
             WindowEvent::RedrawRequested => state.redraw(),
             _ => {}
         }
@@ -2557,6 +2779,10 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Shell(pane_id, event) => {
                 state.shell_event(pane_id, event);
+                return;
+            }
+            UserEvent::Files => {
+                state.files_changed();
                 return;
             }
         };

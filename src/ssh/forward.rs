@@ -184,11 +184,26 @@ pub struct ForwardStatus {
     pub state: ForwardState,
 }
 
+/// What a waiting connection's channel is.
+enum Open {
+    /// `direct-tcpip` or `direct-streamlocal` to this target.
+    Forward(Target),
+    /// A session channel running a subsystem (`sftp`) or a command, once
+    /// opened.
+    Session { run: Run, channel: Option<Channel> },
+}
+
+/// What a session channel runs.
+enum Run {
+    Subsystem(&'static str),
+    Exec(String),
+}
+
 /// A local connection waiting for its channel.
 struct Pending {
     stream: Stream,
     origin: (String, u16),
-    target: Target,
+    open: Open,
     /// Came through SOCKS: the client waits for the answer, after `unsent`
     /// (what's left of the handshake), and sent `early` after its request.
     socks: Option<Version>,
@@ -423,7 +438,7 @@ impl Forwards {
                             Some(target) => self.pending.push_back(Pending {
                                 stream,
                                 origin,
-                                target: target.clone(),
+                                open: Open::Forward(target.clone()),
                                 socks: None,
                                 unsent: Vec::new(),
                                 early: Vec::new(),
@@ -446,8 +461,8 @@ impl Forwards {
                 Progress::Close => {}
                 Progress::Connect { host, port, version } => {
                     let (stream, unsent, early) = negotiation.finish();
-                    let target = Target::Tcp { host, port };
-                    self.pending.push_back(Pending { stream, origin, target, socks: Some(version), unsent, early });
+                    let open = Open::Forward(Target::Tcp { host, port });
+                    self.pending.push_back(Pending { stream, origin, open, socks: Some(version), unsent, early });
                 }
             }
         }
@@ -480,11 +495,12 @@ impl Forwards {
         }
 
         // One open at a time, retried with the same arguments until done.
-        while let Some(pending) = self.pending.front() {
+        while let Some(pending) = self.pending.front_mut() {
             let origin = Some((pending.origin.0.as_str(), pending.origin.1));
-            let opened = match &pending.target {
-                Target::Tcp { host, port } => session.channel_direct_tcpip(host, *port, origin),
-                Target::Unix(path) => session.channel_direct_streamlocal(path, origin),
+            let opened = match &mut pending.open {
+                Open::Forward(Target::Tcp { host, port }) => session.channel_direct_tcpip(host, *port, origin),
+                Open::Forward(Target::Unix(path)) => session.channel_direct_streamlocal(path, origin),
+                Open::Session { run, channel } => start_session(session, run, channel),
             };
             match opened {
                 Ok(channel) => {
@@ -501,7 +517,19 @@ impl Forwards {
                     // Dropping the stream closes it: the client sees the
                     // connection refused, like with OpenSSH.
                     let mut pending = self.pending.pop_front().expect("front exists");
-                    log::debug!("forward to {} refused: {err}", pending.target.spec());
+                    match &mut pending.open {
+                        Open::Forward(target) => log::debug!("forward to {} refused: {err}", target.spec()),
+                        Open::Session { run, channel } => {
+                            match run {
+                                Run::Subsystem(name) => log::info!("{name} subsystem refused: {err}"),
+                                Run::Exec(_) => log::info!("command refused: {err}"),
+                            }
+                            // Closed before it's freed, like every channel.
+                            if let Some(channel) = channel.take() {
+                                self.tunnels.push(Tunnel::closing(channel));
+                            }
+                        }
+                    }
                     if let Some(version) = pending.socks {
                         pending.unsent.extend(socks::reply(version, false));
                         let _ = pending.stream.write_all(&pending.unsent);
@@ -555,6 +583,30 @@ impl Forwards {
                 }
             }
         }
+    }
+
+    /// Start `name` (e.g. `sftp`) on the server and tie it to `stream`:
+    /// what one side writes, the other reads. If the server refuses, the
+    /// stream is closed.
+    pub fn open_subsystem(&mut self, name: &'static str, stream: UnixStream) {
+        self.open_session(Run::Subsystem(name), stream);
+    }
+
+    /// Run `command` on the server, tied to `stream` like a subsystem: its
+    /// stdin, and its output with stderr merged in.
+    pub fn open_exec(&mut self, command: String, stream: UnixStream) {
+        self.open_session(Run::Exec(command), stream);
+    }
+
+    fn open_session(&mut self, run: Run, stream: UnixStream) {
+        self.pending.push_back(Pending {
+            stream: Stream::Unix(stream),
+            origin: ("127.0.0.1".to_string(), 0),
+            open: Open::Session { run, channel: None },
+            socks: None,
+            unsent: Vec::new(),
+            early: Vec::new(),
+        });
     }
 
     /// Tie the server's agent channels to the local agent from now on.
@@ -646,6 +698,21 @@ impl Slot {
             }
         }
     }
+}
+
+/// Open a session channel and start what it runs, over as many calls as
+/// the non-blocking session needs: the channel, once open, waits in
+/// `channel` while the request is retried.
+fn start_session(session: &Session, run: &Run, channel: &mut Option<Channel>) -> Result<Channel, ssh2::Error> {
+    if channel.is_none() {
+        *channel = Some(session.channel_session()?);
+    }
+    let opened = channel.as_mut().expect("just opened");
+    match run {
+        Run::Subsystem(name) => opened.subsystem(name)?,
+        Run::Exec(command) => opened.exec(command)?,
+    }
+    Ok(channel.take().expect("just opened"))
 }
 
 /// Extended data is never read here, but `read_window().available`

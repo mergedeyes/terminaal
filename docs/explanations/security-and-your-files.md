@@ -26,7 +26,7 @@ deliberately doesn't – to keep them safe.
 | Key files | Create new ones (never overwriting an existing file, mode `0600`). Delete them only for keys generated in Terminaal, only after a second confirmation, and only if no other entry uses the file |
 | Your shell configs (`.bashrc`, `.zshrc`, fish config) | Never touched. Terminaal's aliases and integration live in separate files that only Terminaal loads |
 | `hosts.toml`, `keys.toml`, `snippets.toml` | Rewritten whole, atomically. If one can't be read, Terminaal refuses to save over it |
-
+| Files on a server (SFTP) | Copies never overwrite: a taken name gets a number. Deleting asks twice and only removes files and empty folders. Edited files are uploaded only after checking nobody changed them meanwhile, written next to the original and renamed over it (or in place where that would change the owner) |
 ## Host keys
 
 - A **changed** host key always aborts the connection, no matter what
@@ -66,6 +66,19 @@ Input goes to other terminals only while the **focused** one is in the broadcast
 group, and terminals in the group are marked red (the tab in the tab bar, the
 pane in a split tab). Replies to terminal queries and mouse
 events are never broadcast.
+
+## Editing server files
+
+- The local copy of a file you edit lives in `$XDG_RUNTIME_DIR` – in memory,
+  private to you (`0700`/`0600`), gone at logout – and is deleted when you close
+  it. Only a copy with changes the server never got is kept until you do.
+- **sudo** is never run behind your back. Terminaal puts a script into
+  `~/.cache/terminaal/sudo/` on the server and shows the command; it only goes
+  into the terminal when you click **Run in terminal**, and sudo asks for the
+  password there like at any other prompt – nothing of it is kept.
+- The pasted command contains only the script's path, which Terminaal refuses
+  to build from a home folder with quotes or backslashes in it; file paths only
+  ever reach `sh` inside the script, properly quoted.
 
 ## Agent forwarding
 

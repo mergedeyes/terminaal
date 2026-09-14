@@ -73,6 +73,11 @@ opt-level = 3
 # Decoding and scaling the startup splash's GIF frames (ui::splash) races
 # the first shell prompt; unoptimized it's many times slower, and a splash
 # that arrives too late is skipped.
+# Hashes of files edited from the server (sftp::edit); unoptimized SHA-256
+# is dozens of times slower.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.dev.package.image]
 opt-level = 3
 

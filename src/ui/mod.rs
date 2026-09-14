@@ -8,6 +8,7 @@
 
 pub mod commands_panel;
 pub mod context_menu;
+pub mod files_panel;
 pub mod keys_panel;
 pub mod settings_panel;
 pub mod sidebar;

@@ -90,6 +90,10 @@ pub struct Config {
     /// The system the built-in commands are tailored to, e.g. `debian`
     /// (`commands::Family::key`). Unset (or `auto`): from `/etc/os-release`.
     pub system: Option<String>,
+    /// Command a file edited from the files tab opens with, the file's path
+    /// appended (e.g. `code`, `gedit`). Unset: the desktop's default
+    /// application (`xdg-open`).
+    pub editor: Option<String>,
     /// Keyboard shortcuts that differ from the defaults, by action name
     /// (`[shortcuts]`); see `shortcuts`.
     pub shortcuts: BTreeMap<String, Bindings>,
@@ -142,6 +146,7 @@ impl Default for Config {
             commands_assume_yes: false,
             commands_warned: false,
             system: None,
+            editor: None,
             shortcuts: BTreeMap::new(),
         }
     }
@@ -237,6 +242,19 @@ impl Config {
         let key = family.map(Family::key);
         Self::edit(|doc| write_text(doc, "system", key))?;
         self.system = key.map(str::to_string);
+        Ok(())
+    }
+
+    /// The editor for files from the server, if one is set.
+    pub fn editor(&self) -> Option<&str> {
+        self.editor.as_deref().map(str::trim).filter(|editor| !editor.is_empty())
+    }
+
+    /// Set the editor command and persist it; empty removes the key.
+    pub fn save_editor(&mut self, editor: &str) -> Result<(), String> {
+        let editor = Some(editor.trim()).filter(|editor| !editor.is_empty());
+        Self::edit(|doc| write_text(doc, "editor", editor))?;
+        self.editor = editor.map(str::to_string);
         Ok(())
     }
 

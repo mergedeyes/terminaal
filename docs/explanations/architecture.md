@@ -34,6 +34,11 @@ contribute, or just wonder why it behaves the way it does.
 - **egui** draws only the chrome – sidebar, settings, context menu – in a
   separate pass on top.
 - **libssh2** (through the `ssh2` crate) runs SSH, on a worker thread per SSH pane.
+- **SFTP** runs over the terminal's own connection: the SSH worker opens the
+  `sftp` subsystem on a channel and ties it to a socket, like a port forward. A
+  thread per files tab speaks SFTP over that socket with Terminaal's own client
+  (`src/sftp/protocol.rs`), keeping many reads or writes in flight at once –
+  one at a time, every chunk would cost a round trip.
 - **Split panes** are a binary tree per tab (`src/panes.rs`): each split halves
   its rectangle side by side or one above the other at a draggable ratio, the
   leaves are the terminals. Every layout change resizes only the terminals whose
@@ -118,6 +123,7 @@ data buffered.
 | `src/panes.rs` | Split-pane layout: tree, rectangles, dividers, neighbours |
 | `src/render/` | Grid, tab bar, search bar, labels, quads, palette |
 | `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links |
+| `src/sftp/` | SFTP client over the terminal's connection, its session thread (listing, pipelined transfers), editing files locally with sudo |
 | `src/ssh/` | Host catalog, `~/.ssh/config` parser, connection worker, forwards, SOCKS, agent forwarding, keys, `known_hosts` |
 | `src/ui/` | egui sidebar, settings, SSH/keys/commands panels, context menu, splash |
 | `src/shells/` | Shell detection, managed aliases, generated startup files |
