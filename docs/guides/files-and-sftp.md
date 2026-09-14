@@ -14,11 +14,27 @@ it.
 
 The files tab uses the terminal's connection – no second login, no second
 passphrase prompt. It needs the server's SFTP subsystem, which OpenSSH servers
-have by default. Opened before the login in the terminal is done, it says so;
-click **Reconnect** once it is.
+have by default. Opened before the login in the terminal is done, it waits for
+it. If the server has no SFTP, the tab says why; **Reconnect** tries again.
 
 Closing the files tab ends the SFTP session, the terminal keeps running.
-Closing the terminal ends both.
+
+## When the connection drops
+
+The files tab checks every second whether its connection is still there. When
+it's gone, it says **Connection interrupted**; transfers and saves wait. As soon
+as the terminal is connected again – it reconnects by itself – the files tab
+carries on:
+
+- A **download** continues from its hidden `.name.part` file, an **upload** from
+  the part already on the server – as long as the source file didn't change
+  meanwhile; otherwise it starts over.
+- **Saves** you made in the editor meanwhile are uploaded, after the usual check
+  that nobody changed the file.
+
+If you close the terminal, the files tab stays and says so. Open the same host
+with the same login again (from the sidebar, for example) and the files tab takes
+over the new connection. This lasts as long as Terminaal is open.
 
 ## Browsing
 
@@ -78,9 +94,11 @@ as `code`, `gedit`, `kate` or `alacritty -e nvim`.
   mode `0700`, the file `0600`). That folder is in memory and gone when you log
   out. Closing an edit, or the files tab, deletes it – except a copy with changes
   the server never got, which stays until you close it.
-- Before uploading, Terminaal compares the server's file with what it
-  downloaded: size and modification time, and for files up to 1 MB the content
-  itself.
+- Before uploading, Terminaal checks that the server's file is still what it
+  last synced: the server computes its SHA-256 (`sha256sum`, or `shasum` on macOS
+  and BSD) and only that one line comes back, however big the file. Without either
+  tool, files up to 1 MB are downloaded and compared, bigger ones by size and
+  modification time.
 - The upload writes a hidden file next to the original and renames it over the
   original, with the original's mode – an interrupted upload never leaves half a
   file. Where that would change the file's owner, or the server can't rename
@@ -115,13 +133,15 @@ Things to know:
   out of their history.
 - **Cancel** removes the script again. The script deletes itself when it has run,
   and Terminaal removes its folder.
-- Conflict detection through sudo only compares size and modification time –
-  the content can't be read without it.
+- The script compares the file's SHA-256 with what you last synced right before
+  copying. If someone changed it meanwhile, it copies nothing and the edit shows
+  the conflict; **Overwrite** then makes a script without that check.
 
 ## Limits
 
 - Deleting a folder needs it to be empty.
 - Nothing is overwritten on copying; to replace a file, delete it first or edit it.
-- Transfers don't resume after a dropped connection.
-- A change on the server within the same second that keeps the size isn't
-  noticed for files over 1 MB, or for files edited through sudo.
+- Transfers resume only while Terminaal stays open.
+- On a server without `sha256sum` or `shasum`, a change within the same second
+  that keeps the size isn't noticed for files over 1 MB, or at all for files
+  edited through sudo.

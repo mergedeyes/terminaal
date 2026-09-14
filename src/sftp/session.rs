@@ -452,8 +452,10 @@ impl Worker {
     /// Notice a connection that's gone although nothing was asked of it:
     /// its stream closed, or the terminal is on another connection now.
     fn check_connection(&mut self) {
-        if self.channels.connection() != self.attached_to {
-            return self.lose(&t!("files-reconnected"));
+        match self.channels.connection() {
+            0 => return self.lose(&t!("files-stream-closed")),
+            connection if connection != self.attached_to => return self.lose(&t!("files-reconnected")),
+            _ => {}
         }
         let mut poll = libc::pollfd { fd: self.fd, events: libc::POLLIN | libc::POLLRDHUP, revents: 0 };
         // SAFETY: one valid pollfd for the duration of the call; no wait.
@@ -1051,7 +1053,7 @@ pub mod tests {
 
         /// `sftp-server`s still running.
         pub fn running(&self) -> usize {
-            self.children.lock().unwrap().iter_mut().filter(|child| child.try_wait().is_ok_and(|done| done.is_none())).count()
+            self.children.lock().unwrap().iter_mut().map(|child| child.try_wait()).filter(|done| matches!(done, Ok(None))).count()
         }
 
         pub fn reconnect(&self) {
@@ -1122,7 +1124,9 @@ pub mod tests {
         });
         let wakes = Arc::new(AtomicUsize::new(0));
         let counter = wakes.clone();
-        let wake: Wake = Arc::new(move || drop(counter.fetch_add(1, Ordering::SeqCst)));
+        let wake: Wake = Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
         let root = scratch(&format!("{name}-edits"));
         let channels: Arc<dyn Channels> = server.clone();
         let remote = Remote::spawn_with(channels, "test", root.join("local"), wake).unwrap();

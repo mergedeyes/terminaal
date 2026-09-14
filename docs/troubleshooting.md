@@ -104,7 +104,19 @@ Keepalives are on by default (30 s). If a firewall is stricter, lower
 
 **A dead connection takes a while to be noticed.**
 With the defaults, after three unanswered keepalives 30 seconds apart – roughly a
-minute and a half. Lower the interval or count for faster detection.
+minute and a half. Lower the interval or count for faster detection. Once noticed,
+the tab reconnects by itself (see below), and a files tab carries on.
+
+**The tab says "Connection lost" and counts down.**
+Terminaal tries again after 2, 4, 8 … seconds (at most a minute), keeping the
+scrollback. Press <kbd>Enter</kbd> to try right away, <kbd>Ctrl</kbd>+<kbd>D</kbd>
+to close the tab. Programs that were running on the server are gone – use `tmux`
+(see [Tips](tips.md)) to keep them.
+
+**It says "Logging in needs an answer" and stops trying.**
+Automatic attempts can't type a passphrase, a password or answer a host-key
+question. Press <kbd>Enter</kbd> and answer in the tab – or use the SSH agent or a
+key without passphrase for that host.
 
 **`unknown terminal type` or broken colors on a server.**
 Set `TERM=xterm-256color` (the default) or `TERM=xterm` under **Advanced →

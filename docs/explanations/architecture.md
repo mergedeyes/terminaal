@@ -98,6 +98,10 @@ Each SSH tab has a worker thread that owns its libssh2 session:
   `poll()` on the session socket, the forward sockets and a wakeup socket that
   input and resize messages ping.
 - **Keepalives** detect a dead connection (30 s interval, 3 misses by default).
+  The worker thread then stays and connects again into the same terminal: on its
+  own after 2, 4, 8 … seconds (up to a minute) while no prompt is needed, at once
+  on Enter. Other parts (a files tab) ask it for channels through a handle that
+  doesn't keep the tab alive, and see a number that changes with each connection.
 
 libssh2 can open only one channel at a time per session, so new forwarded
 connections queue up briefly; and because it reads data for all channels

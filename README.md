@@ -56,7 +56,8 @@ in a sidebar, and never have secrets written to disk.
   (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> or the right-click menu): browse,
   upload and download files and folders (also by dragging files onto the window),
   and **edit a server file in your local editor** – every save goes back, with a
-  check that nobody changed it meanwhile. Files only root may change go through
+  check (a SHA-256 computed on the server) that nobody changed it meanwhile.
+  Transfers and saves wait out a dropped connection and carry on once it's back. Files only root may change go through
   sudo in the terminal, where it asks for the password as usual
 - **Broadcast**: put terminals into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
   or the right-click menu), and what you type, paste or send with a command
@@ -108,6 +109,9 @@ in a sidebar, and never have secrets written to disk.
   copied over to edit. Supports `Include`, `Match`, `%` tokens and more
 - **Several logins per host** (user + key), with one as the default
 - **ProxyJump** chains and **ProxyCommand**
+- **Reconnects on its own** when a connection drops – after 2, 4, 8 … seconds, as
+  long as logging in needs no answer – keeping the scrollback. <kbd>Enter</kbd>
+  tries right away, <kbd>Ctrl</kbd>+<kbd>D</kbd> closes the tab
 - **Port forwarding**: `LocalForward`, `RemoteForward` and `DynamicForward`
   (a SOCKS 4/4a/5 proxy; a `RemoteForward` with only a port runs one on the
   server). Unix socket paths work on either side, except for the server
@@ -385,10 +389,13 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   terminal's system to every terminal in the group
 - Split panes are resized with the mouse only, and the layout isn't kept when
   Terminaal quits
-- SFTP never overwrites on copying (taken names get a number), deletes only
-  files and empty folders, and doesn't resume a transfer after a dropped
-  connection. Editing through sudo pastes a command into the terminal, so that
-  terminal should be at a shell prompt
+- SFTP never overwrites on copying (taken names get a number) and deletes only
+  files and empty folders. Transfers resume after a dropped connection only while
+  Terminaal stays open. Editing through sudo pastes a command into the terminal,
+  so that terminal should be at a shell prompt
+- Reconnecting on its own needs a login without prompts (agent, key without
+  passphrase); otherwise press Enter and answer them. A dropped connection is
+  noticed through keepalives – with the defaults after about a minute and a half
 
 ## Roadmap
 

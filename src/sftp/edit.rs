@@ -490,7 +490,8 @@ impl Edits {
             return Ok(false);
         }
         // Through sudo, the script checks right before copying.
-        if !force && !(self.edits[i].via_sudo && self.hash_tool != Some(false)) {
+        let script_checks = self.edits[i].via_sudo && self.hash_tool != Some(false);
+        if !(force || script_checks) {
             match self.server_changed(client, i)? {
                 Ok(false) => {}
                 Ok(true) => {
@@ -1322,13 +1323,13 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "edited\n");
 
         // Changed by someone else, same size and time: the script refuses.
-        sneaky_change(&file, b"theirs!\n");
+        sneaky_change(&file, b"theirs\n");
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
         std::fs::write(&local, "mine...\n").unwrap();
         run_ready(SudoFor::Save);
         wait_for(&remote, "sudo conflict", |s| edit_of(s, &file).is_some_and(|e| e.state == EditState::Conflict));
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs!\n");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs\n");
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         // Overwriting goes through without the check.

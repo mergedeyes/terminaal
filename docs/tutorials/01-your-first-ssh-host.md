@@ -85,9 +85,14 @@ have a jump host of its own.
 ## 6. Keep the connection alive
 
 Terminaal sends a keepalive every 30 seconds and gives up after three
-unanswered ones, so a dead connection shows up as an error instead of a frozen
-tab. To change that, open **Advanced → Connection** in the host form
+unanswered ones, so a dead connection shows up instead of a frozen tab. To
+change that, open **Advanced → Connection** in the host form
 (`ServerAliveInterval`, `ServerAliveCountMax`).
+
+When the connection drops, the tab stays and reconnects by itself after a few
+seconds – as long as the login needs no passphrase or password. <kbd>Enter</kbd>
+tries at once (and lets you answer prompts), <kbd>Ctrl</kbd>+<kbd>D</kbd> closes
+the tab.
 
 ## What you learned
 

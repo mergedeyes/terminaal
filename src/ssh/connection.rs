@@ -362,7 +362,12 @@ impl Worker {
         loop {
             self.unattended = attempt.is_some();
             self.filter = Filter::default();
+            let connections = self.connections;
             let result = self.connect_and_pump();
+            // It was up again: the next drop starts with the short pause.
+            if self.connections > connections {
+                attempt = None;
+            }
             if let Some(mut proxy) = self.proxy.take() {
                 let _ = proxy.child.kill();
                 let _ = proxy.child.wait();
