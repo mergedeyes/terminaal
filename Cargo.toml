@@ -37,9 +37,14 @@ unic-langid = "0.9.6"
 # winit already uses.
 wayland-backend = { version = "0.3.17", features = ["client_system"] }
 wayland-client = "0.31.15"
-wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
+# "unstable": the cursor-shape protocol needs the tablet one.
+wayland-protocols = { version = "0.32.13", features = ["client", "staging", "unstable"] }
+# The drop-down window's layer surface (quake::layer).
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 wgpu = "30.0.1"
 winit = "0.30.13"
+# The drop-down window's keyboard (quake::keys); winit's own is private.
+xkbcommon = "0.8"
 
 # Text shaping/rasterization is the hot path in the render loop
 # (see the [timing] discussion) and ~10x slower unoptimized. These

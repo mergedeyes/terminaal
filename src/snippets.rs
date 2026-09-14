@@ -11,6 +11,7 @@
 //! command = "journalctl -f"
 //! system = "arch"   # optional, a `Family` key
 //! host = "web1"     # optional, a host's name in the sidebar
+//! # local = true    # optional instead of host: only in local terminals
 //! ```
 
 use std::path::PathBuf;
@@ -31,6 +32,40 @@ pub struct Snippet {
     /// Only on this host (its name in the sidebar); never in a local tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// Run it on its own when a terminal starts, where it applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autorun: Option<Autorun>,
+    /// Only in local terminals, never over SSH. Ignored next to `host`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub local: bool,
+    /// No button among the commands; it's only listed under "Manage" --
+    /// for startup commands that would crowd the buttons.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// When a snippet runs by itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Autorun {
+    /// In every new terminal once its shell is up -- local or over SSH,
+    /// again after a reconnect.
+    Shell,
+    /// In SSH terminals only, once logged in (again after a reconnect).
+    Login,
+}
+
+impl Autorun {
+    pub fn label(self) -> String {
+        match self {
+            Self::Shell => t!("snip-autorun-shell"),
+            Self::Login => t!("snip-autorun-login"),
+        }
+    }
 }
 
 impl Snippet {
@@ -47,10 +82,21 @@ impl Snippet {
             Some(_) => self.family().is_some_and(|family| target.system.is_some_and(|system| system.family == family)),
         };
         let host = match &self.host {
+            None if self.local => target.host.is_none() && target.host_name.is_none(),
             None => true,
             Some(host) => target.host_name.as_deref() == Some(host.as_str()),
         };
         system && host
+    }
+
+    /// Whether it runs by itself in a terminal that just started: `ssh`
+    /// for an SSH terminal, `target` its system and host.
+    pub fn runs_at_start(&self, ssh: bool, target: &Target) -> bool {
+        match self.autorun {
+            None => false,
+            Some(Autorun::Shell) => self.applies(target),
+            Some(Autorun::Login) => ssh && self.applies(target),
+        }
     }
 }
 
@@ -91,7 +137,7 @@ mod tests {
     use crate::commands::System;
 
     fn target(family: Family, host: Option<&str>) -> Target {
-        Target { system: Some(System { family, root: false }), host_name: host.map(str::to_string), ..Target::default() }
+        Target { system: Some(System { family, root: false, ..System::default() }), host_name: host.map(str::to_string), ..Target::default() }
     }
 
     #[test]
@@ -107,6 +153,42 @@ mod tests {
         assert!(!written.contains("host = \"\""), "unset fields stay out: {written}");
         assert_eq!(parse("").unwrap(), []);
         assert!(parse("[[snippet]]\nname = 1").is_err());
+    }
+
+    #[test]
+    fn startup_commands_run_where_and_when_they_belong() {
+        let text = "[[snippet]]\nname = \"a\"\ncommand = \"x\"\nautorun = \"login\"\n";
+        let snippet = parse(text).unwrap().remove(0);
+        assert_eq!(snippet.autorun, Some(Autorun::Login));
+        assert!(toml::to_string(&File { snippets: vec![snippet.clone()] }).unwrap().contains("autorun = \"login\""));
+        let local = target(Family::Arch, None);
+        let web1 = target(Family::Debian, Some("web1"));
+        assert!(!snippet.runs_at_start(false, &local), "login: never in a local shell");
+        assert!(snippet.runs_at_start(true, &web1));
+        let shell = Snippet { autorun: Some(Autorun::Shell), ..snippet.clone() };
+        assert!(shell.runs_at_start(false, &local) && shell.runs_at_start(true, &web1));
+        let bound = Snippet { host: Some("web1".into()), ..shell };
+        assert!(!bound.runs_at_start(false, &local) && bound.runs_at_start(true, &web1));
+        let button = Snippet { autorun: None, ..snippet };
+        assert!(!button.runs_at_start(true, &web1));
+        assert!(parse("[[snippet]]\nname = \"a\"\ncommand = \"x\"\nautorun = \"boot\"\n").is_err());
+        let hidden = parse("[[snippet]]\nname = \"a\"\ncommand = \"x\"\nhidden = true\n").unwrap().remove(0);
+        assert!(hidden.hidden);
+        let written = toml::to_string(&File { snippets: vec![Snippet { hidden: false, ..hidden }] }).unwrap();
+        assert!(!written.contains("hidden"), "{written}");
+    }
+
+    #[test]
+    fn local_ones_stay_out_of_ssh_terminals() {
+        let local = parse("[[snippet]]\nname = \"a\"\ncommand = \"x\"\nlocal = true\n").unwrap().remove(0);
+        assert!(local.applies(&target(Family::Arch, None)));
+        assert!(!local.applies(&target(Family::Arch, Some("web1"))));
+        // Written by hand next to a host: the host counts.
+        let both = Snippet { host: Some("web1".into()), ..local.clone() };
+        assert!(both.applies(&target(Family::Arch, Some("web1"))) && !both.applies(&target(Family::Arch, None)));
+        let shell = Snippet { autorun: Some(Autorun::Shell), ..local };
+        assert!(shell.runs_at_start(false, &target(Family::Arch, None)));
+        assert!(!shell.runs_at_start(true, &target(Family::Arch, Some("web1"))));
     }
 
     #[test]

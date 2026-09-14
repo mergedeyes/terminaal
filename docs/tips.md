@@ -10,6 +10,12 @@
   and turn off **Show sidebar** under Settings → General for future starts.
 - **Presenting or pairing?** <kbd>Ctrl</kbd>+<kbd>+</kbd> zooms temporarily;
   <kbd>Ctrl</kbd>+<kbd>0</kbd> goes back. Nothing is saved.
+- **A terminal one key away:** bind `terminaal --quake` to <kbd>F12</kbd> in
+  your desktop's shortcut settings ([The drop-down window](guides/drop-down-window.md)).
+  Keep a split with `htop` or logs in it, since it keeps running while hidden.
+- **Keep your tabs for tomorrow:** close the window, not the last tab.
+  Terminaal opens the same tabs, splits and folders at the next start
+  ([Restoring the last session](guides/sessions.md)).
 - **Launcher shortcuts:** make desktop entries or scripts with
   `terminaal --connect web1` for servers you open every day.
 

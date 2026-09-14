@@ -21,8 +21,8 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::NamedColor;
 use arboard::Clipboard;
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition};
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::wayland::WindowAttributesExtWayland;
@@ -55,7 +55,9 @@ use crate::commands::{System, Target};
 use crate::config::{self, Config, FontSlot, Setting};
 use crate::i18n::{self, t};
 use crate::gpu::GpuState;
-use crate::input;
+use crate::quake::layer::{Layer, LayerEvent};
+use crate::window::{AppWindow, LayerWindow};
+use crate::input::{self, KeyInput};
 use crate::panes::{self, Axis, Direction, Divider};
 use crate::render::grid::{self, CursorStyle, GridText, PaneText};
 use crate::render::palette::{to_linear, Palette};
@@ -67,9 +69,10 @@ use crate::theme::{Theme, Themes};
 use crate::ui::theme::FontFace;
 use crate::blur::Blur;
 use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
-use crate::shells::{self, launch, InstalledShell};
+use crate::shells::{self, launch, InstalledShell, ShellKind};
 use crate::shortcuts::{Action, KeyCombo, Keymap};
-use crate::ssh::SshTarget;
+use crate::session::{self, SavedPane, SavedTab, Session};
+use crate::ssh::{Catalog, SshTarget};
 use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
 use crate::terminal::{links, prompts};
@@ -89,6 +92,19 @@ use crate::ui::UiLayer;
 /// shell is up and the user may already be reading or typing.
 const SPLASH_MAX_WAIT: Duration = Duration::from_millis(750);
 
+/// Startup commands (`snippets::Autorun`) go in once the shell has been
+/// quiet this long after its first output -- for shells that don't mark
+/// their prompt.
+const STARTUP_QUIET: Duration = Duration::from_millis(500);
+/// ... or after this long without any output, or without the prompt mark
+/// a shell with integration was expected to send.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// The session is written this long after the first change since the last
+/// write -- a divider being dragged or tabs flicked through shouldn't mean
+/// a write each.
+const SESSION_SAVE_DELAY: Duration = Duration::from_secs(2);
+
 /// Events routed through winit's event loop from other threads -- one
 /// PTY-reader thread per pane, all feeding the same `EventLoopProxy`. The
 /// `usize` is the originating pane's id (see `terminal::listener`).
@@ -103,6 +119,8 @@ pub enum UserEvent {
     Shell(usize, ShellEvent),
     /// A files tab's SFTP session has something new to show.
     Files,
+    /// `terminaal --quake` ran again: show or hide the drop-down window.
+    QuakeToggle,
 }
 
 pub struct App {
@@ -111,12 +129,19 @@ pub struct App {
     /// Open the first tab as this SSH connection instead of a local shell
     /// (`--connect`, see `main.rs`).
     connect: Option<SshTarget>,
+    /// This is the drop-down Terminaal (`--quake`), toggled over this.
+    quake: Option<crate::quake::Toggle>,
     state: Option<AppState>,
 }
 
 impl App {
-    pub fn new(proxy: EventLoopProxy<UserEvent>, config: Config, connect: Option<SshTarget>) -> Self {
-        Self { proxy, config, connect, state: None }
+    pub fn new(
+        proxy: EventLoopProxy<UserEvent>,
+        config: Config,
+        connect: Option<SshTarget>,
+        quake: Option<crate::quake::Toggle>,
+    ) -> Self {
+        Self { proxy, config, connect, quake, state: None }
     }
 }
 
@@ -142,6 +167,8 @@ enum TabContent {
 struct FilesTab {
     /// The pane whose connection it uses; sudo commands run in its terminal.
     pane: usize,
+    /// The host's name in the sidebar, for the session.
+    host_name: String,
     /// Host, port and user: another terminal connected with these can take
     /// over once the pane is gone.
     login: (String, u16, String),
@@ -268,8 +295,16 @@ struct Pane {
     program_title: Option<String>,
     /// Working directory the shell reported (OSC 7): host and path.
     cwd: Option<(String, PathBuf)>,
+    /// The directory it started in, for the session while the shell
+    /// hasn't reported one.
+    start_cwd: Option<PathBuf>,
     /// When the running command started (OSC 133;C).
     command_started: Option<Instant>,
+    /// Startup commands wait for this shell to be ready.
+    startup: Option<Startup>,
+    /// The SSH connection whose shell got its startup commands (see
+    /// `Opener::connection`); a new one gets them again.
+    startup_connection: u64,
     /// Takes part in the broadcast: input typed into one such terminal
     /// goes to all of them.
     broadcast: bool,
@@ -277,6 +312,30 @@ struct Pane {
     /// ([`AppState::layout_panes`]).
     rect: LabelRect,
     size: GridSize,
+}
+
+/// A terminal's startup commands, waiting for its shell.
+struct Startup {
+    since: Instant,
+    /// Last output since.
+    output_at: Option<Instant>,
+    /// The shell marks its prompt (Terminaal's integration): wait for that
+    /// rather than for quiet.
+    expects_prompt: bool,
+}
+
+impl Startup {
+    fn new(expects_prompt: bool) -> Self {
+        Self { since: Instant::now(), output_at: None, expects_prompt }
+    }
+
+    /// When they go in unless a prompt comes first.
+    fn due(&self) -> Instant {
+        match self.output_at {
+            Some(at) if !self.expects_prompt => at + STARTUP_QUIET,
+            _ => self.since + STARTUP_TIMEOUT,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -319,6 +378,17 @@ enum Drag {
 const MIN_PANE_COLS: usize = 8;
 const MIN_PANE_ROWS: usize = 2;
 
+/// This Terminaal owns the session (`crate::session`): it restored it and
+/// keeps the file up to date.
+struct SessionStore {
+    _lock: session::Lock,
+    path: PathBuf,
+    /// As last written or read: an unchanged session isn't written again.
+    saved: Session,
+    /// When to write what changed.
+    save_at: Option<Instant>,
+}
+
 /// Where a [`SidebarAction`] came from; its outcome is reported there.
 #[derive(Clone, Copy)]
 enum Origin {
@@ -330,7 +400,7 @@ struct AppState {
     /// Blur behind the window where the compositor has ext-background-effect.
     /// Declared first, so it goes before the window whose surface it borrows.
     blur: Option<Blur>,
-    window: Arc<Window>,
+    window: AppWindow,
     gpu: GpuState,
     quad_renderer: QuadRenderer,
     text: TextRendererState,
@@ -405,6 +475,8 @@ struct AppState {
     tabs: Vec<Tab>,
     active_tab: usize,
     next_pane_id: usize,
+    /// `None` when another Terminaal owns the session, or with `--connect`.
+    session: Option<SessionStore>,
     /// The last tab closed: the event loop ends before anything else.
     exiting: bool,
 
@@ -422,13 +494,16 @@ struct AppState {
 
 impl AppState {
     fn new(
-        window: Arc<Window>,
+        window: AppWindow,
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<UserEvent>,
         config: Config,
         connect: Option<SshTarget>,
+        quake: bool,
     ) -> Self {
-        let gpu = pollster::block_on(GpuState::new(window.clone(), event_loop));
+        let size = window.inner_size();
+        let target = window.gpu_target().expect("the window is up at start");
+        let gpu = pollster::block_on(GpuState::new(target, (size.width, size.height), event_loop));
         let themes = Themes::load();
         let theme = themes.get(config.theme.as_deref()).clone();
 
@@ -448,12 +523,11 @@ impl AppState {
         );
         let fonts = text.families();
         let quad_renderer = QuadRenderer::new(&gpu.device, gpu.format);
-        let ui = UiLayer::new(&window, &gpu.device, gpu.format, &theme.ui);
+        let ui = UiLayer::new(window.winit().map(|window| &**window), &gpu.device, gpu.format, &theme.ui);
 
         let tab_bar_height = tab_bar_height(&config, text.cell, scale_factor);
         // A first guess; the first UI pass measures the real width.
         let sidebar_width = if config.sidebar { config.sidebar_width * scale_factor } else { 0.0 };
-        let size = window.inner_size();
 
         quad_renderer.resize(&gpu.queue, size.width as f32, size.height as f32);
 
@@ -462,14 +536,16 @@ impl AppState {
             .ok();
 
         let next_blink = Instant::now() + Duration::from_millis(config.cursor_blink_interval_ms);
-        let blur = Blur::new(&window);
-        let x11 = matches!(
-            window.display_handle().map(|handle| handle.as_raw()),
-            Ok(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_))
-        );
+        let blur = layer_blur(&window).or_else(|| window.winit().and_then(|window| Blur::new(window)));
+        let x11 = window.winit().is_some_and(|window| {
+            matches!(
+                window.display_handle().map(|handle| handle.as_raw()),
+                Ok(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_))
+            )
+        });
         let palette = Palette::new(&theme.terminal);
         let default_shell = shells::default_shell(config.shell.as_deref());
-        let splash = if config.splash { spawn_splash_decoder(proxy.clone(), scale_factor) } else { None };
+        let splash = if config.splash && !quake { spawn_splash_decoder(proxy.clone(), scale_factor) } else { None };
 
         let ui_colors = theme.ui;
         let mut state = Self {
@@ -515,6 +591,7 @@ impl AppState {
             tabs: Vec::new(),
             active_tab: 0,
             next_pane_id: 0,
+            session: None,
             exiting: false,
             quads: Vec::new(),
             modifiers: ModifiersState::empty(),
@@ -535,8 +612,31 @@ impl AppState {
         // single-session version had. Later tabs (Ctrl+Shift+T) are
         // handled leniently instead; see `add_tab`.
         match connect {
+            // Started for that one connection: the session stays for a
+            // Terminaal started plainly.
             Some(target) => state.add_ssh_tab(&target).expect("failed to start SSH connection"),
-            None => state.add_tab(&default_shell).expect("failed to spawn initial shell"),
+            None => {
+                // The drop-down Terminaal keeps tabs of its own.
+                let name = if quake { "quake-session" } else { "session" };
+                state.session = session::dir().and_then(|dir| {
+                    let _lock = session::Lock::acquire(&dir, name)?;
+                    let path = dir.join(format!("{name}.toml"));
+                    Some(SessionStore { _lock, path, saved: Session::default(), save_at: None })
+                });
+                let saved = match &mut state.session {
+                    Some(store) if state.config.restore_session => {
+                        store.saved = Session::load(&store.path).unwrap_or_default();
+                        Some(store.saved.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(saved) = saved {
+                    state.restore_session(saved);
+                }
+                if state.tabs.is_empty() {
+                    state.add_tab(&default_shell).expect("failed to spawn initial shell");
+                }
+            }
         }
         state
     }
@@ -574,8 +674,15 @@ impl AppState {
         let (terminal, title) = match &origin {
             PaneOrigin::Shell(shell) => {
                 let launch = launch::launch(shell);
-                let terminal =
-                    TerminalSession::spawn_local_shell(listener, &launch, cwd, size, cell.width, cell.height, scrollback)?;
+                let terminal = TerminalSession::spawn_local_shell(
+                    listener,
+                    &launch,
+                    cwd.clone(),
+                    size,
+                    cell.width,
+                    cell.height,
+                    scrollback,
+                )?;
                 (terminal, shell.name.clone())
             }
             PaneOrigin::Ssh(target) => {
@@ -587,6 +694,12 @@ impl AppState {
                 (terminal, target.label.clone())
             }
         };
+        let start_cwd = cwd.filter(|_| matches!(origin, PaneOrigin::Shell(_)));
+        // SSH terminals wait for their login instead (`pane_output`).
+        let startup = match &origin {
+            PaneOrigin::Shell(shell) => Some(Startup::new(shell.kind != ShellKind::Other)),
+            PaneOrigin::Ssh(_) => None,
+        };
         Ok(Pane {
             id,
             terminal,
@@ -595,7 +708,10 @@ impl AppState {
             default_title: title,
             program_title: None,
             cwd: None,
+            start_cwd,
             command_started: None,
+            startup,
+            startup_connection: 0,
             broadcast: false,
             rect,
             size,
@@ -621,6 +737,7 @@ impl AppState {
     /// is showing -- and a new shell tab is there to type into. Recording
     /// a shortcut ends with leaving the settings tab.
     fn switched_tab(&mut self) {
+        self.session_changed();
         self.settings.stop_recording();
         self.give_keyboard_to_terminal();
         self.switched_pane();
@@ -651,9 +768,12 @@ impl AppState {
         }
         self.tabs.remove(idx);
         if self.tabs.is_empty() {
+            // Closed on purpose: nothing to open again next time.
+            self.save_session();
             self.exiting = true;
             return;
         }
+        self.session_changed();
         let was_active = idx == self.active_tab;
         if self.active_tab > idx {
             self.active_tab -= 1;
@@ -739,25 +859,42 @@ impl AppState {
     /// opened otherwise. Not for a local shell or the settings.
     fn open_files(&mut self) -> bool {
         let Some(pane) = self.current_pane() else { return false };
-        let (Some(opener), PaneOrigin::Ssh(target)) = (pane.terminal.opener(), &pane.origin) else { return false };
-        let (id, label) = (pane.id, pane.default_title.clone());
-        let login = login_of(target);
+        if !matches!(pane.origin, PaneOrigin::Ssh(_)) || pane.terminal.opener().is_none() {
+            return false;
+        }
+        let id = pane.id;
         if let Some(idx) = self.tabs.iter().position(|tab| tab.files().is_some_and(|files| files.pane == id)) {
             self.select_tab(idx);
             return true;
         }
-        let proxy = self.proxy.clone();
-        let wake = Arc::new(move || drop(proxy.send_event(UserEvent::Files)));
-        match Remote::spawn(Arc::new(opener), &label, wake) {
-            Ok(remote) => {
-                let panel = FilesPanel::new();
-                let mut files = FilesTab { pane: id, login, label, remote, panel, title: String::new(), attention: false };
-                files.refresh_title();
-                self.push_tab(TabContent::Files(Box::new(files)));
-            }
-            Err(err) => log::error!("failed to start SFTP for {label}: {err}"),
+        if let Some(files) = self.files_tab(pane) {
+            self.push_tab(TabContent::Files(Box::new(files)));
         }
         true
+    }
+
+    /// A new files tab over `pane`'s connection; `None` for a local shell,
+    /// or if its session didn't start.
+    fn files_tab(&self, pane: &Pane) -> Option<FilesTab> {
+        let (Some(opener), PaneOrigin::Ssh(target)) = (pane.terminal.opener(), &pane.origin) else { return None };
+        let label = pane.default_title.clone();
+        let proxy = self.proxy.clone();
+        let wake = Arc::new(move || drop(proxy.send_event(UserEvent::Files)));
+        let remote = Remote::spawn(Arc::new(opener), &label, wake)
+            .inspect_err(|err| log::error!("failed to start SFTP for {label}: {err}"))
+            .ok()?;
+        let mut files = FilesTab {
+            pane: pane.id,
+            host_name: target.name.clone(),
+            login: login_of(target),
+            label,
+            remote,
+            panel: FilesPanel::new(),
+            title: String::new(),
+            attention: false,
+        };
+        files.refresh_title();
+        Some(files)
     }
 
     /// A terminal logged in to `login` is there: files tabs of that login
@@ -799,6 +936,8 @@ impl AppState {
         if nudge {
             self.window.request_user_attention(Some(UserAttentionType::Informational));
         }
+        // It may show another folder.
+        self.session_changed();
         self.update_window_title();
         self.window.request_redraw();
     }
@@ -854,6 +993,324 @@ impl AppState {
             }
         }
         self.window.request_redraw();
+    }
+
+    /// `terminaal --quake` again: hide the drop-down window, or bring it
+    /// back. Up but without the keyboard (another window was clicked while
+    /// it stays up), it comes back with the keyboard instead: a layer
+    /// surface can't ask for the focus, a new one gets it.
+    fn toggle_quake(&mut self) {
+        match &self.window {
+            AppWindow::Layer(window) => {
+                let (shown, focused) = (window.layer.borrow().is_shown(), self.focused);
+                if shown {
+                    self.hide_quake();
+                }
+                if !shown || !focused {
+                    self.show_quake();
+                }
+            }
+            // No layer shell: a plain window that shows and hides.
+            AppWindow::Winit(window) => {
+                let show = !window.is_visible().unwrap_or(true);
+                window.set_visible(show);
+                if show {
+                    window.focus_window();
+                }
+            }
+        }
+    }
+
+    /// Take the drop-down window away. Its terminals run on.
+    fn hide_quake(&mut self) {
+        let AppWindow::Layer(window) = &self.window else { return };
+        // Everything on the surface goes before it.
+        if let Some(mut blur) = self.blur.take() {
+            blur.set(false, (0, 0));
+        }
+        self.gpu.surface = None;
+        window.layer.borrow_mut().hide();
+        window.redraw.set(false);
+        self.focused = false;
+        self.close_context_menu();
+        self.drag = None;
+    }
+
+    fn show_quake(&mut self) {
+        let AppWindow::Layer(window) = &self.window else { return };
+        let Some((_, (width, height), scale)) = window.layer.borrow_mut().show(self.config.quake_height()) else { return };
+        let rescaled = scale != window.scale.get();
+        window.size.set(PhysicalSize::new(width, height));
+        window.scale.set(scale);
+        let Some(target) = self.window.gpu_target() else { return };
+        self.gpu.set_target(target, (width, height));
+        self.quad_renderer.resize(&self.gpu.queue, width as f32, height as f32);
+        self.blur = layer_blur(&self.window);
+        // Blur and translucency go on the new surface.
+        self.blurred = false;
+        self.apply_transparency();
+        if rescaled {
+            self.update_font();
+        }
+        self.relayout();
+        self.window.request_redraw();
+    }
+
+    /// Wayland events of the drop-down window, and a frame if one is due.
+    fn pump_layer(&mut self) {
+        let AppWindow::Layer(window) = &self.window else { return };
+        let events = window.layer.borrow_mut().dispatch();
+        for event in events {
+            self.layer_event(event);
+            if self.exiting {
+                return;
+            }
+        }
+        if let AppWindow::Layer(window) = &self.window
+            && window.redraw.replace(false)
+        {
+            self.redraw();
+        }
+    }
+
+    /// What `window_event` does for winit's events, for the layer surface's.
+    fn layer_event(&mut self, event: LayerEvent) {
+        match &event {
+            LayerEvent::Button(_, ElementState::Pressed) if self.dismiss_splash() => return,
+            LayerEvent::Key(key) if key.state == ElementState::Pressed => drop(self.dismiss_splash()),
+            _ => {}
+        }
+        let for_ui = match &event {
+            LayerEvent::Key(key) => key.state == ElementState::Released || self.ui_has_keyboard(),
+            _ => true,
+        };
+        let clipboard = &mut self.clipboard;
+        if for_ui && self.ui.on_layer_event(&event, || clipboard.as_mut().and_then(|c| c.get_text().ok())) {
+            let relevant = match &event {
+                LayerEvent::PointerMoved(position) => {
+                    self.over_ui((position.x, position.y)) || self.over_ui(self.last_cursor_pos)
+                }
+                _ => true,
+            };
+            if relevant {
+                self.window.request_redraw();
+            }
+        }
+        match event {
+            LayerEvent::Resized { width, height, scale } => {
+                let AppWindow::Layer(window) = &self.window else { return };
+                let rescaled = scale != window.scale.get();
+                window.size.set(PhysicalSize::new(width, height));
+                window.scale.set(scale);
+                if rescaled {
+                    self.update_font();
+                }
+                self.resize(width, height);
+            }
+            LayerEvent::Closed => self.hide_quake(),
+            LayerEvent::Focused(focused) => {
+                self.focused = focused;
+                if !focused && self.config.quake_hide_on_unfocus {
+                    self.hide_quake();
+                }
+            }
+            LayerEvent::Modifiers(modifiers) => {
+                self.modifiers = modifiers;
+                self.update_link();
+            }
+            LayerEvent::Key(key) => self.handle_keyboard_input(key),
+            LayerEvent::PointerMoved(position) => self.on_cursor_moved(position),
+            LayerEvent::PointerLeft => {
+                self.set_hovered(None);
+                if self.drag.is_none() {
+                    self.set_divider_hovered(None);
+                }
+            }
+            LayerEvent::Button(button, state) => self.on_mouse_input(button, state),
+            LayerEvent::Wheel(delta) => self.on_mouse_wheel(delta),
+        }
+    }
+
+    /// Something the session keeps changed: write it soon.
+    fn session_changed(&mut self) {
+        if let Some(store) = &mut self.session
+            && store.save_at.is_none()
+        {
+            store.save_at = Some(Instant::now() + SESSION_SAVE_DELAY);
+        }
+    }
+
+    /// Write the session now if it differs from the file -- unless
+    /// restoring is switched off.
+    fn save_session(&mut self) {
+        if !self.config.restore_session {
+            return;
+        }
+        let current = self.session_snapshot();
+        let Some(store) = &mut self.session else { return };
+        store.save_at = None;
+        if current == store.saved {
+            return;
+        }
+        match current.save(&store.path) {
+            Ok(()) => store.saved = current,
+            Err(err) => log::warn!("failed to save session to {}: {err}", store.path.display()),
+        }
+    }
+
+    /// The tabs as the session file keeps them.
+    fn session_snapshot(&self) -> Session {
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| match &tab.content {
+                TabContent::Terminals(panes) => {
+                    let order = panes.layout.ids();
+                    let index = |id: usize| order.iter().position(|&other| other == id).unwrap_or(0);
+                    let saved = order
+                        .iter()
+                        .filter_map(|&id| panes.panes.iter().find(|pane| pane.id == id))
+                        .map(|pane| match &pane.origin {
+                            PaneOrigin::Shell(shell) => SavedPane::Shell {
+                                shell: shell.path.clone(),
+                                cwd: pane.local_cwd(&self.hostname).or_else(|| pane.start_cwd.clone()),
+                            },
+                            PaneOrigin::Ssh(target) => SavedPane::ssh(target),
+                        })
+                        .collect();
+                    let mut layout = panes.layout.clone();
+                    layout.map_ids(&index);
+                    SavedTab::Terminals { layout, focus: index(panes.focus), zoomed: panes.zoomed, panes: saved }
+                }
+                TabContent::Settings { .. } => SavedTab::Settings,
+                TabContent::Files(files) => SavedTab::Files {
+                    host: files.host_name.clone(),
+                    user: files.login.2.clone(),
+                    dir: files.remote.state().dir.clone(),
+                },
+            })
+            .collect();
+        Session { active: self.active_tab, tabs }
+    }
+
+    /// Open the tabs of a saved session. What can't be opened any more --
+    /// a host that's gone, a files tab without its terminal -- is left out.
+    fn restore_session(&mut self, saved: Session) {
+        let mut catalog = None;
+        let mut tabs: Vec<Tab> = Vec::new();
+        let mut active = 0;
+        let mut files = Vec::new();
+        for (idx, tab) in saved.tabs.into_iter().enumerate() {
+            if idx == saved.active {
+                active = tabs.len();
+            }
+            let content = match tab {
+                SavedTab::Terminals { layout, focus, zoomed, panes } => {
+                    match self.restore_panes(&layout, focus, zoomed, panes, &mut catalog) {
+                        Some(panes) => TabContent::Terminals(panes),
+                        None => continue,
+                    }
+                }
+                SavedTab::Settings if !tabs.iter().any(Tab::is_settings) => {
+                    TabContent::Settings { title: t!("sidebar-settings") }
+                }
+                SavedTab::Settings => continue,
+                // Once all terminals are there: the one it goes over may
+                // come later.
+                SavedTab::Files { host, user, dir } => {
+                    files.push((tabs.len(), idx == saved.active, host, user, dir));
+                    continue;
+                }
+            };
+            tabs.push(Tab { content });
+        }
+        // From the back, so the positions in front stay right.
+        for (at, was_active, host, user, dir) in files.into_iter().rev() {
+            let pane = tabs.iter().filter_map(Tab::panes).flat_map(|panes| &panes.panes).find(|pane| {
+                matches!(&pane.origin, PaneOrigin::Ssh(target) if target.name == host && target.user == user)
+            });
+            let Some(files) = pane.and_then(|pane| self.files_tab(pane)) else {
+                log::info!("session: no terminal for the files tab of {user}@{host}");
+                continue;
+            };
+            if !dir.is_empty() {
+                files.remote.send(SftpCommand::List(Some(dir)));
+            }
+            if was_active {
+                active = at;
+            } else if at <= active {
+                active += 1;
+            }
+            tabs.insert(at, Tab { content: TabContent::Files(Box::new(files)) });
+        }
+        if tabs.is_empty() {
+            return;
+        }
+        self.tabs = tabs;
+        self.active_tab = active.min(self.tabs.len() - 1);
+        self.relayout();
+        self.switched_tab();
+    }
+
+    /// A saved tab's terminals, started at their places in its layout.
+    /// Those that can't start drop out of it; `None` if none is left.
+    fn restore_panes(
+        &mut self,
+        layout: &panes::Node,
+        focus: usize,
+        zoomed: bool,
+        saved: Vec<SavedPane>,
+        catalog: &mut Option<Result<Catalog, String>>,
+    ) -> Option<Panes> {
+        let Some(mut layout) = SavedTab::checked_layout(layout, saved.len()) else {
+            log::warn!("session: tab with a broken layout left out");
+            return None;
+        };
+        let default_shell = self.default_shell();
+        let mut origins = Vec::with_capacity(saved.len());
+        for (idx, pane) in saved.into_iter().enumerate() {
+            let origin = match pane {
+                SavedPane::Shell { shell, cwd } => {
+                    let shell = if shell.is_file() { InstalledShell::new(shell) } else { default_shell.clone() };
+                    Some((PaneOrigin::Shell(shell), cwd.filter(|cwd| cwd.is_dir())))
+                }
+                SavedPane::Ssh { host, user } => {
+                    let catalog = catalog.get_or_insert_with(Catalog::load);
+                    let target = catalog.as_ref().map_err(Clone::clone).and_then(|catalog| session::ssh_target(catalog, &host, &user));
+                    target
+                        .inspect_err(|err| log::warn!("session: can't connect to {user}@{host} again: {err}"))
+                        .ok()
+                        .map(|target| (PaneOrigin::Ssh(Box::new(target)), None))
+                }
+            };
+            if origin.is_none() && !layout.remove(idx) {
+                return None;
+            }
+            origins.push(origin);
+        }
+        let mut panes: Vec<Pane> = Vec::new();
+        let mut ids = vec![usize::MAX; origins.len()];
+        for (idx, rect) in layout.clone().layout(self.console_rect(), self.divider_gap()) {
+            let Some((origin, cwd)) = origins[idx].take() else { continue };
+            match self.spawn_pane(origin, cwd, rect) {
+                Ok(pane) => {
+                    ids[idx] = pane.id;
+                    panes.push(pane);
+                }
+                Err(err) => {
+                    log::error!("session: failed to open a pane: {err}");
+                    if !layout.remove(idx) && panes.is_empty() {
+                        return None;
+                    }
+                }
+            }
+        }
+        if panes.is_empty() {
+            return None;
+        }
+        layout.map_ids(&|idx| ids[idx]);
+        let focus = ids.get(focus).copied().filter(|&id| id != usize::MAX).unwrap_or(panes[0].id);
+        Some(Panes { layout, panes, focus, zoomed })
     }
 
     /// Give the keyboard to the pane with this id in the active tab.
@@ -977,13 +1434,82 @@ impl AppState {
     /// tab's system, with the configured one winning for a local shell.
     /// `None` while the settings tab is showing -- no shell to send to.
     fn command_target(&self) -> Option<Target> {
-        let mut target = self.current_terminal()?.command_target();
+        let mut target = self.target_of(self.current_terminal()?);
         target.terminals = self.input_panes().len();
+        Some(target)
+    }
+
+    /// The system and host of `terminal`, with the configured system
+    /// winning for a local shell.
+    fn target_of(&self, terminal: &TerminalSession) -> Target {
+        let mut target = terminal.command_target();
         if target.host.is_none() && let Some(family) = self.config.system() {
-            target.system = Some(System { family, root: target.system.is_some_and(|system| system.root) });
+            target.system = Some(System { family, ..target.system.unwrap_or_default() });
             target.configured = true;
         }
-        Some(target)
+        target
+    }
+
+    /// A pane printed something: SSH terminals that just logged in start
+    /// waiting for their startup commands, and waiting ones note the time.
+    fn pane_output(&mut self, at: (usize, usize)) {
+        let Some(pane) = self.pane_mut(at) else { return };
+        if matches!(pane.origin, PaneOrigin::Ssh(_)) {
+            let connection = pane.terminal.opener().map_or(0, |opener| opener.connection());
+            if connection != 0 && connection != pane.startup_connection {
+                pane.startup_connection = connection;
+                pane.startup = Some(Startup::new(false));
+            }
+        }
+        if let Some(startup) = &mut pane.startup {
+            startup.output_at = Some(Instant::now());
+        }
+    }
+
+    /// When the next waiting startup commands are due.
+    fn startup_due(&self) -> Option<Instant> {
+        self.tabs.iter().filter_map(Tab::panes).flat_map(|panes| &panes.panes).filter_map(|pane| Some(pane.startup.as_ref()?.due())).min()
+    }
+
+    /// Run the startup commands that are due.
+    fn run_due_startups(&mut self) {
+        let now = Instant::now();
+        let due: Vec<(usize, usize)> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(tab, t)| Some((tab, t.panes()?)))
+            .flat_map(|(tab, panes)| {
+                panes.panes.iter().enumerate().filter(|(_, pane)| pane.startup.as_ref().is_some_and(|s| s.due() <= now)).map(move |(idx, _)| (tab, idx))
+            })
+            .collect();
+        for at in due {
+            self.run_startup(at);
+        }
+    }
+
+    /// The shell at `at` is ready: in go the snippets that run by
+    /// themselves there.
+    fn run_startup(&mut self, (tab, idx): (usize, usize)) {
+        let Some(pane) = self.tabs.get_mut(tab).and_then(Tab::panes_mut).and_then(|panes| panes.panes.get_mut(idx)) else { return };
+        if pane.startup.take().is_none() {
+            return;
+        }
+        let pane = &self.tabs[tab].panes().expect("found above").panes[idx];
+        let ssh = matches!(pane.origin, PaneOrigin::Ssh(_));
+        let target = self.target_of(&pane.terminal);
+        let lines: Vec<&str> =
+            self.sidebar.snippets().iter().filter(|snippet| snippet.runs_at_start(ssh, &target)).map(|s| s.command.as_str()).collect();
+        if lines.is_empty() {
+            return;
+        }
+        log::info!("running {} startup command(s) in {}", lines.len(), pane.default_title);
+        let mode = *pane.terminal.term.lock().mode();
+        for line in lines {
+            if let Some(bytes) = input::paste_to_bytes(line, mode, true) {
+                pane.terminal.send_input(bytes);
+            }
+        }
     }
 
     /// A built-in command or a snippet, sent like a paste (several lines
@@ -1209,7 +1735,19 @@ impl AppState {
 
     /// Earliest moment something needs a redraw without new input.
     fn next_wakeup(&self) -> Option<Instant> {
-        [self.config.cursor_blink.then_some(self.next_blink), self.ui_repaint_at, self.splash_redraw_at]
+        let save_session = self.session.as_ref().and_then(|store| store.save_at);
+        let key_repeat = match &self.window {
+            AppWindow::Layer(window) => window.layer.borrow().next_repeat(),
+            AppWindow::Winit(_) => None,
+        };
+        [
+            self.config.cursor_blink.then_some(self.next_blink),
+            self.ui_repaint_at,
+            self.splash_redraw_at,
+            save_session,
+            key_repeat,
+            self.startup_due(),
+        ]
             .into_iter()
             .flatten()
             .min()
@@ -1337,7 +1875,7 @@ impl AppState {
         }
     }
 
-    fn handle_keyboard_input(&mut self, event: KeyEvent) {
+    fn handle_keyboard_input(&mut self, event: KeyInput) {
         if event.state != ElementState::Pressed {
             return;
         }
@@ -1468,7 +2006,13 @@ impl AppState {
                 if focused {
                     self.update_window_title();
                 }
+                self.session_changed();
                 self.window.request_redraw();
+            }
+            ShellEvent::Prompt => {
+                if pane.startup.is_some() {
+                    self.run_startup(at);
+                }
             }
             ShellEvent::CommandStarted => pane.command_started = Some(Instant::now()),
             ShellEvent::CommandFinished { exit } => {
@@ -1499,7 +2043,7 @@ impl AppState {
     /// that n/N jump, / or Backspace types again. Escape closes the bar
     /// either way. `false` for any other key after typing: it closes the
     /// bar and goes on to the terminal.
-    fn search_key(&mut self, event: &KeyEvent) -> bool {
+    fn search_key(&mut self, event: &KeyInput) -> bool {
         let Some(term) = self.current_terminal().map(|terminal| terminal.term.clone()) else { return false };
         let Some(search) = self.search.as_mut() else { return false };
         let mut term = term.lock();
@@ -1537,6 +2081,7 @@ impl AppState {
         let Some(to) = self.active_tab.checked_add_signed(by).filter(|&to| to < self.tabs.len()) else { return };
         self.tabs.swap(self.active_tab, to);
         self.active_tab = to;
+        self.session_changed();
         self.update_window_title();
         self.window.request_redraw();
     }
@@ -1552,7 +2097,7 @@ impl AppState {
     /// A key pressed while the settings page records a shortcut: bound to
     /// the action, unless it's taken, would swallow typing, or is Escape
     /// (cancels).
-    fn record_shortcut(&mut self, event: &KeyEvent) {
+    fn record_shortcut(&mut self, event: &KeyInput) {
         // A modifier on its own is only the start of the combination.
         let Some(combo) = KeyCombo::from_event(event, self.modifiers) else { return };
         let Some(action) = self.settings.stop_recording() else { return };
@@ -1782,6 +2327,8 @@ impl AppState {
     /// [`AppState::relayout`]; with `force`, every shell hears about its
     /// size -- the cell size changed even where columns and rows didn't.
     fn layout_panes(&mut self, force: bool) {
+        // Splits, closed panes, zoom, a dragged divider.
+        self.session_changed();
         let (area, gap, padding, cell) = (self.console_rect(), self.divider_gap(), self.padding(), self.text.cell);
         // All tabs share the one window, so all of them -- not just the
         // active one -- need to know about the new size, or a background
@@ -2122,6 +2669,24 @@ impl AppState {
             Setting::SidebarWidth(_) => {}
             Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
             Setting::NotifyAfter(_) => {}
+            Setting::QuakeHeight(percent) => {
+                if let AppWindow::Layer(window) = &self.window {
+                    window.layer.borrow_mut().set_height(percent);
+                }
+            }
+            Setting::QuakeHideOnUnfocus(_) => {}
+            // Off: the next start opens a fresh tab, so there's nothing to
+            // keep. On: saved from now.
+            Setting::RestoreSession(on) => match &mut self.session {
+                Some(store) if !on => {
+                    store.save_at = None;
+                    store.saved = Session::default();
+                    if let Err(err) = store.saved.save(&store.path) {
+                        log::warn!("failed to remove session {}: {err}", store.path.display());
+                    }
+                }
+                _ => self.session_changed(),
+            },
             Setting::Opacity(_) | Setting::Blur(_) => self.apply_transparency(),
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
@@ -2290,8 +2855,21 @@ impl AppState {
     }
 
     fn redraw(&mut self) {
+        // The drop-down window is hidden.
+        if self.gpu.surface.is_none() {
+            return;
+        }
         let t0 = Instant::now();
         self.run_ui();
+        // What egui wants of the layer surface; egui-winit does it itself.
+        if let Some(text) = self.ui.take_copied()
+            && let Some(clipboard) = &mut self.clipboard
+        {
+            let _ = clipboard.set_text(text);
+        }
+        if let Some(icon) = self.ui.take_cursor() {
+            self.window.set_cursor(icon);
+        }
         let t_ui = Instant::now();
         self.quads.clear();
         self.prompt_labels.clear();
@@ -2391,7 +2969,8 @@ impl AppState {
         // present it like `Success` and only reconfigure afterwards, once
         // `present` has actually consumed the SurfaceTexture. Reconfiguring
         // while it's still alive is what caused an earlier panic.
-        let (frame, needs_reconfigure) = match self.gpu.surface.get_current_texture() {
+        let Some(surface) = &self.gpu.surface else { return };
+        let (frame, needs_reconfigure) = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
@@ -2399,14 +2978,15 @@ impl AppState {
                 return;
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.gpu.surface.configure(&self.gpu.device, &self.gpu.surface_config);
+                self.gpu.configure();
                 self.window.request_redraw();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.gpu.surface =
-                    self.gpu.instance.create_surface(self.window.clone()).expect("recreate wgpu surface");
-                self.gpu.surface.configure(&self.gpu.device, &self.gpu.surface_config);
+                if let Some(target) = self.window.gpu_target() {
+                    let size = (self.gpu.surface_config.width, self.gpu.surface_config.height);
+                    self.gpu.set_target(target, size);
+                }
                 self.window.request_redraw();
                 return;
             }
@@ -2472,7 +3052,7 @@ impl AppState {
         );
 
         if needs_reconfigure {
-            self.gpu.surface.configure(&self.gpu.device, &self.gpu.surface_config);
+            self.gpu.configure();
             self.window.request_redraw();
         }
     }
@@ -2491,6 +3071,31 @@ struct PaneView {
 
 /// Host, port and user of an SSH target: what makes two terminals the same
 /// login for a files tab.
+/// Blur behind the drop-down window's layer surface, while it's up.
+fn layer_blur(window: &AppWindow) -> Option<Blur> {
+    let AppWindow::Layer(layer) = window else { return None };
+    let surface = layer.layer.borrow().surface_ptr()?;
+    // SAFETY: winit's display and our live surface; `hide_quake` drops the
+    // blur before the surface.
+    unsafe { Blur::for_surface(layer.display.as_ptr(), surface) }
+}
+
+/// The drop-down window: a layer surface at the top of the screen, where
+/// the compositor has a layer shell.
+fn quake_layer(event_loop: &ActiveEventLoop, height: f32) -> Option<AppWindow> {
+    let RawDisplayHandle::Wayland(display) = event_loop.display_handle().ok()?.as_raw() else { return None };
+    // SAFETY: winit's display, alive as long as the event loop.
+    let mut layer = unsafe { Layer::new(display.display.as_ptr()) }?;
+    let (_, (width, height), scale) = layer.show(height)?;
+    Some(AppWindow::Layer(Box::new(LayerWindow {
+        layer: std::cell::RefCell::new(layer),
+        display: display.display,
+        size: std::cell::Cell::new(PhysicalSize::new(width, height)),
+        scale: std::cell::Cell::new(scale),
+        redraw: std::cell::Cell::new(true),
+    })))
+}
+
 fn login_of(target: &SshTarget) -> (String, u16, String) {
     (target.host.clone(), target.port, target.user.clone())
 }
@@ -2635,6 +3240,17 @@ impl ApplicationHandler<UserEvent> for App {
         if self.state.is_some() {
             return;
         }
+        let quake = self.quake.take().map(|toggle| {
+            let proxy = self.proxy.clone();
+            toggle.listen(move || drop(proxy.send_event(UserEvent::QuakeToggle)));
+        });
+        if quake.is_some() {
+            if let Some(window) = quake_layer(event_loop, self.config.quake_height()) {
+                self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), None, true));
+                return;
+            }
+            log::warn!("no layer shell: the drop-down Terminaal is a normal window");
+        }
         let attrs = Window::default_attributes()
             .with_inner_size(LogicalSize::new(self.config.default_width, self.config.default_height))
             .with_title("Terminaal")
@@ -2649,8 +3265,23 @@ impl ApplicationHandler<UserEvent> for App {
         // desktop entry, and clicking that never restored a minimized window.
         let attrs = WindowAttributesExtWayland::with_name(attrs, APP_ID, APP_ID);
         let attrs = WindowAttributesExtX11::with_name(attrs, APP_ID, APP_ID);
+        // Without a layer shell the drop-down window can only ask: on top,
+        // along the top edge (X11 takes that, Wayland places it itself).
+        let attrs = match quake.and_then(|()| event_loop.primary_monitor()) {
+            Some(monitor) => {
+                let size = monitor.size();
+                let height = (f64::from(size.height) * f64::from(self.config.quake_height()) / 100.0).round();
+                attrs
+                    .with_decorations(false)
+                    .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
+                    .with_position(monitor.position())
+                    .with_inner_size(PhysicalSize::new(f64::from(size.width), height))
+            }
+            None => attrs,
+        };
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
-        self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), self.connect.take()));
+        let window = AppWindow::Winit(window);
+        self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), self.connect.take(), quake.is_some()));
     }
 
     /// Fires the scheduled wakeups set in `about_to_wait`: flips the
@@ -2681,11 +3312,25 @@ impl ApplicationHandler<UserEvent> for App {
     /// may have scheduled an egui repaint -- so the deadline is set here
     /// rather than in `new_events`.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(state) = &self.state else { return };
+        let Some(state) = &mut self.state else { return };
         if state.exiting {
             return event_loop.exit();
         }
-        event_loop.set_control_flow(state.next_wakeup().map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
+        // winit woke up for whatever came in on the Wayland socket, the
+        // drop-down window's events too.
+        state.pump_layer();
+        if state.exiting {
+            return event_loop.exit();
+        }
+        // Here rather than in `new_events`: busy output never lets the
+        // loop wake for its deadline.
+        if state.session.as_ref().and_then(|store| store.save_at).is_some_and(|at| Instant::now() >= at) {
+            state.save_session();
+        }
+        state.run_due_startups();
+        let redraw_pending = matches!(&state.window, AppWindow::Layer(window) if window.redraw.get() && state.gpu.surface.is_some());
+        let wakeup = if redraw_pending { Some(Instant::now()) } else { state.next_wakeup() };
+        event_loop.set_control_flow(wakeup.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
@@ -2725,7 +3370,10 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Ime(_) => state.ui_has_keyboard(),
             _ => true,
         };
-        if for_ui && state.ui.on_window_event(&state.window, &event).repaint {
+        if for_ui
+            && let Some(window) = state.window.winit()
+            && state.ui.on_window_event(window, &event)
+        {
             let relevant = match &event {
                 WindowEvent::CursorMoved { position, .. } => {
                     state.over_ui((position.x, position.y)) || state.over_ui(state.last_cursor_pos)
@@ -2739,14 +3387,17 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                state.save_session();
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::Focused(focused) => state.focused = focused,
             WindowEvent::ModifiersChanged(modifiers) => {
                 state.modifiers = modifiers.state();
                 state.update_link();
             }
-            WindowEvent::KeyboardInput { event, .. } => state.handle_keyboard_input(event),
+            WindowEvent::KeyboardInput { event, .. } => state.handle_keyboard_input(KeyInput::from(&event)),
             WindowEvent::CursorMoved { position, .. } => state.on_cursor_moved(position),
             WindowEvent::CursorLeft { .. } => {
                 state.set_hovered(None);
@@ -2783,6 +3434,10 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Files => {
                 state.files_changed();
+                return;
+            }
+            UserEvent::QuakeToggle => {
+                state.toggle_quake();
                 return;
             }
         };
@@ -2872,8 +3527,8 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             }
 
+            TermEvent::Wakeup => state.pane_output(at),
             TermEvent::ChildExit(_)
-            | TermEvent::Wakeup
             | TermEvent::Bell
             | TermEvent::MouseCursorDirty => {}
         }

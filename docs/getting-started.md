@@ -84,7 +84,11 @@ there. Hover over a setting's name to see its key in the file.
 terminaal                          # a local shell
 terminaal --connect myserver       # open a saved or ~/.ssh/config host
 terminaal --connect admin@myserver # ...with that host's login for "admin"
+terminaal --quake                  # show or hide the drop-down window
 ```
+
+For `--quake`, see [The drop-down window](guides/drop-down-window.md): it's meant
+for a keyboard shortcut in your desktop's settings.
 
 ## Language
 

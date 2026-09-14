@@ -10,12 +10,39 @@
 
 use alacritty_terminal::term::TermMode;
 use winit::event::{ElementState, KeyEvent};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey, SmolStr};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+
+/// A key press or release, from winit or -- for the drop-down window's
+/// layer surface -- from xkbcommon (`crate::quake`). winit's own `KeyEvent`
+/// can't be built outside winit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyInput {
+    pub state: ElementState,
+    /// The key as the layout and modifiers make it (`Shift+a` is `A`).
+    pub logical_key: Key,
+    /// The key as the layout labels it, without modifiers: what shortcuts
+    /// match against.
+    pub key_without_modifiers: Key,
+    /// What typing it inserts, if anything.
+    pub text: Option<SmolStr>,
+}
+
+impl From<&KeyEvent> for KeyInput {
+    fn from(event: &KeyEvent) -> Self {
+        Self {
+            state: event.state,
+            logical_key: event.logical_key.clone(),
+            key_without_modifiers: event.key_without_modifiers(),
+            text: event.text.clone(),
+        }
+    }
+}
 
 /// Turn a key event into the bytes that should be written to the PTY, or
 /// `None` if this event doesn't produce any input on its own (key
 /// releases, bare modifier presses, unmapped keys, ...).
-pub fn key_event_to_bytes(event: &KeyEvent, modifiers: ModifiersState) -> Option<Vec<u8>> {
+pub fn key_event_to_bytes(event: &KeyInput, modifiers: ModifiersState) -> Option<Vec<u8>> {
     if event.state != ElementState::Pressed {
         return None;
     }

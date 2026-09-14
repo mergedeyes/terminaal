@@ -13,6 +13,9 @@ password or passphrase.
 | `themes/*.toml` | Your color themes | You – see [Appearance](appearance.md) |
 | `shell-integration/` | Startup files for bash, zsh and fish | Terminaal – don't edit, they're regenerated |
 
+The open tabs are kept elsewhere, in `~/.local/state/terminaal/session.toml`
+(or `$XDG_STATE_HOME/terminaal/`) – see [Restoring the last session](sessions.md).
+
 ## config.toml
 
 The settings tab edits this file in place: it changes just the key you touched
@@ -42,6 +45,9 @@ and keeps your comments and formatting. A missing file means defaults.
 | `sidebar` | `true` | Show the sidebar at start |
 | `sidebar_width` | `300.0` | |
 | `splash` | `true` | Start-up animation |
+| `quake_height` | `50` | Height of the drop-down window in percent of the screen, `20`–`100`. See [The drop-down window](drop-down-window.md) |
+| `quake_hide_on_unfocus` | `true` | Hide the drop-down window when another window gets the keyboard |
+| `restore_session` | `true` | Open last time's tabs again. Turning it off deletes the saved session. See [Restoring the last session](sessions.md) |
 | `language` | from the locale | `"en"` or `"de"` |
 
 ### Terminal
@@ -159,6 +165,10 @@ command = """
 cd /srv/app
 ./deploy.sh"""
 host = "web1"                 # optional: only in SSH tabs of this host
+# local = true                # optional instead of host: only in local terminals
+autorun = "login"             # optional: run by itself -- "shell" in every new
+                              # terminal, "login" in SSH terminals after login
+hidden = true                 # optional: no button, only listed under Manage
 ```
 
 ## Editing files by hand

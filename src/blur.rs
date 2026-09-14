@@ -45,8 +45,17 @@ impl Blur {
         let RawWindowHandle::Wayland(handle) = window.window_handle().ok()?.as_raw() else { return None };
         // SAFETY: both pointers come from winit's live connection and
         // window; `AppState` drops this before the window.
-        let conn = Connection::from_backend(unsafe { Backend::from_foreign_display(display.display.as_ptr().cast()) });
-        let id = unsafe { ObjectId::from_ptr(WlSurface::interface(), handle.surface.as_ptr().cast()) }.ok()?;
+        unsafe { Self::for_surface(display.display.as_ptr(), handle.surface.as_ptr()) }
+    }
+
+    /// Blur behind a `wl_surface` of our own (the drop-down window's).
+    ///
+    /// # Safety
+    /// `display` must be winit's live `wl_display` and `surface` a live
+    /// `wl_surface` on it; both must outlive this.
+    pub unsafe fn for_surface(display: *mut std::ffi::c_void, surface: *mut std::ffi::c_void) -> Option<Self> {
+        let conn = Connection::from_backend(unsafe { Backend::from_foreign_display(display.cast()) });
+        let id = unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.cast()) }.ok()?;
         let surface = WlSurface::from_id(&conn, id).ok()?;
 
         let (globals, mut queue) = registry_queue_init::<State>(&conn).ok()?;

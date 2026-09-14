@@ -3,10 +3,13 @@
 //! other at a ratio the user can drag -- with pane ids at the leaves. Pure
 //! geometry in physical pixels; `app.rs` keeps the sessions by id.
 
+use serde::{Deserialize, Serialize, Serializer};
+
 use crate::render::label::Rect;
 
 /// How a split lays out its two halves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Axis {
     /// Side by side, the divider a vertical line.
     Horizontal,
@@ -22,10 +25,25 @@ pub enum Direction {
     Down,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// Saved with the session (`crate::session`): a leaf as its number, a
+/// split as a table.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Node {
     Leaf(usize),
-    Split { axis: Axis, ratio: f32, first: Box<Node>, second: Box<Node> },
+    Split {
+        axis: Axis,
+        #[serde(serialize_with = "rounded")]
+        ratio: f32,
+        first: Box<Node>,
+        second: Box<Node>,
+    },
+}
+
+/// A ratio to a thousandth -- a dragged 0.3 would be written as
+/// 0.30000001192092896.
+fn rounded<S: Serializer>(ratio: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_f64((f64::from(*ratio) * 1000.0).round() / 1000.0)
 }
 
 /// The line between the two halves of a split, as laid out.
@@ -55,6 +73,26 @@ impl Node {
                 first.collect_ids(ids);
                 second.collect_ids(ids);
             }
+        }
+    }
+
+    /// Give every pane a new id.
+    pub fn map_ids(&mut self, new: &impl Fn(usize) -> usize) {
+        match self {
+            Node::Leaf(id) => *id = new(*id),
+            Node::Split { first, second, .. } => {
+                first.map_ids(new);
+                second.map_ids(new);
+            }
+        }
+    }
+
+    /// Ratios within 0 to 1; not a number counts as half.
+    pub fn clamp_ratios(&mut self) {
+        if let Node::Split { ratio, first, second, .. } = self {
+            *ratio = if ratio.is_finite() { ratio.clamp(0.0, 1.0) } else { 0.5 };
+            first.clamp_ratios();
+            second.clamp_ratios();
         }
     }
 

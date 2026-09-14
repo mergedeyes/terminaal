@@ -41,6 +41,8 @@ const SUB: u8 = 0x1a;
 pub enum ShellEvent {
     /// OSC 7. `host` is empty when the shell left it out.
     Cwd { host: String, path: PathBuf },
+    /// OSC 133;A: a prompt is coming -- the shell waits for input.
+    Prompt,
     /// OSC 133;C: a command started running.
     CommandStarted,
     /// OSC 133;D: it finished, with this exit status if the shell said.
@@ -198,6 +200,7 @@ impl Filter {
                     self.mark_open = true;
                     self.printed = false;
                     self.last_exit = None;
+                    events.push(ShellEvent::Prompt);
                 }
                 Some(b"B") => self.close_mark(out),
                 Some(b"C") => {
@@ -339,7 +342,10 @@ mod tests {
             text(&out),
             text(b"\x1b]8;;terminaal-prompt:\x07$ \x1b]8;;\x07ls\r\nfile\r\n\x1b]8;;terminaal-prompt:exit=2\x07$ ")
         );
-        assert_eq!(events, [ShellEvent::CommandStarted, ShellEvent::CommandFinished { exit: Some(2) }]);
+        assert_eq!(
+            events,
+            [ShellEvent::Prompt, ShellEvent::CommandStarted, ShellEvent::CommandFinished { exit: Some(2) }, ShellEvent::Prompt]
+        );
     }
 
     #[test]
@@ -380,7 +386,9 @@ mod tests {
         assert_eq!(events.iter().filter(|e| **e != ShellEvent::CommandStarted).cloned().collect::<Vec<_>>(), finished);
         // An empty line: D without C neither reports nor repeats the status.
         let (out, events) = run(&[b"\x1b]133;C\x07\x1b]133;D;1\x07\x1b]133;A\x07\x1b]133;D;1\x07\x1b]133;A\x07"]);
-        assert_eq!(events.len(), 2);
+        let finished: Vec<_> = events.iter().filter(|e| matches!(e, ShellEvent::CommandFinished { .. })).collect();
+        assert_eq!(finished, [&ShellEvent::CommandFinished { exit: Some(1) }]);
+        assert_eq!(events.iter().filter(|e| **e == ShellEvent::Prompt).count(), 2);
         assert!(text(&out).ends_with(&text(b"\x1b]8;;terminaal-prompt:exit=1\x07\x1b]8;;\x07\x1b]8;;terminaal-prompt:\x07")));
         assert_eq!(mark_exit("terminaal-prompt:exit=130"), Some(130));
         assert_eq!(mark_exit("terminaal-prompt:"), None);

@@ -24,7 +24,8 @@ common-file-invalid = { $path } ist fehlerhaft: { $err }
 
 ## Kommandozeile
 
-cli-usage = Aufruf: terminaal [--connect [BENUTZER@]HOST]
+cli-usage = Aufruf: terminaal [--connect [BENUTZER@]HOST | --quake]
+cli-quake-failed = Das Dropdown-Terminal ließ sich nicht starten oder umschalten: { $err }
 cli-unknown-argument = Unbekanntes Argument „{ $arg }“.
 cli-unexpected-argument = Unerwartetes Argument „{ $arg }“.
 cli-connect-needs-host = --connect braucht einen Hostnamen.
@@ -129,7 +130,14 @@ settings-shell = Standard-Shell
 settings-startup = Beim Start
 settings-startup-sidebar = Seitenleiste anzeigen
 settings-startup-splash = Startanimation
+settings-startup-restore = Letzte Sitzung wiederherstellen
+settings-startup-restore-hint = Öffnet die Tabs vom letzten Mal wieder: Aufteilung, Shells samt Verzeichnis, SSH-Verbindungen, Dateien- und Einstellungs-Tab. Kein Scrollback. Ein zweites Terminaal-Fenster startet immer leer.
 settings-window-size = Fenstergröße
+settings-quake = Dropdown-Fenster
+settings-quake-height = Höhe
+settings-quake-hide = Ausblenden, wenn ein anderes Fenster den Fokus bekommt
+settings-quake-note = Der Befehl blendet ein Terminal am oberen Bildschirmrand ein und wieder aus, beim ersten Mal startet er es. Lege ihn in den Systemeinstellungen als eigenes Tastenkürzel an (COSMIC: Eingabegeräte, Tastatur, Tastenkürzel anzeigen und anpassen, Eigene Tastenkürzel). Das Dropdown-Fenster hat eigene Tabs und eine eigene gespeicherte Sitzung.
+settings-quake-copy = Befehl kopieren
 settings-window-size-current = Aktuelle übernehmen
 settings-window-size-current-hint = Übernimmt die jetzige Fenstergröße ({ $width } × { $height })
 settings-startup-note = Wirkt ab dem nächsten Start.
@@ -280,8 +288,23 @@ snip-name-hint = z. B. Logs verfolgen
 snip-command-note = Mehrere Zeilen kommen zusammen an, wie eingefügt.
 snip-system = Nur auf System
 snip-all-systems = Alle Systeme
-snip-host = Nur auf Host
-snip-all-hosts = Alle Hosts und lokal
+snip-host = Wo
+snip-autorun = Automatisch ausführen
+snip-autorun-never = Nie, nur als Knopf
+snip-autorun-shell = Mit der Shell
+snip-autorun-login = Nach dem Login
+snip-autorun-note = „Mit der Shell“: in jedem neuen Terminal, sobald die Shell bereit ist, lokal und über SSH. „Nach dem Login“: nur in SSH-Terminals nach der Anmeldung. Beides auch nach einem Wiederverbinden, nur wo System und Host passen, ohne Rückfrage. Der Knopf bleibt.
+snip-hidden = Knopf ausblenden
+snip-hidden-hint = Kein Knopf unter den Befehlen; der Befehl steht nur unter „Verwalten“ und läuft von dort oder automatisch.
+snip-hidden-short = ausgeblendet
+snip-run = Ausführen
+snip-all-hidden = { $count ->
+    [one] Ein ausgeblendeter Befehl – unter „Verwalten“.
+   *[other] { $count } ausgeblendete Befehle – unter „Verwalten“.
+}
+snip-all-hosts = Überall (lokal und alle Hosts)
+snip-local-only = Nur lokal
+snip-local-login = „Nach dem Login“ gilt nur für SSH-Terminals und passt nicht zu „Nur lokal“.
 snip-everywhere = Überall
 snip-on-host = auf { $host }
 snip-command-missing = Der Befehl fehlt.
@@ -303,6 +326,8 @@ cmd-group-disk = Speicherplatz
 cmd-group-system = System
 cmd-group-network = Netzwerk
 cmd-update = System aktualisieren
+cmd-update-flatpak = Flatpaks aktualisieren
+cmd-update-aur = AUR-Pakete aktualisieren
 cmd-outdated = Verfügbare Updates
 cmd-disk-free = Freier Speicher
 cmd-disk-usage = Ordnergrößen hier

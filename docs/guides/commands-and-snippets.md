@@ -9,6 +9,8 @@ tab – or to every tab in the broadcast group.
 | Group | Button | Example (Arch) |
 | --- | --- | --- |
 | Packages | Update the system | `sudo pacman -Syu` |
+| | Update Flatpaks | `flatpak update` – only where Flatpak is installed |
+| | Update AUR packages | `paru -Sua` or `yay -Sua` – only where one of them is installed, not as root |
 | | Available updates | `pacman -Qu` |
 | Disk | Free space | `df -h -x tmpfs -x devtmpfs -x efivarfs` |
 | | Folder sizes here | `du -h --max-depth=1 . 2>/dev/null \| sort -h` |
@@ -20,8 +22,15 @@ tab – or to every tab in the broadcast group.
 | Network | Open ports | `sudo ss -tulpn` |
 | | IP addresses | `ip -brief address` |
 
-Hover a button to see the exact line before clicking. Only **Update the system**
-changes anything – that's why it's highlighted. There's deliberately no "clean
+Hover a button to see the exact line before clicking. Only the three update
+buttons change anything – that's why they're highlighted. Flatpak and the AUR
+helper get buttons of their own, so updating the system doesn't also pull in
+every Flatpak and AUR package. They show wherever the tool is found: locally on
+the `PATH`, over SSH in the same probe that detects the system (paru wins if
+both helpers are installed). A host with its system set by hand skips that
+probe. If that system is Arch (or a derivative), it still gets the AUR button,
+whose line picks paru or yay when it runs. It gets no Flatpak button, since
+nothing checked whether Flatpak is there. There's deliberately no "clean
 up" button: orphaned packages aren't necessarily unused.
 
 ### Tailored per system
@@ -70,9 +79,15 @@ Your own commands, in `~/.config/terminaal/snippets.toml`.
 - **Add:** **Your commands → Manage → + Add command**. Give it a name and a
   command – several lines are fine.
 - **Only on system:** show it only in tabs detected as that system.
-- **Only on host:** show it only in SSH tabs of that host (by its name in the
-  sidebar). Such a snippet never shows in local tabs.
+- **Where:** **Everywhere (local and all hosts)**, **Local only** (never in
+  SSH tabs), or one host – then only in SSH tabs of that host, by its name in
+  the sidebar. **After login** doesn't go with **Local only**; the form says so.
 - **Edit/delete:** under **Manage**; deleting asks once more.
+- **Run automatically:** a snippet can also run by itself when a terminal
+  starts – see [Startup commands](#startup-commands).
+- **Hide the button:** the snippet gets no button among the commands, so many
+  startup commands don't crowd the sidebar. It's still listed under **Manage**,
+  where ▶ runs it in the active tab.
 
 Sending works like pasting: several lines arrive together (with bracketed paste,
 if the shell turned that on), and with **Run commands right away** one Enter
@@ -89,6 +104,37 @@ command = "docker system df && docker image prune"
 name = "Restart app"
 command = "sudo systemctl restart app && journalctl -fu app"
 host = "web1"
+```
+
+### Startup commands
+
+Set **Run automatically** in a snippet's form:
+
+| Choice | Runs in | When |
+| --- | --- | --- |
+| **Never, button only** | – | Only when you click it (the default) |
+| **With the shell** | Every new terminal, local and SSH | Once its shell is ready |
+| **After login** | SSH terminals only | Once logged in and the shell is ready |
+
+Both run again after an SSH terminal reconnects, and in every new tab, split
+pane and restored session. **Only on system** and **Where** apply as
+for buttons, so a snippet bound to `web1` with **After login** runs on every
+login to `web1` and nowhere else. The button stays as well.
+
+"Ready" means the shell showed its prompt (fish, bash and zsh tell Terminaal
+through shell integration). A shell that doesn't say gets the commands once its
+output has paused for half a second, or after eight seconds of silence. Startup
+commands go in like a paste with one Enter each, whatever **Run commands right
+away** says. They go only to that terminal, never to a broadcast, and there's no
+first-run warning: you set them up to run.
+
+```toml
+[[snippet]]
+name = "tmux"
+command = "tmux new -A -s main"
+host = "web1"
+autorun = "login"     # or "shell"
+hidden = true         # no button, only under Manage
 ```
 
 ## With broadcast

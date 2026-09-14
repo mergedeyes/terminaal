@@ -72,4 +72,6 @@ All of these can be changed under **Settings → Shortcuts → Split panes** or 
 ## Limits
 
 - Panes can only be resized with the mouse.
-- The layout isn't saved: Terminaal starts with one tab and one pane.
+- The layout is saved with the session and comes back at the next start, but
+  every pane starts a fresh shell or connection. See
+  [Restoring the last session](sessions.md).

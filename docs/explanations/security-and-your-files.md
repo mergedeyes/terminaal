@@ -10,6 +10,9 @@ deliberately doesn't – to keep them safe.
   as long as the login takes. They never reach a file, a log or the config.
 - **`hosts.toml`** holds addresses, user names, key *names* and options.
 - **`keys.toml`** holds key file *paths*, or the *public* half of agent keys.
+- **The saved session** (`~/.local/state/terminaal/session.toml`) holds shell
+  paths, working directories, and host and user names – no scrollback, nothing
+  you typed. Restored SSH terminals log in again, with prompts as usual.
 - **Generating a key** is done in-process with the RustCrypto `ssh-key` library,
   not by calling `ssh-keygen` – a passphrase on a command line would be visible
   to other processes.

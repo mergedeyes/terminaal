@@ -24,6 +24,31 @@ you installed the binary another way).
 Install the C toolchain, `pkg-config`, and the OpenSSL and zlib development
 packages (see [Getting started](getting-started.md#install)).
 
+**My tabs didn't come back.**
+Tabs are only restored by the first Terminaal that runs: a second window starts
+with one tab, and so does `terminaal --connect`. Closing the last tab (or `exit`
+in the last shell) also leaves nothing to restore. Hosts that were deleted or
+renamed are left out; `RUST_LOG=terminaal=info` names them. See
+[Restoring the last session](guides/sessions.md).
+
+**Terminaal keeps opening tabs I don't want.**
+Close them before closing the window, delete
+`~/.local/state/terminaal/session.toml`, or turn off **Restore last session**
+under Settings → General.
+
+**The shortcut for `terminaal --quake` does nothing.**
+Put Terminaal's full path in the shortcut: shortcut settings often don't have
+`~/.cargo/bin` in their `PATH`. Settings → General → Drop-down window shows the
+exact command. Run it in a terminal first; errors show up there.
+
+**The drop-down window is a normal window and doesn't hide.**
+Your desktop has no layer shell (GNOME on Wayland). See
+[Where it works](guides/drop-down-window.md#where-it-works).
+
+**The drop-down window hides when I click a dialog or another window.**
+That's **Hide when another window gets the focus** under Settings → General.
+Turn it off to keep the window up.
+
 **A warning about an sRGB framebuffer at start.**
 Harmless – colors are correct.
 

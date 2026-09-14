@@ -342,6 +342,9 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
     change(actions, moved.map(|_| true), Setting::Sidebar(moved.unwrap_or(config.sidebar)));
     let moved = checkbox(ui, t!("settings-startup-splash"), "splash", config.splash);
     change(actions, moved.map(|_| true), Setting::Splash(moved.unwrap_or(config.splash)));
+    let moved = checkbox(ui, t!("settings-startup-restore"), "restore_session", config.restore_session);
+    change(actions, moved.map(|_| true), Setting::RestoreSession(moved.unwrap_or(config.restore_session)));
+    ui.label(weak(t!("settings-startup-restore-hint")).size(11.0));
     ui.add_space(4.0);
     let keys = format!("{}\n{}", key_hint("default_width"), key_hint("default_height"));
     ui.label(t!("settings-window-size")).on_hover_text(keys);
@@ -362,6 +365,33 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
     }
     change(actions, moved, Setting::WindowSize { width, height });
     ui.label(weak(t!("settings-startup-note")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-quake"));
+    let mut height = config.quake_height();
+    let moved = slider(ui, &t!("settings-quake-height"), "quake_height", &mut height, config::QUAKE_HEIGHTS, 5.0, |height| {
+        t!("settings-percent", value = f64::from(height.round()))
+    });
+    change(actions, moved, Setting::QuakeHeight(height));
+    let moved = checkbox(ui, t!("settings-quake-hide"), "quake_hide_on_unfocus", config.quake_hide_on_unfocus);
+    change(actions, moved.map(|_| true), Setting::QuakeHideOnUnfocus(moved.unwrap_or(config.quake_hide_on_unfocus)));
+    ui.horizontal(|ui| {
+        ui.monospace(quake_command());
+        if ui.button(t!("settings-quake-copy")).clicked() {
+            ui.ctx().copy_text(quake_command().to_string());
+        }
+    });
+    ui.label(weak(t!("settings-quake-note")).size(11.0));
+}
+
+/// `terminaal --quake` with this program's full path: shortcut settings
+/// don't necessarily have `~/.cargo/bin` in their PATH.
+fn quake_command() -> &'static str {
+    static COMMAND: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    COMMAND.get_or_init(|| {
+        let program = std::env::current_exe().map_or_else(|_| "terminaal".into(), |path| path.display().to_string());
+        format!("{program} --quake")
+    })
 }
 
 fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {

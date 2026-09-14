@@ -14,7 +14,7 @@ use egui::{Align, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, TextE
 use crate::commands::{self, Family, Group, Target};
 use crate::config::{Config, Setting};
 use crate::i18n::t;
-use crate::snippets::{self, Snippet};
+use crate::snippets::{self, Autorun, Snippet};
 use crate::ui::sidebar::SidebarAction;
 use crate::ui::theme;
 use crate::ui::widgets::{Status, section_title, weak};
@@ -34,6 +34,32 @@ pub struct CommandsPanel {
     status: Option<Status>,
 }
 
+/// Where a snippet applies, as the form picks it.
+#[derive(Clone, PartialEq, Eq)]
+enum Place {
+    Everywhere,
+    Local,
+    Host(String),
+}
+
+impl Place {
+    fn of(snippet: &Snippet) -> Self {
+        match (&snippet.host, snippet.local) {
+            (Some(host), _) => Self::Host(host.clone()),
+            (None, true) => Self::Local,
+            (None, false) => Self::Everywhere,
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Everywhere => t!("snip-all-hosts"),
+            Self::Local => t!("snip-local-only"),
+            Self::Host(host) => host.clone(),
+        }
+    }
+}
+
 /// The form for a new or changed snippet.
 struct SnippetEditor {
     /// Index while editing; `None` for a new one.
@@ -41,7 +67,9 @@ struct SnippetEditor {
     name: String,
     command: String,
     system: Option<Family>,
-    host: Option<String>,
+    place: Place,
+    autorun: Option<Autorun>,
+    hidden: bool,
     error: Option<String>,
     focus_pending: bool,
 }
@@ -53,7 +81,9 @@ impl SnippetEditor {
             name: snippet.name.clone(),
             command: snippet.command.clone(),
             system: snippet.family(),
-            host: snippet.host.clone(),
+            place: Place::of(snippet),
+            autorun: snippet.autorun,
+            hidden: snippet.hidden,
             error: None,
             focus_pending: true,
         }
@@ -68,16 +98,30 @@ impl SnippetEditor {
         if command.trim().is_empty() {
             return Err(t!("snip-command-missing"));
         }
+        if self.place == Place::Local && self.autorun == Some(Autorun::Login) {
+            return Err(t!("snip-local-login"));
+        }
         Ok(Snippet {
             name: name.to_string(),
             command: command.to_string(),
             system: self.system.map(|family| family.key().to_string()),
-            host: self.host.clone(),
+            host: match &self.place {
+                Place::Host(host) => Some(host.clone()),
+                Place::Everywhere | Place::Local => None,
+            },
+            local: self.place == Place::Local,
+            autorun: self.autorun,
+            hidden: self.hidden,
         })
     }
 }
 
 impl CommandsPanel {
+    /// The snippets as saved.
+    pub fn snippets(&self) -> &[Snippet] {
+        &self.snippets
+    }
+
     /// With the snippets from snippets.toml.
     pub fn load() -> Self {
         match snippets::load() {
@@ -197,9 +241,17 @@ impl CommandsPanel {
             ui.label(RichText::new(err).color(theme::colors().error));
         }
 
-        let applicable: Vec<Snippet> = self.snippets.iter().filter(|snippet| snippet.applies(target)).cloned().collect();
+        let applicable: Vec<Snippet> =
+            self.snippets.iter().filter(|snippet| snippet.applies(target) && !snippet.hidden).cloned().collect();
         if applicable.is_empty() && !self.managing {
-            let hint = if self.snippets.is_empty() { t!("snip-none") } else { t!("snip-none-here") };
+            let hidden = self.snippets.iter().filter(|snippet| snippet.applies(target) && snippet.hidden).count();
+            let hint = if hidden > 0 {
+                t!("snip-all-hidden", count = hidden)
+            } else if self.snippets.is_empty() {
+                t!("snip-none")
+            } else {
+                t!("snip-none-here")
+            };
             ui.label(weak(hint).size(11.0));
         }
         ui.horizontal_wrapped(|ui| {
@@ -217,12 +269,13 @@ impl CommandsPanel {
 
         if self.managing {
             ui.add_space(4.0);
-            self.manage(ui, hosts);
+            self.manage(ui, config, target, hosts, actions);
         }
     }
 
-    fn manage(&mut self, ui: &mut Ui, hosts: &[String]) {
+    fn manage(&mut self, ui: &mut Ui, config: &Config, target: &Target, hosts: &[String], actions: &mut Vec<SidebarAction>) {
         let (mut edit, mut ask_delete, mut delete, mut cancel_delete) = (None, None, None, false);
+        let mut run = None;
         for (i, snippet) in self.snippets.iter().enumerate() {
             let confirming = self.confirm_delete == Some(i);
             Frame::new().fill(theme::colors().row).corner_radius(CornerRadius::same(4)).inner_margin(Margin::symmetric(8, 6)).show(
@@ -244,6 +297,10 @@ impl CommandsPanel {
                                 if ui.small_button("✏").on_hover_text(t!("common-edit")).clicked() {
                                     edit = Some(i);
                                 }
+                                // Hidden ones run from here; any that fits this tab.
+                                if snippet.applies(target) && ui.small_button("▶").on_hover_text(t!("snip-run")).clicked() {
+                                    run = Some(i);
+                                }
                             }
                         });
                     });
@@ -258,6 +315,10 @@ impl CommandsPanel {
                 },
             );
             ui.add_space(2.0);
+        }
+        if let Some(i) = run {
+            let command = self.snippets[i].command.clone();
+            self.activate(&command, config, actions);
         }
         if let Some(i) = edit {
             self.editor = Some(SnippetEditor::new(Some(i), &self.snippets[i]));
@@ -323,18 +384,40 @@ impl CommandsPanel {
                     }
                 });
             ui.label(weak(t!("snip-host")));
-            let all_hosts = t!("snip-all-hosts");
             ComboBox::from_id_salt("snippet-host")
                 .width(ui.available_width())
-                .selected_text(editor.host.clone().unwrap_or_else(|| all_hosts.clone()))
+                .selected_text(editor.place.label())
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut editor.host, None, all_hosts.as_str());
+                    for place in [Place::Everywhere, Place::Local] {
+                        let label = place.label();
+                        ui.selectable_value(&mut editor.place, place, label);
+                    }
+                    ui.separator();
                     // A host that's gone from the list still shows.
-                    let current = editor.host.clone().filter(|host| !hosts.contains(host));
+                    let current = match &editor.place {
+                        Place::Host(host) if !hosts.contains(host) => Some(host.clone()),
+                        _ => None,
+                    };
                     for host in current.iter().chain(hosts) {
-                        ui.selectable_value(&mut editor.host, Some(host.clone()), host);
+                        ui.selectable_value(&mut editor.place, Place::Host(host.clone()), host);
                     }
                 });
+
+            ui.label(weak(t!("snip-autorun")));
+            let never = t!("snip-autorun-never");
+            ComboBox::from_id_salt("snippet-autorun")
+                .width(ui.available_width())
+                .selected_text(editor.autorun.map_or_else(|| never.clone(), Autorun::label))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut editor.autorun, None, never.as_str());
+                    for autorun in [Autorun::Shell, Autorun::Login] {
+                        ui.selectable_value(&mut editor.autorun, Some(autorun), autorun.label());
+                    }
+                });
+            if editor.autorun.is_some() {
+                ui.label(weak(t!("snip-autorun-note")).size(11.0));
+            }
+            ui.checkbox(&mut editor.hidden, t!("snip-hidden")).on_hover_text(t!("snip-hidden-hint"));
 
             if let Some(err) = &editor.error {
                 ui.label(RichText::new(err).color(theme::colors().error));
@@ -437,12 +520,19 @@ impl CommandsPanel {
 /// Where a snippet shows: everywhere, or which system and host.
 fn scope_label(snippet: &Snippet) -> String {
     let system = snippet.system.as_ref().map(|key| snippet.family().map_or_else(|| key.clone(), Family::label));
-    match (system, &snippet.host) {
+    let scope = match (system, &snippet.host) {
+        (None, None) if snippet.local => t!("snip-local-only"),
+        (Some(system), None) if snippet.local => format!("{system} · {}", t!("snip-local-only")),
         (None, None) => t!("snip-everywhere"),
         (Some(system), None) => system,
         (None, Some(host)) => t!("snip-on-host", host = host),
         (Some(system), Some(host)) => format!("{system} · {}", t!("snip-on-host", host = host)),
-    }
+    };
+    let scope = match snippet.autorun {
+        Some(autorun) => format!("{scope} · {}", autorun.label()),
+        None => scope,
+    };
+    if snippet.hidden { format!("{scope} · {}", t!("snip-hidden-short")) } else { scope }
 }
 
 #[cfg(test)]
@@ -452,7 +542,7 @@ mod tests {
     use crate::snippets::Snippet;
 
     fn target(family: Family) -> Target {
-        Target { system: Some(System { family, root: false }), ..Target::default() }
+        Target { system: Some(System { family, root: false, ..System::default() }), ..Target::default() }
     }
 
     /// Lays the section out in headless egui passes -- no tab, a system
@@ -464,22 +554,37 @@ mod tests {
         let config = Config::default();
         let mut panel = CommandsPanel { load_error: Some("test".into()), ..CommandsPanel::default() };
         panel.snippets = vec![
-            Snippet { name: "Logs".into(), command: "journalctl -f".into(), system: Some("arch".into()), host: None },
-            Snippet { name: "Deploy".into(), command: "cd /srv\n./deploy".into(), system: None, host: Some("web1".into()) },
+            Snippet { name: "Logs".into(), command: "journalctl -f".into(), system: Some("arch".into()), ..Snippet::default() },
+            Snippet {
+                name: "Deploy".into(),
+                command: "cd /srv\n./deploy".into(),
+                host: Some("web1".into()),
+                autorun: Some(Autorun::Login),
+                ..Snippet::default()
+            },
+            // Only under "Manage"; alone where it's the only one that fits.
+            Snippet { name: "tmux".into(), command: "tmux".into(), system: Some("debian".into()), hidden: true, ..Snippet::default() },
         ];
         let hosts = vec!["web1".to_string()];
         let broadcast = Target { terminals: 3, ..target(Family::Arch) };
         for (managing, editor) in [(false, None), (true, None), (true, Some(0))] {
             panel.managing = managing;
             panel.editor = editor.map(|i| SnippetEditor::new(Some(i), &panel.snippets[i]));
-            for target in [None, Some(target(Family::Arch)), Some(target(Family::Unknown)), Some(Target::default()), Some(broadcast.clone())] {
+            for target in [
+                None,
+                Some(target(Family::Arch)),
+                Some(target(Family::Debian)),
+                Some(target(Family::Unknown)),
+                Some(Target::default()),
+                Some(broadcast.clone()),
+            ] {
                 let mut actions = Vec::new();
                 ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &config, target.as_ref(), &hosts, &mut actions))
                     .drop_without_applying_deltas();
                 assert!(actions.is_empty(), "nothing was clicked");
             }
         }
-        panel.pending = Some(commands::catalog(System { family: Family::Debian, root: false }, false).remove(0).line);
+        panel.pending = Some(commands::catalog(System { family: Family::Debian, root: false, ..System::default() }, false).remove(0).line);
         let mut actions = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &config, Some(&target(Family::Debian)), &hosts, &mut actions))
             .drop_without_applying_deltas();
@@ -491,7 +596,7 @@ mod tests {
     /// through.
     #[test]
     fn the_warning_comes_before_the_first_run() {
-        let command = commands::catalog(System { family: Family::Arch, root: false }, false).remove(0);
+        let command = commands::catalog(System { family: Family::Arch, root: false, ..System::default() }, false).remove(0);
         let mut panel = CommandsPanel::default();
         let mut config = Config::default();
         assert!(config.commands_run && !config.commands_warned, "as it is out of the box");
@@ -555,6 +660,17 @@ mod tests {
         assert_eq!(panel.snippets[0].command, "journalctl -f", "nothing changed");
         let snippet = SnippetEditor { system: Some(Family::Arch), ..SnippetEditor::new(None, &panel.snippets[0]) };
         assert_eq!(snippet.to_snippet().unwrap().system.as_deref(), Some("arch"));
+
+        // Where: local only, a host, everywhere -- and "after login" can't be local.
+        let base = SnippetEditor::new(None, &panel.snippets[0]);
+        let local = SnippetEditor { place: Place::Local, ..SnippetEditor::new(None, &panel.snippets[0]) }.to_snippet().unwrap();
+        assert!(local.local && local.host.is_none());
+        assert!(Place::of(&local) == Place::Local);
+        let web1 = SnippetEditor { place: Place::Host("web1".into()), ..SnippetEditor::new(None, &panel.snippets[0]) }.to_snippet().unwrap();
+        assert!(!web1.local && web1.host.as_deref() == Some("web1"));
+        assert!(base.to_snippet().is_ok_and(|snippet| !snippet.local && snippet.host.is_none()));
+        let login = SnippetEditor { place: Place::Local, autorun: Some(Autorun::Login), ..SnippetEditor::new(None, &panel.snippets[0]) };
+        assert!(login.to_snippet().unwrap_err().contains("Nur lokal"));
     }
 
     /// A click on the warning's first button ("run it"), where the second

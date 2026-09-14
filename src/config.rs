@@ -26,6 +26,8 @@ pub const FONT_SIZES: RangeInclusive<f32> = 6.0..=36.0;
 /// Window opacities the settings allow; less and the text on top would be
 /// all that's left.
 pub const OPACITIES: RangeInclusive<f32> = 0.2..=1.0;
+/// Heights of the drop-down window the settings allow, in percent.
+pub const QUAKE_HEIGHTS: RangeInclusive<f32> = 20.0..=100.0;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -61,6 +63,14 @@ pub struct Config {
     pub sidebar_width: f32,
     /// Play the Terminaal animation over the window at startup.
     pub splash: bool,
+    /// Open the tabs of the last session again at startup
+    /// (`crate::session`).
+    pub restore_session: bool,
+    /// Height of the drop-down window (`--quake`), in percent of the
+    /// screen's. Read through [`Config::quake_height`].
+    pub quake_height: f32,
+    /// Hide the drop-down window when another window gets the keyboard.
+    pub quake_hide_on_unfocus: bool,
     /// UI language, `de` or `en`. Unset (or `auto`): German for a German
     /// locale, English otherwise. See [`Config::language`].
     pub language: Option<String>,
@@ -141,6 +151,9 @@ impl Default for Config {
             sidebar: true,
             sidebar_width: 300.0,
             splash: true,
+            restore_session: true,
+            quake_height: 50.0,
+            quake_hide_on_unfocus: true,
             language: None,
             commands_run: true,
             commands_assume_yes: false,
@@ -301,6 +314,16 @@ impl Config {
         }
     }
 
+    /// The drop-down window's height in percent, within [`QUAKE_HEIGHTS`];
+    /// not a number counts as the default.
+    pub fn quake_height(&self) -> f32 {
+        if self.quake_height.is_finite() {
+            self.quake_height.clamp(*QUAKE_HEIGHTS.start(), *QUAKE_HEIGHTS.end())
+        } else {
+            Self::default().quake_height
+        }
+    }
+
     /// The window's opacity, within [`OPACITIES`]; not a number counts as
     /// opaque.
     pub fn opacity(&self) -> f32 {
@@ -323,6 +346,9 @@ impl Config {
             Setting::Sidebar(on) => self.sidebar = on,
             Setting::SidebarWidth(width) => self.sidebar_width = width,
             Setting::Splash(on) => self.splash = on,
+            Setting::RestoreSession(on) => self.restore_session = on,
+            Setting::QuakeHeight(percent) => self.quake_height = percent,
+            Setting::QuakeHideOnUnfocus(on) => self.quake_hide_on_unfocus = on,
             Setting::Opacity(opacity) => self.opacity = opacity,
             Setting::Blur(on) => self.blur = on,
             Setting::CommandsRun(on) => self.commands_run = on,
@@ -379,6 +405,10 @@ pub enum Setting {
     Sidebar(bool),
     SidebarWidth(f32),
     Splash(bool),
+    RestoreSession(bool),
+    /// Drop-down window height in percent.
+    QuakeHeight(f32),
+    QuakeHideOnUnfocus(bool),
     Opacity(f32),
     Blur(bool),
     /// Run built-in commands right away instead of typing them out.
@@ -410,6 +440,9 @@ impl Setting {
             Self::Sidebar(on) => set_value(doc, "sidebar", on),
             Self::SidebarWidth(width) => set_value(doc, "sidebar_width", float(width.into())),
             Self::Splash(on) => set_value(doc, "splash", on),
+            Self::RestoreSession(on) => set_value(doc, "restore_session", on),
+            Self::QuakeHeight(percent) => set_value(doc, "quake_height", float(percent.round().into())),
+            Self::QuakeHideOnUnfocus(on) => set_value(doc, "quake_hide_on_unfocus", on),
             Self::Opacity(opacity) => set_value(doc, "opacity", float(opacity.into())),
             Self::Blur(on) => set_value(doc, "blur", on),
             Self::CommandsRun(on) => set_value(doc, "commands_run", on),
@@ -507,6 +540,9 @@ mod tests {
             Setting::CommandsRun(false),
             Setting::CommandsAssumeYes(true),
             Setting::CommandsWarned(true),
+            Setting::RestoreSession(false),
+            Setting::QuakeHeight(40.4),
+            Setting::QuakeHideOnUnfocus(false),
         ] {
             setting.write(&mut doc);
         }
@@ -528,6 +564,10 @@ mod tests {
         assert!(!config.commands_run);
         assert!(config.commands_assume_yes);
         assert!(config.commands_warned);
+        assert!(!config.restore_session);
+        assert_eq!(config.quake_height(), 40.0);
+        assert!(!config.quake_hide_on_unfocus);
+        assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);
     }
 
     /// The system for the built-in commands, as the settings write it.

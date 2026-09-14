@@ -6,7 +6,9 @@ mod gpu;
 mod i18n;
 mod input;
 mod panes;
+mod quake;
 mod render;
+mod session;
 mod sftp;
 mod shells;
 mod shortcuts;
@@ -15,6 +17,7 @@ mod ssh;
 mod terminal;
 mod theme;
 mod ui;
+mod window;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -25,10 +28,22 @@ fn main() {
 
     let config = config::Config::load();
     i18n::set(config.language());
-    let connect = parse_args().unwrap_or_else(|err| {
-        eprintln!("{err}");
-        std::process::exit(2);
-    });
+    let (connect, quake) = match parse_args() {
+        Ok(Args::Normal) => (None, None),
+        Ok(Args::Connect(target)) => (Some(*target), None),
+        Ok(Args::Quake) => match quake::start(&quake::runtime_dir()) {
+            Ok(quake::Start::Toggled) => return,
+            Ok(quake::Start::Owner(toggle)) => (None, Some(toggle)),
+            Err(err) => {
+                eprintln!("{}", t!("cli-quake-failed", err = err.to_string()));
+                std::process::exit(1);
+            }
+        },
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
 
     let event_loop = EventLoop::<app::UserEvent>::with_user_event()
         .build()
@@ -41,18 +56,31 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let proxy = event_loop.create_proxy();
-    let mut app = app::App::new(proxy, config, connect);
+    let mut app = app::App::new(proxy, config, connect, quake);
     event_loop.run_app(&mut app).expect("event loop error");
 }
 
-/// `terminaal [--connect [USER@]HOST]`: with `--connect`, the first tab is
-/// an SSH connection to the saved host -- or `~/.ssh/config` host -- of
-/// that name instead of a local shell. With `USER@`, the host's login for
-/// that user, or else its default login under that user name.
-fn parse_args() -> Result<Option<ssh::SshTarget>, String> {
+enum Args {
+    Normal,
+    Connect(Box<ssh::SshTarget>),
+    Quake,
+}
+
+/// `terminaal [--connect [USER@]HOST | --quake]`: with `--connect`, the
+/// first tab is an SSH connection to the saved host -- or `~/.ssh/config`
+/// host -- of that name instead of a local shell. With `USER@`, the host's
+/// login for that user, or else its default login under that user name.
+/// `--quake` shows or hides the drop-down Terminaal (`quake`).
+fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let usage = t!("cli-usage");
-    let Some(arg) = args.next() else { return Ok(None) };
+    let Some(arg) = args.next() else { return Ok(Args::Normal) };
+    if arg == "--quake" {
+        return match args.next() {
+            Some(extra) => Err(format!("{}\n{usage}", t!("cli-unexpected-argument", arg = &extra))),
+            None => Ok(Args::Quake),
+        };
+    }
     if arg != "--connect" {
         return Err(format!("{}\n{usage}", t!("cli-unknown-argument", arg = &arg)));
     }
@@ -78,5 +106,5 @@ fn parse_args() -> Result<Option<ssh::SshTarget>, String> {
             None => ssh::Host { user: user.to_string(), logins: Vec::new(), ..host.clone() },
         },
     };
-    catalog.target(&host).map(Some)
+    catalog.target(&host).map(|target| Args::Connect(Box::new(target)))
 }

@@ -12,9 +12,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::Deserialize;
-use winit::event::KeyEvent;
+use crate::input::KeyInput;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::i18n::t;
 use crate::panes::Direction;
@@ -379,8 +378,8 @@ impl KeyCombo {
 
     /// The combination a key press makes; `None` for a modifier on its
     /// own and keys a shortcut can't use.
-    pub fn from_event(event: &KeyEvent, modifiers: ModifiersState) -> Option<Self> {
-        let key = match event.key_without_modifiers() {
+    pub fn from_event(event: &KeyInput, modifiers: ModifiersState) -> Option<Self> {
+        let key = match event.key_without_modifiers.clone() {
             Key::Character(text) => {
                 let mut chars = text.chars();
                 match (chars.next(), chars.next()) {

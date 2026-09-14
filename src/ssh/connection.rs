@@ -54,7 +54,7 @@ use ssh2::{
     KnownHostFileKind, MethodType, Prompt, Session,
 };
 
-use crate::commands::{self, System, Target};
+use crate::commands::{self, AurHelper, Family, System, Target};
 use crate::i18n::t;
 use crate::ssh::agent_forward::AgentForwarding;
 use crate::ssh::forward::{ForwardStatus, Forwards};
@@ -242,7 +242,14 @@ pub fn spawn(
     let configured = target.settings.system;
     let (label, host_name) = (target.label.clone(), target.name.clone());
     let forwards = Arc::new(Mutex::new(Vec::new()));
-    let system = Arc::new(Mutex::new(configured.map(|family| System { family, root: target.user == "root" })));
+    // Nor is there anything telling whether paru or yay is installed: on
+    // Arch the AUR button picks one when it runs.
+    let system = Arc::new(Mutex::new(configured.map(|family| System {
+        family,
+        root: target.user == "root",
+        aur: (family == Family::Arch).then_some(AurHelper::Either),
+        ..System::default()
+    })));
     let connected = Arc::new(AtomicU64::new(0));
     let worker = Worker {
         target,

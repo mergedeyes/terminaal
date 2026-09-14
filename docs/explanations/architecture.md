@@ -78,6 +78,29 @@ settings and a text field there has focus. This is deliberate: otherwise a
 sidebar, and the next <kbd>Enter</kbd> would press a button. Clicking the
 terminal, hiding the sidebar or switching tabs gives the keyboard back.
 
+## The drop-down window
+
+`terminaal --quake` needs a window along the top edge of the screen, above the
+others. On Wayland only a *layer surface* (`zwlr_layer_shell_v1`) can be that,
+and winit can't make one. So the drop-down Terminaal doesn't have a winit window
+at all (`src/quake/layer.rs`):
+
+- It speaks Wayland itself, on winit's own connection with an event queue of
+  its own. winit still runs the event loop and wakes up for anything on the
+  socket; before the loop sleeps, `app.rs` dispatches the layer surface's events.
+- The keyboard goes through xkbcommon (`src/quake/keys.rs`) into the same key
+  type the winit window produces. Key repeat is timed by Terminaal, as winit
+  would do.
+- egui can't use egui-winit without a winit window, so `src/ui/mod.rs` builds
+  egui's input from the layer surface's events by hand.
+- `src/window.rs` hides the difference from the rest of the app: redraw
+  requests, size, scale, cursor shape.
+- Hiding destroys the surface, and showing makes a new one. The GPU surface and
+  the blur are made again with it; the terminals and egui stay.
+
+A second `--quake` finds the running drop-down Terminaal through a socket in
+`$XDG_RUNTIME_DIR/terminaal/` and tells it to toggle, then exits.
+
 ## Local shells
 
 A local tab runs its shell in a PTY. Output is read by alacritty's event loop –
@@ -125,6 +148,8 @@ data buffered.
 | --- | --- |
 | `src/app.rs` | Event loop, tabs and their panes, input routing, frame assembly |
 | `src/panes.rs` | Split-pane layout: tree, rectangles, dividers, neighbours |
+| `src/window.rs`, `src/quake/` | winit window or layer surface; the drop-down window: toggle socket, Wayland layer surface, xkb keyboard |
+| `src/session.rs` | Saving and restoring the open tabs |
 | `src/render/` | Grid, tab bar, search bar, labels, quads, palette |
 | `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links |
 | `src/sftp/` | SFTP client over the terminal's connection, its session thread (listing, pipelined transfers), editing files locally with sudo |

@@ -32,6 +32,13 @@ in a sidebar, and never have secrets written to disk.
 - Redraws only when something changes (output, input, cursor blink), so it stays
   idle when you do
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
+- **Drop-down window** (`terminaal --quake`, bound to a key in your desktop's
+  settings): a terminal that drops down from the top of the screen and hides
+  again, with tabs of its own that keep running. A real layer surface on
+  COSMIC, KDE, Sway and Hyprland
+- **Restores the last session** at start: tabs, splits, shells in their
+  working directories, SSH connections, files and settings tabs (no scrollback).
+  A second window starts fresh
 - **Split panes**: divide a tab into several terminals side by side or one above
   the other (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd>, or the right-click menu). A new pane
   runs the same shell in the same folder, or connects to the same host. Drag the
@@ -92,7 +99,7 @@ in a sidebar, and never have secrets written to disk.
   terminals are unaffected:
   `~/.config/fish/terminaal.fish`, `~/.bash_terminaal`, `$ZDOTDIR/.zsh_terminaal`
 - **Built-in commands**: buttons for the everyday chores – update the system,
-  list what has updates, free space, folder sizes, memory, top processes,
+  and separately Flatpaks and AUR packages (paru/yay) where installed, list what has updates, free space, folder sizes, memory, top processes,
   uptime, failed services, log errors, open ports, addresses. The
   lines are tailored to the system the active tab is on (pacman, apt, dnf,
   zypper, apk, xbps, emerge, nixos-rebuild, brew, pkg), detected from
@@ -102,7 +109,9 @@ in a sidebar, and never have secrets written to disk.
   commands go straight to the shell
 - **Your own commands** (snippets) as buttons next to the built-in ones: a
   name and a command of one or more lines, optionally only for one system or
-  one host. Add, edit and delete them under **Manage**
+  one host. Add, edit and delete them under **Manage**. A snippet can also run
+  by itself as a **startup command**: with every new shell, or after an SSH
+  login
 
 ### SSH
 - Saved hosts plus the hosts from your **`~/.ssh/config`**, read-only or
@@ -237,6 +246,7 @@ it the keyboard; the mouse wheel scrolls the pane under the mouse.
 terminaal                          # a local shell
 terminaal --connect myserver       # connect to a saved or ~/.ssh/config host
 terminaal --connect admin@myserver # ...using that host's login for "admin"
+terminaal --quake                  # show or hide the drop-down window (bind it to a key)
 ```
 
 ## Configuration
@@ -259,6 +269,9 @@ tab_bar = true
 sidebar = true                # show the sidebar at start
 sidebar_width = 300.0
 splash = true                 # start-up animation
+restore_session = true        # open last time's tabs again
+quake_height = 50.0           # drop-down window height, percent of the screen
+quake_hide_on_unfocus = true  # hide it when another window gets the keyboard
 # shell = "/usr/bin/fish"     # default shell for new tabs (default: $SHELL)
 # language = "en"             # "en" or "de" (default: from your locale)
 # theme = "Dracula"           # color theme, see below (default: "Terminaal")
@@ -357,6 +370,10 @@ command = """
 cd /srv/app
 ./deploy.sh"""
 host = "web1"       # optional: only in SSH tabs of this host (its name in the sidebar)
+# local = true      # optional instead of host: only in local terminals
+autorun = "login"   # optional: run by itself, "shell" (every new terminal)
+                    # or "login" (SSH terminals, after login)
+hidden = true       # optional: no button, only listed under Manage
 ```
 
 ## Translations
@@ -387,8 +404,13 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   connections away; libssh2 can't cancel it cleanly mid-session
 - With broadcast on, the built-in command buttons send the line for the focused
   terminal's system to every terminal in the group
-- Split panes are resized with the mouse only, and the layout isn't kept when
-  Terminaal quits
+- Split panes are resized with the mouse only
+- The drop-down window needs a Wayland desktop with the layer shell (not
+  GNOME); on X11 it's an always-on-top window. It takes no dropped files and
+  no input method (dead keys work)
+- A restored session starts every terminal fresh: no scrollback, and SSH
+  terminals log in again. Closing the last tab (or `exit` in the last shell)
+  leaves nothing to restore – close the window to keep your tabs
 - SFTP never overwrites on copying (taken names get a number) and deletes only
   files and empty folders. Transfers resume after a dropped connection only while
   Terminaal stays open. Editing through sudo pastes a command into the terminal,
@@ -417,7 +439,10 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
   moves and a maximized view
 - [x] SFTP: browse, transfer, edit server files locally with conflict check,
   through sudo where needed
-- [ ] The bigger ones: restoring the last session, drop-down (Quake) window
+- [x] Restoring the last session: tabs, splits, directories, SSH connections
+- [x] Drop-down (Quake) window: a layer surface toggled by `terminaal --quake`
+- [x] Startup commands: snippets that run with every new shell, or after an SSH login
+- [x] Separate update buttons for Flatpak and for AUR helpers (yay/paru)
 
 ## Development
 

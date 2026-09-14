@@ -131,6 +131,11 @@ impl Editor {
 }
 
 impl Sidebar {
+    /// Your own commands, as saved.
+    pub fn snippets(&self) -> &[crate::snippets::Snippet] {
+        self.commands.snippets()
+    }
+
     pub fn new(default: &InstalledShell) -> Self {
         let mut shells = shells::detect();
         // A configured or `$SHELL` shell that isn't in /etc/shells should

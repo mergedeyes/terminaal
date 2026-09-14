@@ -24,7 +24,8 @@ common-file-invalid = { $path } is invalid: { $err }
 
 ## Command line
 
-cli-usage = Usage: terminaal [--connect [USER@]HOST]
+cli-usage = Usage: terminaal [--connect [USER@]HOST | --quake]
+cli-quake-failed = Couldn't start or toggle the drop-down terminal: { $err }
 cli-unknown-argument = Unknown argument '{ $arg }'.
 cli-unexpected-argument = Unexpected argument '{ $arg }'.
 cli-connect-needs-host = --connect needs a host name.
@@ -129,7 +130,14 @@ settings-shell = Default shell
 settings-startup = At start
 settings-startup-sidebar = Show sidebar
 settings-startup-splash = Start-up animation
+settings-startup-restore = Restore last session
+settings-startup-restore-hint = Opens last time's tabs again: splits, shells with their directory, SSH connections, files and settings tabs. No scrollback. A second Terminaal window always starts fresh.
 settings-window-size = Window size
+settings-quake = Drop-down window
+settings-quake-height = Height
+settings-quake-hide = Hide when another window gets the focus
+settings-quake-note = The command shows a terminal along the top of the screen and hides it again, starting it the first time. Add it as a custom shortcut in your system settings (COSMIC: Input Devices, Keyboard, View and customize shortcuts, Custom shortcuts). The drop-down window has tabs and a saved session of its own.
+settings-quake-copy = Copy command
 settings-window-size-current = Use current
 settings-window-size-current-hint = Takes the window's current size ({ $width } × { $height })
 settings-startup-note = Takes effect the next time Terminaal starts.
@@ -280,8 +288,23 @@ snip-name-hint = e.g. Follow logs
 snip-command-note = Several lines arrive together, as if pasted.
 snip-system = Only on system
 snip-all-systems = All systems
-snip-host = Only on host
-snip-all-hosts = All hosts and local
+snip-host = Where
+snip-autorun = Run automatically
+snip-autorun-never = Never, button only
+snip-autorun-shell = With the shell
+snip-autorun-login = After login
+snip-autorun-note = "With the shell": in every new terminal once its shell is ready, local and over SSH. "After login": in SSH terminals only, once logged in. Both again after a reconnect, only where system and host match, without asking. The button stays.
+snip-hidden = Hide the button
+snip-hidden-hint = No button among the commands; it's only listed under "Manage" and runs from there or automatically.
+snip-hidden-short = hidden
+snip-run = Run
+snip-all-hidden = { $count ->
+    [one] One hidden command – under "Manage".
+   *[other] { $count } hidden commands – under "Manage".
+}
+snip-all-hosts = Everywhere (local and all hosts)
+snip-local-only = Local only
+snip-local-login = "After login" is for SSH terminals only and doesn't go with "Local only".
 snip-everywhere = Everywhere
 snip-on-host = on { $host }
 snip-command-missing = The command is missing.
@@ -303,6 +326,8 @@ cmd-group-disk = Disk
 cmd-group-system = System
 cmd-group-network = Network
 cmd-update = Update the system
+cmd-update-flatpak = Update Flatpaks
+cmd-update-aur = Update AUR packages
 cmd-outdated = Available updates
 cmd-disk-free = Free space
 cmd-disk-usage = Folder sizes here

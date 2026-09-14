@@ -131,9 +131,11 @@ impl Family {
     }
 
     /// The line for `command`, still holding `sudo ` and `{yes}`; `None`
-    /// where this system has nothing for it.
+    /// where this system has nothing for it. Flatpak and the AUR depend on
+    /// what's installed rather than the family (see [`catalog`]).
     fn line(self, command: Builtin) -> Option<&'static str> {
         let line = match command {
+            Builtin::FlatpakUpdate | Builtin::AurUpdate => return None,
             Builtin::Update => match self {
                 Self::Arch => "sudo pacman -Syu{yes}",
                 Self::Debian => "sudo apt update && sudo apt upgrade{yes}",
@@ -226,6 +228,10 @@ impl Family {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Builtin {
     Update,
+    /// `flatpak update`, where Flatpak is installed.
+    FlatpakUpdate,
+    /// AUR packages through paru or yay, where one is installed.
+    AurUpdate,
     Outdated,
     DiskFree,
     DiskUsage,
@@ -261,8 +267,10 @@ impl Group {
 }
 
 impl Builtin {
-    const ALL: [Builtin; 11] = [
+    const ALL: [Builtin; 13] = [
         Builtin::Update,
+        Builtin::FlatpakUpdate,
+        Builtin::AurUpdate,
         Builtin::Outdated,
         Builtin::DiskFree,
         Builtin::DiskUsage,
@@ -277,7 +285,7 @@ impl Builtin {
 
     pub fn group(self) -> Group {
         match self {
-            Self::Update | Self::Outdated => Group::Packages,
+            Self::Update | Self::FlatpakUpdate | Self::AurUpdate | Self::Outdated => Group::Packages,
             Self::DiskFree | Self::DiskUsage => Group::Disk,
             Self::Memory | Self::Processes | Self::Uptime | Self::FailedServices | Self::LogErrors => Group::System,
             Self::Ports | Self::Addresses => Group::Network,
@@ -287,6 +295,8 @@ impl Builtin {
     pub fn label(self) -> String {
         match self {
             Self::Update => t!("cmd-update"),
+            Self::FlatpakUpdate => t!("cmd-update-flatpak"),
+            Self::AurUpdate => t!("cmd-update-aur"),
             Self::Outdated => t!("cmd-outdated"),
             Self::DiskFree => t!("cmd-disk-free"),
             Self::DiskUsage => t!("cmd-disk-usage"),
@@ -317,6 +327,43 @@ pub struct Command {
 pub struct System {
     pub family: Family,
     pub root: bool,
+    /// Flatpak is installed.
+    pub flatpak: bool,
+    /// An AUR helper is installed.
+    pub aur: Option<AurHelper>,
+}
+
+/// The AUR helpers the update button knows; paru first if both are there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AurHelper {
+    Paru,
+    Yay,
+    /// Not looked for: an SSH host whose system is set by hand skips the
+    /// probe. The line picks paru or yay when it runs.
+    Either,
+}
+
+impl AurHelper {
+    const ALL: [AurHelper; 2] = [AurHelper::Paru, AurHelper::Yay];
+
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Paru => "paru",
+            Self::Yay => "yay",
+            Self::Either => "paru/yay",
+        }
+    }
+
+    /// The line updating the AUR packages; `flags` after the helper's own.
+    fn update_line(self, flags: &str) -> String {
+        match self {
+            Self::Paru | Self::Yay => format!("{} -Sua{flags}", self.command()),
+            // Through sh: the login shell may be fish.
+            Self::Either => format!(
+                "sh -c 'if command -v paru >/dev/null 2>&1; then exec paru -Sua{flags}; else exec yay -Sua{flags}; fi'"
+            ),
+        }
+    }
 }
 
 /// The system the command buttons build their lines for, and where those
@@ -344,9 +391,21 @@ pub fn catalog(system: System, assume_yes: bool) -> Vec<Command> {
     Builtin::ALL
         .into_iter()
         .filter_map(|builtin| {
-            let line = system.family.line(builtin)?.replace("{yes}", confirm);
-            let line = if system.root { line.replace("sudo ", "") } else { line };
-            let changes = builtin == Builtin::Update;
+            let line = match builtin {
+                // Asks by default; runs as the user, it asks for rights itself.
+                Builtin::FlatpakUpdate if system.flatpak => format!("flatpak update{}", if assume_yes { " -y" } else { "" }),
+                // Only the AUR packages -- the system update has its own
+                // button. AUR helpers refuse to run as root.
+                Builtin::AurUpdate if !system.root => {
+                    system.aur?.update_line(if assume_yes { " --noconfirm" } else { "" })
+                }
+                Builtin::FlatpakUpdate | Builtin::AurUpdate => return None,
+                _ => {
+                    let line = system.family.line(builtin)?.replace("{yes}", confirm);
+                    if system.root { line.replace("sudo ", "") } else { line }
+                }
+            };
+            let changes = matches!(builtin, Builtin::Update | Builtin::FlatpakUpdate | Builtin::AurUpdate);
             Some(Command { builtin, line, changes })
         })
         .collect()
@@ -354,20 +413,44 @@ pub fn catalog(system: System, assume_yes: bool) -> Vec<Command> {
 
 /// What to run on a freshly connected host to find out what it is. One
 /// line, so it fits a single exec channel; output is read by [`probe`].
-pub const PROBE: &str = "id -u; uname -s; cat /etc/os-release 2>/dev/null";
+/// It goes through the user's login shell, fish maybe: the loop runs in
+/// `sh`, quoted so fish passes it on untouched.
+pub const PROBE: &str = "id -u; uname -s; sh -c 'printf tools:; for t in flatpak paru yay; do command -v $t >/dev/null 2>&1 && printf \" %s\" $t; done; echo'; cat /etc/os-release 2>/dev/null";
 
 /// Read [`PROBE`]'s output: the first line is the user id, the second the
-/// kernel, the rest `os-release`.
+/// kernel, then `tools:` with the installed tools, the rest `os-release`.
 pub fn probe(output: &str) -> System {
-    let mut lines = output.lines();
+    let mut lines = output.lines().peekable();
     let root = lines.next().is_some_and(|id| id.trim() == "0");
     let kernel = lines.next().unwrap_or_default().trim().to_lowercase();
+    let tools: Vec<&str> = match lines.peek().and_then(|line| line.strip_prefix("tools:")) {
+        Some(tools) => {
+            let tools = tools.split_whitespace().collect();
+            lines.next();
+            tools
+        }
+        None => Vec::new(),
+    };
     let family = match kernel.as_str() {
         "darwin" => Family::MacOs,
         "freebsd" => Family::FreeBsd,
         _ => from_os_release(&lines.collect::<Vec<_>>().join("\n")),
     };
-    System { family, root }
+    System {
+        family,
+        root,
+        flatpak: tools.contains(&"flatpak"),
+        aur: AurHelper::ALL.into_iter().find(|helper| tools.contains(&helper.command())),
+    }
+}
+
+/// Whether `program` is an executable file in one of `PATH`'s folders.
+fn on_path(program: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(path) = std::env::var_os("PATH") else { return false };
+    std::env::split_paths(&path).any(|dir| {
+        std::fs::metadata(dir.join(program)).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    })
 }
 
 /// The local system, as `/etc/os-release` and the effective user id have
@@ -378,7 +461,12 @@ pub fn local() -> System {
         let text = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
         // SAFETY: geteuid only reads the process's own id and can't fail.
         let root = unsafe { libc::geteuid() } == 0;
-        System { family: from_os_release(&text), root }
+        System {
+            family: from_os_release(&text),
+            root,
+            flatpak: on_path("flatpak"),
+            aur: AurHelper::ALL.into_iter().find(|helper| on_path(helper.command())),
+        }
     });
     *LOCAL
 }
@@ -410,7 +498,7 @@ pub fn from_os_release(text: &str) -> Family {
 
 #[cfg(test)]
 mod tests {
-    use super::{Builtin, Family, System, catalog, from_os_release, probe};
+    use super::{AurHelper, Builtin, Family, System, catalog, from_os_release, probe};
 
     #[test]
     fn reads_os_release() {
@@ -427,13 +515,48 @@ mod tests {
     #[test]
     fn reads_the_probe() {
         let system = probe("1000\nLinux\nID=debian\nVERSION_ID=\"12\"\n");
-        assert_eq!(system, System { family: Family::Debian, root: false });
+        assert_eq!(system, System { family: Family::Debian, root: false, ..System::default() });
         let system = probe("0\nLinux\nID=arch\n");
-        assert_eq!(system, System { family: Family::Arch, root: true });
+        assert_eq!(system, System { family: Family::Arch, root: true, ..System::default() });
         // macOS and FreeBSD have no os-release.
         assert_eq!(probe("501\nDarwin\n").family, Family::MacOs);
-        assert_eq!(probe("0\nFreeBSD\n"), System { family: Family::FreeBsd, root: true });
+        assert_eq!(probe("0\nFreeBSD\n"), System { family: Family::FreeBsd, root: true, ..System::default() });
         assert_eq!(probe(""), System::default());
+    }
+
+    #[test]
+    fn the_probe_finds_flatpak_and_aur_helpers() {
+        let system = probe("1000\nLinux\ntools: flatpak yay\nID=arch\n");
+        assert_eq!((system.family, system.flatpak, system.aur), (Family::Arch, true, Some(AurHelper::Yay)));
+        assert_eq!(probe("1000\nLinux\ntools: paru yay\nID=arch\n").aur, Some(AurHelper::Paru));
+        let none = probe("1000\nLinux\ntools:\nID=debian\n");
+        assert_eq!((none.family, none.flatpak, none.aur), (Family::Debian, false, None));
+        // A shell where the tools line went missing keeps os-release whole.
+        assert_eq!(probe("1000\nLinux\nID=fedora\n").family, Family::Fedora);
+    }
+
+    #[test]
+    fn flatpak_and_aur_get_their_own_buttons() {
+        let system = System { family: Family::Arch, root: false, flatpak: true, aur: Some(AurHelper::Paru) };
+        assert_eq!(line(system, false, Builtin::FlatpakUpdate).unwrap(), "flatpak update");
+        assert_eq!(line(system, true, Builtin::FlatpakUpdate).unwrap(), "flatpak update -y");
+        assert_eq!(line(system, false, Builtin::AurUpdate).unwrap(), "paru -Sua");
+        assert_eq!(line(system, true, Builtin::AurUpdate).unwrap(), "paru -Sua --noconfirm");
+        assert!(catalog(system, false).iter().filter(|c| c.builtin != Builtin::Update).any(|c| c.changes));
+        // Not installed, or root (AUR helpers refuse): no button.
+        let plain = System { family: Family::Arch, ..System::default() };
+        assert!(catalog(plain, false).iter().all(|c| !matches!(c.builtin, Builtin::FlatpakUpdate | Builtin::AurUpdate)));
+        assert_eq!(line(System { root: true, ..system }, false, Builtin::AurUpdate), None);
+        // Arch set by hand on a host: no probe, the line looks for the helper.
+        let configured = System { family: Family::Arch, aur: Some(AurHelper::Either), ..System::default() };
+        let either = line(configured, true, Builtin::AurUpdate).unwrap();
+        assert_eq!(
+            either,
+            "sh -c 'if command -v paru >/dev/null 2>&1; then exec paru -Sua --noconfirm; else exec yay -Sua --noconfirm; fi'"
+        );
+        // Flatpak works on systems we don't otherwise know.
+        let unknown = System { flatpak: true, ..System::default() };
+        assert!(line(unknown, false, Builtin::FlatpakUpdate).is_some());
     }
 
     #[test]
@@ -452,20 +575,20 @@ mod tests {
 
     #[test]
     fn confirmation_flags_need_the_setting() {
-        let arch = System { family: Family::Arch, root: false };
+        let arch = System { family: Family::Arch, root: false, ..System::default() };
         assert_eq!(line(arch, false, Builtin::Update).unwrap(), "sudo pacman -Syu");
         assert_eq!(line(arch, true, Builtin::Update).unwrap(), "sudo pacman -Syu --noconfirm");
-        let debian = System { family: Family::Debian, root: false };
+        let debian = System { family: Family::Debian, root: false, ..System::default() };
         assert_eq!(line(debian, false, Builtin::Update).unwrap(), "sudo apt update && sudo apt upgrade");
         assert_eq!(line(debian, true, Builtin::Update).unwrap(), "sudo apt update && sudo apt upgrade -y");
         // Portage is the other way round: it only asks when told to.
-        let gentoo = System { family: Family::Gentoo, root: false };
+        let gentoo = System { family: Family::Gentoo, root: false, ..System::default() };
         assert!(line(gentoo, false, Builtin::Update).unwrap().ends_with(" --ask"));
         assert!(!line(gentoo, true, Builtin::Update).unwrap().contains("--ask"));
         // No placeholder is ever left behind, whatever the setting.
         for family in Family::ALL {
             for assume_yes in [false, true] {
-                for command in catalog(System { family, root: false }, assume_yes) {
+                for command in catalog(System { family, root: false, ..System::default() }, assume_yes) {
                     assert!(!command.line.contains("{yes}"), "{family:?}: {}", command.line);
                 }
             }
@@ -474,10 +597,10 @@ mod tests {
 
     #[test]
     fn root_drops_sudo() {
-        let system = System { family: Family::Debian, root: true };
+        let system = System { family: Family::Debian, root: true, ..System::default() };
         assert_eq!(line(system, false, Builtin::Update).unwrap(), "apt update && apt upgrade");
         for family in Family::ALL {
-            for command in catalog(System { family, root: true }, true) {
+            for command in catalog(System { family, root: true, ..System::default() }, true) {
                 assert!(!command.line.contains("sudo "), "{family:?}: {}", command.line);
             }
         }
@@ -496,9 +619,9 @@ mod tests {
 
     #[test]
     fn systemd_commands_only_where_there_is_systemd() {
-        let with = catalog(System { family: Family::Arch, root: false }, false);
+        let with = catalog(System { family: Family::Arch, root: false, ..System::default() }, false);
         assert!(with.iter().any(|c| c.builtin == Builtin::FailedServices));
-        let without = catalog(System { family: Family::Alpine, root: false }, false);
+        let without = catalog(System { family: Family::Alpine, root: false, ..System::default() }, false);
         assert!(without.iter().all(|c| c.builtin != Builtin::FailedServices));
         assert!(without.iter().all(|c| c.builtin != Builtin::LogErrors));
     }
