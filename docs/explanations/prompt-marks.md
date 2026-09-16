@@ -72,17 +72,36 @@ without it, the whole session would be marked.
 Selection, copying and search ignore hyperlinks, so the marks are invisible. The
 link finder ignores the private scheme, so they're not clickable either.
 
-### Exit codes
+### Exit codes and run times
 
 When a command finishes, its exit code is known – but its prompt has already been
-printed. So the code goes into the *next* prompt's mark:
-`terminaal-prompt:exit=2`. When drawing, each prompt on screen takes its status
+printed. So the code goes into the *next* prompt's mark, together with how long
+the command ran (measured by the filter from `C` to `D`):
+`terminaal-prompt:exit=2&ms=5230`. The fields are joined with `&` because a `;`
+would end the URI inside OSC 8. A mark without `ms` means no command ran – an
+empty Enter, or a shell that doesn't send `C`. When drawing, each prompt on screen takes its status
 from the prompt after it. For the last prompt on screen, Terminaal looks up to
 500 lines below it.
 
 A `D` without a preceding `C` is ignored. Shells send `D` at every prompt,
 including after an empty Enter, where the status would still be that of the
 command before – and the same failure would show up again next to an empty line.
+
+### Where the output starts
+
+A command's output doesn't start right below its prompt: the command line may
+wrap or span several lines. So `133;C` opens a second hyperlink,
+`terminaal-output:`, and the filter closes it right after the first character
+that follows – never in the middle of a UTF-8 sequence, and blanks or color
+changes don't count. Only that one cell carries the mark, so a program's own
+links in its output are left alone. If the program opens a hyperlink before
+printing anything, the filter drops its mark instead of closing the program's
+link. bash sends a `C` for each of several pasted lines but one `D`; only the
+first `C` counts, for the mark and the run time.
+
+A command's *block* runs from its prompt's row to the row before the next
+prompt. Copying its output takes the text from the output mark to the block's
+last non-blank row; clicking a prompt selects the whole block as lines.
 
 ### Finding prompts
 
@@ -104,5 +123,6 @@ it to the top.
 
 - A real OSC 8 link *inside* the prompt replaces the mark from there on (the
   prompt stays findable by its first characters).
-- The exit code of a command is only shown once the next prompt appears.
+- The exit code and run time of a command are only shown once the next prompt
+  appears.
 - Over SSH, marks exist only if the remote shell sends OSC 133.

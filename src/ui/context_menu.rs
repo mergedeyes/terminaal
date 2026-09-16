@@ -1,4 +1,4 @@
-//! Right-click menu over the terminal grid: copy, paste, paste and run,
+//! Right-click menu over the terminal grid: copy, copy a command's output, paste, paste and run,
 //! whether the terminal takes part in the broadcast, splitting or closing
 //! its pane, and the files of an SSH connection.
 //!
@@ -17,9 +17,13 @@ const MIN_WIDTH: f32 = 200.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     Copy,
+    /// The output of the command under the mouse, else of the last one.
+    CopyOutput,
     Paste,
     PasteAndRun,
     ToggleBroadcast,
+    /// Watch the terminal for silence, or stop.
+    WatchSilence,
     SplitRight,
     SplitDown,
     ClosePane,
@@ -27,16 +31,20 @@ pub enum MenuAction {
 }
 
 /// Entries in the menu, top to bottom.
-const ENTRIES: usize = 8;
+const ENTRIES: usize = 10;
 
 pub struct ContextMenu {
     /// Where the right-click happened, in points; the menu's top-left
     /// corner unless that would push it off screen.
     pos: Pos2,
     can_copy: bool,
+    /// There's a command's output to copy.
+    can_copy_output: bool,
     can_paste: bool,
     /// The terminal takes part in the broadcast.
     broadcast: bool,
+    /// The terminal is watched for silence.
+    watching: bool,
     /// An SSH connection: it has files to open.
     ssh: bool,
     /// The shortcuts shown beside the entries.
@@ -46,18 +54,18 @@ pub struct ContextMenu {
 }
 
 impl ContextMenu {
-    /// `can_copy`: there's a selection; `can_paste`: the clipboard holds
-    /// text. Both are decided once, when the menu opens. `shortcuts`:
-    /// the combinations for the entries in their order, where bound.
+    /// `can_copy`: there's a selection; `can_copy_output`: a command's
+    /// output; `can_paste`: the clipboard holds text. All decided once,
+    /// when the menu opens. `shortcuts`: the combinations for the entries
+    /// in their order, where bound.
     pub fn new(
         pos: Pos2,
-        can_copy: bool,
-        can_paste: bool,
-        broadcast: bool,
+        [can_copy, can_copy_output, can_paste]: [bool; 3],
+        [broadcast, watching]: [bool; 2],
         ssh: bool,
         shortcuts: [Option<String>; ENTRIES],
     ) -> Self {
-        Self { pos, can_copy, can_paste, broadcast, ssh, shortcuts, rect: None }
+        Self { pos, can_copy, can_copy_output, can_paste, broadcast, watching, ssh, shortcuts, rect: None }
     }
 
     /// `pos` (points) lies on the menu as last shown.
@@ -67,13 +75,17 @@ impl ContextMenu {
 
     /// Show the menu; returns the entry clicked in this pass, if any.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<MenuAction> {
-        let [copy, paste, paste_and_run, broadcast, split_right, split_down, close_pane, files] = self.shortcuts.clone();
+        let [copy, copy_output, paste, paste_and_run, broadcast, silence, split_right, split_down, close_pane, files] =
+            self.shortcuts.clone();
+        let silence_label = if self.watching { t!("menu-silence-off") } else { t!("menu-silence-on") };
         let broadcast_label = if self.broadcast { t!("menu-broadcast-off") } else { t!("menu-broadcast-on") };
         let items = [
             (MenuAction::Copy, t!("menu-copy"), copy, self.can_copy),
+            (MenuAction::CopyOutput, t!("menu-copy-output"), copy_output, self.can_copy_output),
             (MenuAction::Paste, t!("menu-paste"), paste, self.can_paste),
             (MenuAction::PasteAndRun, t!("menu-paste-run"), paste_and_run, self.can_paste),
             (MenuAction::ToggleBroadcast, broadcast_label, broadcast, true),
+            (MenuAction::WatchSilence, silence_label, silence, true),
             (MenuAction::SplitRight, t!("menu-split-right"), split_right, true),
             (MenuAction::SplitDown, t!("menu-split-down"), split_down, true),
             (MenuAction::ClosePane, t!("menu-close-pane"), close_pane, true),
@@ -132,7 +144,7 @@ mod tests {
     /// of the menu's height from its top.
     fn click(can_copy: bool, can_paste: bool, at: f32) -> Option<MenuAction> {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(100.0, 100.0), can_copy, can_paste, false, can_copy, Default::default());
+        let mut menu = ContextMenu::new(pos2(100.0, 100.0), [can_copy, can_copy, can_paste], [false; 2], can_copy, Default::default());
         for _ in 0..3 {
             pass(&ctx, &mut menu, Vec::new());
         }
@@ -153,9 +165,11 @@ mod tests {
     fn clicks_pick_their_entry() {
         let entries = [
             MenuAction::Copy,
+            MenuAction::CopyOutput,
             MenuAction::Paste,
             MenuAction::PasteAndRun,
             MenuAction::ToggleBroadcast,
+            MenuAction::WatchSilence,
             MenuAction::SplitRight,
             MenuAction::SplitDown,
             MenuAction::ClosePane,
@@ -164,7 +178,7 @@ mod tests {
         for (i, action) in entries.into_iter().enumerate() {
             assert_eq!(click(true, true, entry(i)), Some(action), "entry {i}");
         }
-        assert_eq!(click(false, false, entry(3)), Some(MenuAction::ToggleBroadcast));
+        assert_eq!(click(false, false, entry(4)), Some(MenuAction::ToggleBroadcast));
     }
 
     /// The middle of entry `i`, as a fraction of the menu's height.
@@ -175,16 +189,18 @@ mod tests {
     #[test]
     fn disabled_entries_ignore_clicks() {
         assert_eq!(click(false, true, entry(0)), None);
-        assert_eq!(click(true, false, entry(1)), None);
+        // Output (`can_copy` stands in for it here).
+        assert_eq!(click(false, true, entry(1)), None);
         assert_eq!(click(true, false, entry(2)), None);
-        // Files only for an SSH connection (`can_copy` stands in for it here).
-        assert_eq!(click(false, true, entry(7)), None);
+        assert_eq!(click(true, false, entry(3)), None);
+        // Files only for an SSH connection (`can_copy` again).
+        assert_eq!(click(false, true, entry(9)), None);
     }
 
     #[test]
     fn contains_follows_the_shown_menu() {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(100.0, 100.0), true, true, false, true, Default::default());
+        let mut menu = ContextMenu::new(pos2(100.0, 100.0), [true; 3], [false; 2], true, Default::default());
         assert!(!menu.contains(pos2(110.0, 110.0)), "nothing shown yet");
         pass(&ctx, &mut menu, Vec::new());
         assert!(menu.contains(pos2(110.0, 110.0)));
@@ -194,7 +210,7 @@ mod tests {
     #[test]
     fn stays_on_screen_near_the_corner() {
         let ctx = egui::Context::default();
-        let mut menu = ContextMenu::new(pos2(790.0, 590.0), true, true, true, false, Default::default());
+        let mut menu = ContextMenu::new(pos2(790.0, 590.0), [true; 3], [true; 2], false, Default::default());
         for _ in 0..3 {
             pass(&ctx, &mut menu, Vec::new());
         }

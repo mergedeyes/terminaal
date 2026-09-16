@@ -45,10 +45,13 @@ app-language-changed = Sprache umgestellt.
 ## Kontextmenü (Rechtsklick ins Terminal)
 
 menu-copy = Kopieren
+menu-copy-output = Ausgabe kopieren
 menu-paste = Einfügen
 menu-paste-run = Einfügen und ausführen
 menu-broadcast-on = Broadcast für dieses Terminal
 menu-broadcast-off = Broadcast beenden
+menu-silence-on = Auf Stille achten
+menu-silence-off = Nicht mehr auf Stille achten
 menu-split-right = Rechts teilen
 menu-split-down = Unten teilen
 menu-close-pane = Bereich schließen
@@ -66,10 +69,15 @@ search-hint-jumping = n ↑ · N ↓ · / ändern · Esc
 notify-finished = Befehl fertig
 notify-failed = Befehl fehlgeschlagen (Exit-Code { $code })
 notify-body = { $tab } – nach { $duration }
+notify-silent = Terminal ist still
+notify-silent-body = { $tab } – seit { $duration } keine Ausgabe
 duration-seconds = { $secs } s
 duration-minutes = { $mins } min { $secs } s
 duration-hours = { $hours } h { $mins } min
 prompt-exit = ✘ { $code }
+prompt-duration-seconds = { $value } s
+prompt-duration-minutes = { $minutes } min { $seconds } s
+prompt-duration-hours = { $hours } h { $minutes } min
 
 ## Tastennamen in Tastenkürzeln
 
@@ -126,6 +134,29 @@ settings-notify-after = Benachrichtigen nach
 settings-notify-never = nie
 settings-seconds = { $secs } s
 settings-integration-note = Benachrichtigt, wenn ein Befehl so lange lief und sein Tab gerade nicht zu sehen ist. fish, bash und zsh melden Prompts und Verzeichnis in Terminaal von selbst, andere Shells mit OSC 133 und OSC 7.
+settings-activity = Tabs im Hintergrund
+settings-silence-after = Still nach
+settings-activity-note = Ein Tab im Hintergrund bekommt einen Punkt vor dem Titel: in der Akzentfarbe bei neuer Ausgabe, rot bei der Glocke, grün, wenn ein Terminal, auf dessen Stille geachtet wird (Rechtsklick → Auf Stille achten), so lange nichts ausgegeben hat – dann auch mit Benachrichtigung.
+paste-warn-title = ⚠ Wirklich einfügen?
+paste-warn-broadcast = Geht an { $terminals } Terminals (Broadcast).
+paste-warn-runs-lines = { $lines ->
+    [one] Die Zeile läuft sofort, wenn sie ankommt – das Programm nimmt Eingefügtes nicht als Ganzes.
+   *[other] { $lines } Zeilen, jede läuft sofort, wenn sie ankommt – das Programm nimmt Eingefügtes nicht als Ganzes.
+}
+paste-warn-lines = { $lines } Zeilen auf einmal.
+paste-warn-sudo = Führt etwas mit Root-Rechten aus (sudo, doas, pkexec).
+paste-warn-pipe = Gibt etwas einer Shell zum Ausführen, womöglich einen Download (| sh, $(curl …)).
+paste-warn-destructive = Kann Dateien oder ganze Datenträger löschen (rm -rf, mkfs, dd).
+paste-warn-paste = Einfügen
+paste-warn-paste-run = Einfügen und ausführen
+paste-warn-hint = Enter fügt ein · Esc bricht ab · abschalten unter Einstellungen → Terminal
+paste-warn-more-lines = { $lines ->
+    [one] … 1 weitere Zeile
+   *[other] … { $lines } weitere Zeilen
+}
+settings-paste = Einfügen
+settings-paste-warning = Vor riskantem Einfügen fragen
+settings-paste-warning-hint = Mehrere Zeilen, die sofort laufen würden, sudo, ein Download, der in eine Shell geht, rm -rf und Ähnliches – und mehrere Zeilen, die per Broadcast an mehr als ein Terminal gehen.
 settings-shell = Standard-Shell
 settings-startup = Beim Start
 settings-startup-sidebar = Seitenleiste anzeigen
@@ -212,6 +243,7 @@ shortcut-focus-pane-down = Zum Bereich unten
 shortcut-zoom-pane = Bereich vergrößern/wiederherstellen
 shortcut-toggle-broadcast = Broadcast an/aus (Eingabe an alle markierten Terminals)
 shortcut-open-files = Dateien der SSH-Verbindung öffnen (SFTP)
+shortcut-watch-silence = Auf Stille achten an/aus (melden, wenn das Terminal still wird)
 shortcut-toggle-sidebar = Seitenleiste ein-/ausblenden
 shortcut-open-settings = Einstellungen öffnen
 shortcut-command-palette = Befehlspalette (Aktionen, Hosts, Snippets, Tabs, Themes)
@@ -227,6 +259,7 @@ palette-tab-number = Tab { $number }
 palette-theme-current = aktuell
 palette-new-tab = Neuer Tab: { $shell }
 shortcut-copy = Kopieren
+shortcut-copy-last-output = Ausgabe des letzten Befehls kopieren
 shortcut-paste = Einfügen
 shortcut-paste-and-run = Einfügen und ausführen
 shortcut-scroll-page-up = Eine Seite zurück

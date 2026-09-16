@@ -17,10 +17,12 @@
 | Maximize pane / restore | `zoom_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> |
 | Broadcast on/off for the terminal | `toggle_broadcast` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
 | Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
+| Watch the terminal for silence on/off | `watch_silence` | none |
 | Show/hide sidebar | `toggle_sidebar` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Open settings | `open_settings` | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
 | Command palette | `command_palette` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Copy | `copy` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> |
+| Copy the last command's output | `copy_last_output` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> |
 | Paste | `paste` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
 | Paste and run | `paste_and_run` | none |
 | Scroll a page up / down | `scroll_page_up`, `scroll_page_down` | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> |

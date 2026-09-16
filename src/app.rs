@@ -63,7 +63,7 @@ use crate::render::grid::{self, CursorStyle, GridText, PaneText};
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::{QuadInstance, QuadRenderer};
 use crate::render::search_bar::{SearchBar, SearchBarView};
-use crate::render::tab_bar::{self, TabBar, TabBarHit, TabBarLayout, TabLook};
+use crate::render::tab_bar::{self, Activity, TabBar, TabBarHit, TabBarLayout, TabLook};
 use crate::render::text::{CellMetrics, FontFamilies, TextRendererState};
 use crate::theme::{Theme, Themes};
 use crate::ui::theme::FontFace;
@@ -83,6 +83,7 @@ use crate::sftp::session::{Command as SftpCommand, Remote};
 use crate::ssh::connection::Opener;
 use crate::ui::command_palette::{self, CommandPalette};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
+use crate::ui::paste_warning::{self, PasteWarning};
 use crate::ui::files_panel::{FilesAction, FilesPanel, FilesView};
 use crate::ui::settings_panel::{SettingsPanel, SettingsView, Transparency};
 use crate::ui::sidebar::{Sidebar, SidebarAction, TabForwards};
@@ -260,6 +261,7 @@ impl Tab {
             background: panes
                 .and_then(|panes| panes.focused().look.palette.as_ref())
                 .map(|palette| palette.named(NamedColor::Background)),
+            activity: panes.and_then(|panes| panes.panes.iter().filter_map(|pane| pane.activity.mark()).min()),
         }
     }
 }
@@ -328,6 +330,8 @@ struct Pane {
     broadcast: bool,
     /// Its host's color and theme.
     look: PaneLook,
+    /// What happened in it while it wasn't in view.
+    activity: PaneActivity,
     /// Where it sits in the window, in physical pixels, and its grid there
     /// ([`AppState::layout_panes`]).
     rect: LabelRect,
@@ -356,6 +360,67 @@ impl Startup {
             _ => self.since + STARTUP_TIMEOUT,
         }
     }
+}
+
+/// Output, bell and silence of a terminal whose tab isn't the active one.
+#[derive(Default)]
+struct PaneActivity {
+    /// The screen's fingerprint when its tab went to the background; new
+    /// output changes it. `None` while its tab is the active one.
+    baseline: Option<u64>,
+    output: bool,
+    bell: bool,
+    /// Watched for silence: when output was last seen.
+    watch: Option<Instant>,
+    /// The watched terminal went quiet.
+    silent: bool,
+    /// Output before this doesn't count: a shell starting, or redrawing
+    /// its prompt for a new size.
+    ignore_until: Option<Instant>,
+}
+
+impl PaneActivity {
+    fn mark(&self) -> Option<Activity> {
+        if self.bell {
+            Some(Activity::Bell)
+        } else if self.silent {
+            Some(Activity::Silent)
+        } else if self.output {
+            Some(Activity::Output)
+        } else {
+            self.watch.map(|_| Activity::Watching)
+        }
+    }
+
+    /// Its tab is the one in front now.
+    fn seen(&mut self) {
+        self.baseline = None;
+        self.output = false;
+        self.bell = false;
+        self.silent = false;
+    }
+}
+
+/// How long output after a start or resize is ignored for activity.
+const ACTIVITY_GRACE: Duration = Duration::from_millis(1500);
+
+/// A fingerprint of what `term` shows at the bottom of its scrollback,
+/// cheap enough to take on every output of a background terminal.
+fn screen_fingerprint<T>(term: &Term<T>) -> u64 {
+    use alacritty_terminal::grid::Dimensions;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let grid = term.grid();
+    grid.history_size().hash(&mut hasher);
+    for line in 0..term.screen_lines() as i32 {
+        let row = &grid[Line(line)];
+        for col in 0..term.columns() {
+            row[Column(col)].c.hash(&mut hasher);
+        }
+    }
+    let cursor = grid.cursor.point;
+    (cursor.line.0, cursor.column.0).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// What a terminal's host asks of its looks (`color`, `theme`).
@@ -481,6 +546,13 @@ struct AppState {
     splash_redraw_at: Option<Instant>,
     /// Right-click menu over the grid, while it's open.
     context_menu: Option<ContextMenu>,
+    /// The command output the open context menu would copy.
+    context_output: Option<String>,
+    /// A left press on a prompt that hasn't turned into a drag: letting go
+    /// selects that command's block. Pane id and the pressed cell.
+    prompt_press: Option<(usize, Point)>,
+    /// A paste waiting for the go-ahead; the dialog has the keyboard.
+    paste_warning: Option<PasteWarning>,
     /// The open command palette; it has the keyboard while open.
     command_palette: Option<CommandPalette>,
     /// This machine's name, to tell its working directories from others'.
@@ -608,7 +680,10 @@ impl AppState {
             splash,
             splash_redraw_at: None,
             context_menu: None,
+            context_output: None,
+            prompt_press: None,
             command_palette: None,
+            paste_warning: None,
             hostname: hostname(),
             focused: true,
             prompt_labels: Labels::default(),
@@ -761,6 +836,7 @@ impl AppState {
             startup_connection: 0,
             broadcast: false,
             look,
+            activity: PaneActivity { ignore_until: Some(Instant::now() + ACTIVITY_GRACE), ..PaneActivity::default() },
             rect,
             size,
         })
@@ -785,10 +861,114 @@ impl AppState {
     /// is showing -- and a new shell tab is there to type into. Recording
     /// a shortcut ends with leaving the settings tab.
     fn switched_tab(&mut self) {
+        self.update_activity_baselines();
         self.session_changed();
         self.settings.stop_recording();
         self.give_keyboard_to_terminal();
         self.switched_pane();
+    }
+
+    /// The active tab's terminals are seen; the others start watching for
+    /// new output from what they show now.
+    fn update_activity_baselines(&mut self) {
+        let active = self.active_tab;
+        for (idx, tab) in self.tabs.iter_mut().enumerate() {
+            let Some(panes) = tab.panes_mut() else { continue };
+            for pane in &mut panes.panes {
+                if idx == active {
+                    pane.activity.seen();
+                } else if pane.activity.baseline.is_none() {
+                    pane.activity.baseline = Some(screen_fingerprint(&pane.terminal.term.lock()));
+                }
+            }
+        }
+        self.window.request_redraw();
+    }
+
+    /// A terminal printed something: a watched one isn't quiet, one in a
+    /// background tab gets marked once what it shows has changed.
+    fn note_activity(&mut self, at: (usize, usize)) {
+        let active = at.0 == self.active_tab;
+        let Some(pane) = self.pane_mut(at) else { return };
+        let now = Instant::now();
+        if let Some(watch) = &mut pane.activity.watch {
+            *watch = now;
+        }
+        if active || pane.activity.output {
+            return;
+        }
+        let fingerprint = screen_fingerprint(&pane.terminal.term.lock());
+        let activity = &mut pane.activity;
+        let starting = activity.ignore_until.is_some_and(|until| now < until) || pane.startup.is_some();
+        match activity.baseline {
+            Some(baseline) if baseline != fingerprint && !starting => {
+                activity.output = true;
+                self.window.request_redraw();
+            }
+            // Still starting up, or never seen: this is how it looks.
+            _ => activity.baseline = Some(fingerprint),
+        }
+    }
+
+    /// A terminal rang the bell: marked unless it's in view, and the window
+    /// asks for attention if it doesn't have the focus.
+    fn ring_bell(&mut self, at: (usize, usize)) {
+        let in_view = at.0 == self.active_tab;
+        if !self.focused {
+            self.window.request_user_attention(Some(UserAttentionType::Informational));
+        }
+        if in_view {
+            return;
+        }
+        if let Some(pane) = self.pane_mut(at) {
+            pane.activity.bell = true;
+        }
+        self.window.request_redraw();
+    }
+
+    /// Watch the focused terminal for silence, or stop.
+    fn toggle_silence_watch(&mut self) {
+        let Some(pane) = self.tabs.get_mut(self.active_tab).and_then(Tab::panes_mut).map(Panes::focused_mut) else { return };
+        let activity = &mut pane.activity;
+        activity.watch = if activity.watch.is_some() { None } else { Some(Instant::now()) };
+        activity.silent = false;
+        self.window.request_redraw();
+    }
+
+    /// When the next watched terminal goes quiet.
+    fn silence_due(&self) -> Option<Instant> {
+        let after = Duration::from_secs(self.config.silence_secs.max(1));
+        self.tabs.iter().filter_map(Tab::panes).flat_map(|panes| &panes.panes).filter_map(|pane| Some(pane.activity.watch? + after)).min()
+    }
+
+    /// Watched terminals that have been quiet long enough: marked, and
+    /// announced unless in view. Watching ends with that.
+    fn check_silence(&mut self) {
+        let after = Duration::from_secs(self.config.silence_secs.max(1));
+        let now = Instant::now();
+        let window_focused = self.focused;
+        let active_tab = self.active_tab;
+        let mut announced = false;
+        for (tab_idx, tab) in self.tabs.iter_mut().enumerate() {
+            let Some(panes) = tab.panes_mut() else { continue };
+            let visible: Vec<bool> = panes.panes.iter().map(|pane| panes.is_visible(pane.id)).collect();
+            for (pane, visible) in panes.panes.iter_mut().zip(visible) {
+                if pane.activity.watch.is_none_or(|last| now < last + after) {
+                    continue;
+                }
+                pane.activity.watch = None;
+                let in_view = window_focused && tab_idx == active_tab && visible;
+                pane.activity.silent = tab_idx != active_tab;
+                if !in_view {
+                    notify_silence(&pane.title, after);
+                    announced = true;
+                }
+            }
+        }
+        if announced {
+            self.window.request_user_attention(Some(UserAttentionType::Informational));
+        }
+        self.window.request_redraw();
     }
 
     /// The keyboard went to another terminal: the search was in the old
@@ -1082,6 +1262,7 @@ impl AppState {
         self.focused = false;
         self.close_context_menu();
         self.close_palette();
+        self.paste_warning = None;
         self.drag = None;
     }
 
@@ -1602,8 +1783,10 @@ impl AppState {
         self.context_menu.as_ref().is_some_and(|menu| menu.contains(self.to_points(pos)))
     }
 
-    fn over_palette(&self, pos: (f64, f64)) -> bool {
+    /// The command palette or the paste dialog is at `pos`.
+    fn over_popup(&self, pos: (f64, f64)) -> bool {
         self.command_palette.as_ref().is_some_and(|palette| palette.contains(self.to_points(pos)))
+            || self.paste_warning.as_ref().is_some_and(|warning| warning.contains(self.to_points(pos)))
     }
 
     /// The settings page is at `pos`: everything below the tab bar right
@@ -1615,7 +1798,7 @@ impl AppState {
     /// egui owns the mouse at `pos`: the sidebar, the settings page or the
     /// open context menu.
     fn over_ui(&self, pos: (f64, f64)) -> bool {
-        self.over_sidebar(pos.0) || self.over_settings(pos) || self.over_context_menu(pos) || self.over_palette(pos)
+        self.over_sidebar(pos.0) || self.over_settings(pos) || self.over_context_menu(pos) || self.over_popup(pos)
     }
 
     /// Key presses go to egui rather than the terminal: the user clicked
@@ -1800,6 +1983,7 @@ impl AppState {
             save_session,
             key_repeat,
             self.startup_due(),
+            self.silence_due(),
         ]
             .into_iter()
             .flatten()
@@ -1807,11 +1991,67 @@ impl AppState {
     }
 
     fn copy_selection(&mut self) {
-        let text = self.current_terminal().and_then(|terminal| terminal.term.lock().selection_to_string());
-        let (Some(text), Some(clipboard)) = (text, self.clipboard.as_mut()) else { return };
+        if let Some(text) = self.current_terminal().and_then(|terminal| terminal.term.lock().selection_to_string()) {
+            self.set_clipboard(text);
+        }
+    }
+
+    fn set_clipboard(&mut self, text: String) {
+        let Some(clipboard) = self.clipboard.as_mut() else { return };
         if let Err(err) = clipboard.set_text(text) {
             log::warn!("failed to set clipboard: {err}");
         }
+    }
+
+    /// What the focused terminal's last command printed, into the
+    /// clipboard -- if it printed anything. Not in a full-screen program,
+    /// whose screen has no prompts.
+    fn copy_last_output(&mut self) {
+        let Some(terminal) = self.current_terminal() else { return };
+        let text = {
+            let term = terminal.term.lock();
+            if term.mode().contains(TermMode::ALT_SCREEN) {
+                return;
+            }
+            prompts::last_command(&term).map(|command| prompts::output_text(&term, &command))
+        };
+        match text {
+            Some(text) if !text.is_empty() => self.set_clipboard(text),
+            _ => log::debug!("no command output to copy"),
+        }
+    }
+
+    /// A click on a prompt: select its command's block, prompt to output.
+    fn select_command(&mut self, id: usize, point: Point) {
+        let Some(pane) = self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| {
+            panes.panes.iter().find(|pane| pane.id == id)
+        }) else {
+            return;
+        };
+        let mut term = pane.terminal.term.lock();
+        if let Some(command) = prompts::command_at(&term, point.line) {
+            prompts::select(&mut term, &command);
+        }
+    }
+
+    /// The grid point under the mouse in the focused pane.
+    fn point_under_mouse(&self) -> Option<Point> {
+        let pane = self.current_pane()?;
+        let (x, y) = self.last_cursor_pos;
+        let (col, row, _) = pixel_to_cell(x, y, self.pane_geometry(pane.rect), pane.size);
+        let offset = pane.terminal.term.lock().grid().display_offset() as i32;
+        Some(Point::new(Line(row as i32 - offset), Column(col)))
+    }
+
+    /// The output of the command under the mouse, or of the last one.
+    fn output_under_mouse(&self) -> Option<String> {
+        let point = self.point_under_mouse()?;
+        let term = self.current_terminal()?.term.lock();
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        let command = prompts::command_at(&term, point.line).or_else(|| prompts::last_command(&term))?;
+        Some(prompts::output_text(&term, &command))
     }
 
     /// Type the clipboard's text into the terminal. With `run`, followed
@@ -1830,7 +2070,42 @@ impl AppState {
             self.window.request_redraw();
             return;
         }
-        self.send_to_input_panes(|mode| input::paste_to_bytes(&text, mode, run));
+        if self.config.paste_warning {
+            let modes = self.input_modes();
+            // Full-screen programs (editors) take lines as text.
+            if !modes.iter().all(|mode| mode.contains(TermMode::ALT_SCREEN)) {
+                let bracketed = modes.iter().all(|mode| mode.contains(TermMode::BRACKETED_PASTE));
+                let reasons = paste_warning::check(&text, bracketed, run, modes.len());
+                if !reasons.is_empty() {
+                    self.close_context_menu();
+                    self.paste_warning = Some(PasteWarning::new(text, run, reasons, modes.len()));
+                    self.window.request_redraw();
+                    return;
+                }
+            }
+        }
+        self.paste_text(&text, run);
+    }
+
+    fn paste_text(&mut self, text: &str, run: bool) {
+        self.send_to_input_panes(|mode| input::paste_to_bytes(text, mode, run));
+    }
+
+    /// The modes of the terminals input goes to right now.
+    fn input_modes(&self) -> Vec<TermMode> {
+        self.input_panes()
+            .into_iter()
+            .filter_map(|(tab, idx)| Some(*self.tabs[tab].panes()?.panes[idx].terminal.term.lock().mode()))
+            .collect()
+    }
+
+    /// The paste dialog was answered.
+    fn answer_paste_warning(&mut self, choice: paste_warning::Choice) {
+        let Some(warning) = self.paste_warning.take() else { return };
+        if choice == paste_warning::Choice::Paste {
+            self.paste_text(&warning.text, warning.run);
+        }
+        self.window.request_redraw();
     }
 
     /// Input the user typed or pasted. Snaps the view back to the bottom
@@ -1889,13 +2164,18 @@ impl AppState {
     fn open_context_menu(&mut self) {
         let Some(terminal) = self.current_terminal() else { return };
         let can_copy = terminal.term.lock().selection_to_string().is_some_and(|s| !s.is_empty());
+        self.context_output = self.output_under_mouse();
+        let can_copy_output = self.context_output.as_ref().is_some_and(|text| !text.is_empty());
+        let Some(terminal) = self.current_terminal() else { return };
         let ssh = !terminal.is_local();
         let can_paste = self.clipboard.as_mut().is_some_and(|c| c.get_text().is_ok_and(|text| !text.is_empty()));
         let shortcuts = [
             Action::Copy,
+            Action::CopyLastOutput,
             Action::Paste,
             Action::PasteAndRun,
             Action::ToggleBroadcast,
+            Action::WatchSilence,
             Action::SplitRight,
             Action::SplitDown,
             Action::ClosePane,
@@ -1903,8 +2183,9 @@ impl AppState {
         ]
         .map(|action| self.keymap.label(action));
         let broadcast = self.current_pane().is_some_and(|pane| pane.broadcast);
+        let watching = self.current_pane().is_some_and(|pane| pane.activity.watch.is_some());
         let pos = self.to_points(self.last_cursor_pos);
-        self.context_menu = Some(ContextMenu::new(pos, can_copy, can_paste, broadcast, ssh, shortcuts));
+        self.context_menu = Some(ContextMenu::new(pos, [can_copy, can_copy_output, can_paste], [broadcast, watching], ssh, shortcuts));
         self.set_hovered(None);
         self.window.request_redraw();
     }
@@ -1918,9 +2199,15 @@ impl AppState {
     fn apply_menu_action(&mut self, action: MenuAction) {
         match action {
             MenuAction::Copy => self.copy_selection(),
+            MenuAction::CopyOutput => {
+                if let Some(text) = self.context_output.take() {
+                    self.set_clipboard(text);
+                }
+            }
             MenuAction::Paste => self.paste_clipboard(false),
             MenuAction::PasteAndRun => self.paste_clipboard(true),
             MenuAction::ToggleBroadcast => self.toggle_broadcast(),
+            MenuAction::WatchSilence => self.toggle_silence_watch(),
             MenuAction::SplitRight => self.split_pane(Axis::Horizontal),
             MenuAction::SplitDown => self.split_pane(Axis::Vertical),
             MenuAction::ClosePane => self.close_focused_pane(),
@@ -2108,6 +2395,14 @@ impl AppState {
             self.record_shortcut(&event);
             return;
         }
+        if self.paste_warning.is_some() {
+            match &event.logical_key {
+                Key::Named(NamedKey::Enter) => self.answer_paste_warning(paste_warning::Choice::Paste),
+                Key::Named(NamedKey::Escape) => self.answer_paste_warning(paste_warning::Choice::Cancel),
+                _ => {}
+            }
+            return;
+        }
         if self.command_palette.is_some() {
             self.palette_key(&event);
             return;
@@ -2168,10 +2463,12 @@ impl AppState {
             Action::ZoomPane => return self.toggle_zoom(),
             Action::OpenFiles => return self.open_files(),
             Action::ToggleBroadcast => self.toggle_broadcast(),
+            Action::WatchSilence => self.toggle_silence_watch(),
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::OpenSettings => self.open_settings(),
             Action::CommandPalette => self.open_palette(),
             Action::Copy => self.copy_selection(),
+            Action::CopyLastOutput => self.copy_last_output(),
             Action::Paste => self.paste_clipboard(false),
             Action::PasteAndRun => self.paste_clipboard(true),
             Action::ScrollPageUp => return self.scroll_by_key(Scroll::PageUp),
@@ -2385,6 +2682,10 @@ impl AppState {
                 if let Some(sel) = term.selection.as_mut() {
                     sel.update(point, side);
                 }
+                // Dragging off the pressed cell is a selection after all.
+                if self.prompt_press.is_some_and(|(_, pressed)| pressed != point) {
+                    self.prompt_press = None;
+                }
                 drop(term);
                 self.window.request_redraw();
             }
@@ -2431,14 +2732,24 @@ impl AppState {
     fn on_mouse_input(&mut self, button: MouseButton, button_state: ElementState) {
         if button_state == ElementState::Released {
             if button == MouseButton::Left && self.drag.take().is_some() {
+                if let Some((id, point)) = self.prompt_press.take() {
+                    self.select_command(id, point);
+                }
                 self.update_cursor_icon();
                 self.window.request_redraw();
             }
             return;
         }
+        // Presses on the paste dialog are egui's; one anywhere else cancels.
+        if self.paste_warning.is_some() {
+            if !self.over_popup(self.last_cursor_pos) {
+                self.answer_paste_warning(paste_warning::Choice::Cancel);
+            }
+            return;
+        }
         // Presses on the palette are egui's; one anywhere else closes it.
         if self.command_palette.is_some() {
-            if !self.over_palette(self.last_cursor_pos) {
+            if !self.over_popup(self.last_cursor_pos) {
                 self.close_palette();
             }
             return;
@@ -2506,7 +2817,9 @@ impl AppState {
                 let display_offset = term.renderable_content().display_offset as i32;
                 let point = Point::new(Line(row as i32 - display_offset), Column(col));
                 term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                let on_prompt = !term.mode().contains(TermMode::ALT_SCREEN) && prompts::is_prompt_cell(&term, point);
                 drop(term);
+                self.prompt_press = on_prompt.then_some((id, point));
                 self.window.request_redraw();
             }
             _ => {}
@@ -2580,6 +2893,8 @@ impl AppState {
                 if force || size != pane.size {
                     pane.size = size;
                     pane.terminal.resize(size, cell.width, cell.height);
+                    // The shell redraws its prompt for the new size.
+                    pane.activity.ignore_until = Some(Instant::now() + ACTIVITY_GRACE);
                 }
             }
         }
@@ -2628,6 +2943,8 @@ impl AppState {
         let mut menu_action = None;
         let palette = &mut self.command_palette;
         let mut palette_pick = None;
+        let paste = &mut self.paste_warning;
+        let mut paste_choice = None;
         let mut files_tab = match self.tabs.get_mut(active_tab).map(|tab| &mut tab.content) {
             Some(TabContent::Files(files)) => Some(files),
             _ => None,
@@ -2685,6 +3002,9 @@ impl AppState {
             if let Some(palette) = palette.as_mut() {
                 palette_pick = palette.show(ui.ctx(), console).or(palette_pick.take());
             }
+            if let Some(warning) = paste.as_mut() {
+                paste_choice = warning.show(ui.ctx(), console).or(paste_choice);
+            }
             // Painted last, on egui's foreground layer: over the sidebar
             // as well as the grid and tab bar drawn before egui.
             if let Some(splash) = splash {
@@ -2727,6 +3047,9 @@ impl AppState {
         if let Some(item) = palette_pick {
             self.close_palette();
             self.run_palette_item(item);
+        }
+        if let Some(choice) = paste_choice {
+            self.answer_paste_warning(choice);
         }
 
         // egui just set the cursor for its own widgets; the tab bar isn't
@@ -2971,7 +3294,9 @@ impl AppState {
             | Setting::Splash(_)
             | Setting::CommandsRun(_)
             | Setting::CommandsAssumeYes(_)
-            | Setting::CommandsWarned(_) => {}
+            | Setting::CommandsWarned(_)
+            | Setting::PasteWarning(_)
+            | Setting::SilenceAfter(_) => {}
         }
         if save && let Err(err) = self.config.save(setting) {
             self.settings.report(Err(err));
@@ -2997,33 +3322,52 @@ impl AppState {
         self.layout_panes(true);
     }
 
-    /// `✘ code` at the right end of the prompts whose command failed, where
-    /// the row has room for it -- never over text, nor under the search
-    /// bar's rows `covered`. Adds to this frame's labels.
+    /// At the right end of a prompt's row, how the command typed at it
+    /// went: how long it ran, if that was a while, and `✘ code` if it
+    /// failed -- where the row has room for it, never over text, nor under
+    /// the search bar's rows `covered`. Adds to this frame's labels.
     fn build_prompt_labels(
         &mut self,
-        prompts: &[(usize, Option<i32>)],
+        prompts: &[(usize, integration::Finished)],
         row_lengths: &std::collections::HashMap<usize, usize>,
         geometry: grid::GridGeometry,
         cols: usize,
         covered: Option<std::ops::Range<usize>>,
         palette: &Palette,
     ) {
-        let red = palette.named(NamedColor::Red);
-        let color = glyphon::Color::rgb(red.r, red.g, red.b);
+        let rgb = |c: Rgb| glyphon::Color::rgb(c.r, c.g, c.b);
+        let red = rgb(palette.named(NamedColor::Red));
+        let weak = rgb(crate::theme::mix(
+            palette.named(NamedColor::Foreground),
+            palette.named(NamedColor::Background),
+            0.45,
+        ));
         let cell = geometry.cell;
-        for &(row, exit) in prompts {
-            let Some(code) = exit.filter(|&code| code != 0) else { continue };
+        for &(row, finished) in prompts {
             if covered.as_ref().is_some_and(|rows| rows.contains(&row)) {
                 continue;
             }
-            let label = t!("prompt-exit", code = code);
-            let len = label.chars().count();
+            // Right to left: the exit code at the end, the run time before it.
+            let parts = [
+                finished.exit.filter(|&code| code != 0).map(|code| (t!("prompt-exit", code = code), red)),
+                finished.duration.filter(|d| *d >= prompts::MIN_SHOWN_DURATION).map(|d| (prompts::duration_label(d), weak)),
+            ];
+            let parts: Vec<(String, glyphon::Color)> = parts.into_iter().flatten().collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let len: usize = parts.iter().map(|(text, _)| text.chars().count()).sum::<usize>() + parts.len() - 1;
             let used = row_lengths.get(&row).copied().unwrap_or(0);
-            let Some(col) = cols.checked_sub(len + 1).filter(|&col| col >= used + 2) else { continue };
-            let (left, top) = (geometry.origin_x + col as f32 * cell.width, geometry.origin_y + row as f32 * cell.height);
-            let clip = LabelRect { x: left, y: top, w: (len + 1) as f32 * cell.width, h: cell.height };
-            self.prompt_labels.push(&mut self.text, &label, left, top, clip, color);
+            let Some(start) = cols.checked_sub(len + 1).filter(|&col| col >= used + 2) else { continue };
+            let mut end = start + len;
+            for (text, color) in parts {
+                let chars = text.chars().count();
+                let col = end - chars;
+                let (left, top) = (geometry.origin_x + col as f32 * cell.width, geometry.origin_y + row as f32 * cell.height);
+                let clip = LabelRect { x: left, y: top, w: (chars + 1) as f32 * cell.width, h: cell.height };
+                self.prompt_labels.push(&mut self.text, &text, left, top, clip, color);
+                end = col.saturating_sub(1);
+            }
         }
     }
 
@@ -3408,7 +3752,16 @@ fn notify(tab: &str, exit: Option<i32>, elapsed: Duration) {
         Some(code) if code != 0 => t!("notify-failed", code = code),
         _ => t!("notify-finished"),
     };
-    let body = t!("notify-body", tab = tab, duration = duration_text(elapsed));
+    desktop_notification(title, t!("notify-body", tab = tab, duration = duration_text(elapsed)));
+}
+
+/// A desktop notification that the watched terminal titled `tab` has been
+/// quiet for `after`.
+fn notify_silence(tab: &str, after: Duration) {
+    desktop_notification(t!("notify-silent"), t!("notify-silent-body", tab = tab, duration = duration_text(after)));
+}
+
+fn desktop_notification(title: String, body: String) {
     let spawned = std::process::Command::new("notify-send")
         .args(["--app-name=Terminaal", "--icon=terminaal", "--"])
         .args([title, body])
@@ -3617,6 +3970,9 @@ impl ApplicationHandler<UserEvent> for App {
             state.save_session();
         }
         state.run_due_startups();
+        if state.silence_due().is_some_and(|at| Instant::now() >= at) {
+            state.check_silence();
+        }
         let redraw_pending = matches!(&state.window, AppWindow::Layer(window) if window.redraw.get() && state.gpu.surface.is_some());
         let wakeup = if redraw_pending { Some(Instant::now()) } else { state.next_wakeup() };
         event_loop.set_control_flow(wakeup.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
@@ -3817,10 +4173,12 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             }
 
-            TermEvent::Wakeup => state.pane_output(at),
-            TermEvent::ChildExit(_)
-            | TermEvent::Bell
-            | TermEvent::MouseCursorDirty => {}
+            TermEvent::Wakeup => {
+                state.pane_output(at);
+                state.note_activity(at);
+            }
+            TermEvent::Bell => state.ring_bell(at),
+            TermEvent::ChildExit(_) | TermEvent::MouseCursorDirty => {}
         }
 
         // Redrawing only matters if the event's pane is on screen.
@@ -3856,5 +4214,43 @@ mod tests {
         let steps: Vec<i32> =
             (0..8).map(|_| wheel_lines(PixelDelta(PhysicalPosition::new(0.0, 5.0)), 3.0, 20.0, &mut rest)).collect();
         assert_eq!(steps, [0, 0, 0, 1, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn activity_marks_and_screen_fingerprints() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::{Config, Term};
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+
+        use super::{Activity, PaneActivity, screen_fingerprint};
+        use crate::terminal::GridSize;
+
+        let size = GridSize { columns: 20, screen_lines: 3 };
+        let mut term = Term::new(Config { scrolling_history: 10, ..Config::default() }, &size, VoidListener);
+        let mut parser = Processor::<StdSyncHandler>::new();
+        parser.advance(&mut term, b"$ ");
+        let before = screen_fingerprint(&term);
+        assert_eq!(screen_fingerprint(&term), before, "nothing new, same print");
+        parser.advance(&mut term, b"make\r\n");
+        assert_ne!(screen_fingerprint(&term), before);
+        // The same text again, once the screen is full: the scrollback grew.
+        parser.advance(&mut term, b"a\r\nb\r\n");
+        let full = screen_fingerprint(&term);
+        parser.advance(&mut term, b"a\r\nb\r\n");
+        assert_ne!(screen_fingerprint(&term), full);
+
+        let mut activity = PaneActivity::default();
+        assert_eq!(activity.mark(), None);
+        activity.watch = Some(std::time::Instant::now());
+        assert_eq!(activity.mark(), Some(Activity::Watching));
+        activity.output = true;
+        assert_eq!(activity.mark(), Some(Activity::Output));
+        activity.bell = true;
+        activity.silent = true;
+        assert_eq!(activity.mark(), Some(Activity::Bell), "the bell first");
+        activity.seen();
+        assert_eq!(activity.mark(), Some(Activity::Watching), "seeing the tab doesn't stop watching");
+        // The tab bar shows the most urgent of a tab's panes.
+        assert_eq!([Activity::Output, Activity::Silent, Activity::Watching].into_iter().min(), Some(Activity::Silent));
     }
 }

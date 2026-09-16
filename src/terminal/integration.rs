@@ -16,7 +16,14 @@
 //! with anything on it -- a shell that never sends `B` doesn't mark its
 //! whole session. The prompt's cells then carry the mark wherever they
 //! move; selection and search don't see hyperlinks. The mark's URI also
-//! says how the command before it ended: `terminaal-prompt:exit=1`.
+//! says how the command before it ended and how long it ran, if one ran:
+//! `terminaal-prompt:exit=1&ms=5230` (`;` would end the URI in OSC 8).
+//!
+//! `C` opens another hyperlink, [`OUTPUT_SCHEME`], closed right after the
+//! first character printed: where the command's output starts, however
+//! long or wrapped the command line was. A command without output gets
+//! none; one that sets a hyperlink of its own before printing anything
+//! neither (closing ours would close its link).
 //!
 //! Everything else goes through byte for byte. The filter keeps no more
 //! than an unfinished OSC sequence between calls; `feed` never holds on
@@ -26,6 +33,8 @@ use std::path::{Path, PathBuf};
 
 /// URI scheme of prompt marks; never opened as a link.
 pub const PROMPT_SCHEME: &str = "terminaal-prompt:";
+/// URI scheme of the mark on a command's first output character.
+pub const OUTPUT_SCHEME: &str = "terminaal-output:";
 
 /// Longest OSC sequence looked at; longer ones pass through unexamined.
 const MAX_OSC: usize = 4096;
@@ -49,10 +58,28 @@ pub enum ShellEvent {
     CommandFinished { exit: Option<i32> },
 }
 
-/// The exit status recorded in a prompt mark's URI, `None` if there's
-/// none (the first prompt, or a shell that doesn't say).
-pub fn mark_exit(uri: &str) -> Option<i32> {
-    uri.strip_prefix(PROMPT_SCHEME)?.strip_prefix("exit=")?.parse().ok()
+/// What a prompt mark says about the command typed at the prompt before.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Finished {
+    /// Its exit status, if the shell said.
+    pub exit: Option<i32>,
+    /// How long it ran; `None` if no command ran (an empty line, the first
+    /// prompt, a shell without `C`).
+    pub duration: Option<std::time::Duration>,
+}
+
+/// The command before a prompt, from the prompt's mark URI.
+pub fn mark_finished(uri: &str) -> Finished {
+    let mut finished = Finished::default();
+    let Some(fields) = uri.strip_prefix(PROMPT_SCHEME) else { return finished };
+    for field in fields.split('&') {
+        match field.split_once('=') {
+            Some(("exit", code)) => finished.exit = code.parse().ok(),
+            Some(("ms", ms)) => finished.duration = ms.parse().ok().map(std::time::Duration::from_millis),
+            _ => {}
+        }
+    }
+    finished
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,15 +106,32 @@ pub struct Filter {
     mark_open: bool,
     /// Something visible was printed since the mark opened.
     printed: bool,
-    /// A command started (C) and hasn't finished (D) yet.
-    running: bool,
-    /// Exit status of the last finished command, for the next mark.
+    /// When the command that started (C) and hasn't finished (D) yet began.
+    running: Option<std::time::Instant>,
+    /// Exit status and run time of the last finished command, for the
+    /// next mark.
     last_exit: Option<i32>,
+    last_duration: Option<std::time::Duration>,
+    /// The output mark is open: the first character after C isn't out yet.
+    output_open: bool,
+    /// Continuation bytes still to come of the UTF-8 character being printed
+    /// while the output mark is open.
+    utf8_rest: u8,
 }
 
 impl Default for Filter {
     fn default() -> Self {
-        Self { state: State::Ground, osc: Vec::new(), mark_open: false, printed: false, running: false, last_exit: None }
+        Self {
+            state: State::Ground,
+            osc: Vec::new(),
+            mark_open: false,
+            printed: false,
+            running: None,
+            last_exit: None,
+            last_duration: None,
+            output_open: false,
+            utf8_rest: 0,
+        }
     }
 }
 
@@ -109,6 +153,9 @@ impl Filter {
                             self.printed = true;
                         }
                         out.push(byte);
+                        if self.output_open {
+                            self.after_output_byte(byte, out);
+                        }
                     }
                 },
                 State::Escape => match byte {
@@ -195,26 +242,45 @@ impl Filter {
             match parts.next() {
                 Some(b"A") => {
                     self.close_mark(out);
-                    let exit = self.last_exit.map(|code| format!("exit={code}")).unwrap_or_default();
-                    out.extend_from_slice(format!("\x1b]8;;{PROMPT_SCHEME}{exit}\x07").as_bytes());
+                    self.close_output(out);
+                    let fields: Vec<String> = [
+                        self.last_exit.map(|code| format!("exit={code}")),
+                        self.last_duration.map(|duration| format!("ms={}", duration.as_millis())),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                    out.extend_from_slice(format!("\x1b]8;;{PROMPT_SCHEME}{}\x07", fields.join("&")).as_bytes());
                     self.mark_open = true;
                     self.printed = false;
                     self.last_exit = None;
+                    self.last_duration = None;
                     events.push(ShellEvent::Prompt);
                 }
                 Some(b"B") => self.close_mark(out),
                 Some(b"C") => {
                     self.close_mark(out);
-                    self.running = true;
+                    self.close_output(out);
+                    // Several lines typed at once: bash starts each (C) and
+                    // finishes once (D). They ran from the first on, and
+                    // the output starts at the first one's.
+                    if self.running.is_none() {
+                        self.running = Some(std::time::Instant::now());
+                        out.extend_from_slice(format!("\x1b]8;;{OUTPUT_SCHEME}\x07").as_bytes());
+                        self.output_open = true;
+                    }
+                    self.utf8_rest = 0;
                     events.push(ShellEvent::CommandStarted);
                 }
                 // Only after C: shells send D at every prompt, also after
                 // an empty line, whose status is still the command before.
-                Some(b"D") if self.running => {
+                Some(b"D") if self.running.is_some() => {
                     self.close_mark(out);
-                    self.running = false;
+                    self.close_output(out);
+                    let started = self.running.take().expect("checked");
                     let exit = parts.next().and_then(|code| std::str::from_utf8(code).ok()?.trim().parse().ok());
                     self.last_exit = exit;
+                    self.last_duration = Some(started.elapsed());
                     events.push(ShellEvent::CommandFinished { exit });
                 }
                 Some(b"D") => self.close_mark(out),
@@ -222,6 +288,10 @@ impl Filter {
             }
             // Handled (or unknown); alacritty would drop it anyway.
             return;
+        } else if body.starts_with(b"8;") && self.output_open {
+            // The program's own hyperlink replaces ours; closing ours later
+            // would end its link.
+            self.output_open = false;
         }
         self.osc = osc;
     }
@@ -241,6 +311,31 @@ impl Filter {
         out.append(&mut self.osc);
         out.push(byte);
         self.state = State::Ground;
+    }
+
+    /// `byte` of the output went out while the output mark is open: close
+    /// it once the first character is complete -- never inside a UTF-8
+    /// sequence, which the OSC would break.
+    fn after_output_byte(&mut self, byte: u8, out: &mut Vec<u8>) {
+        match byte {
+            0x80..=0xbf if self.utf8_rest > 0 => self.utf8_rest -= 1,
+            0xc0..=0xdf => self.utf8_rest = 1,
+            0xe0..=0xef => self.utf8_rest = 2,
+            0xf0..=0xf7 => self.utf8_rest = 3,
+            0x21..=0x7e => {}
+            // Blanks and control characters don't start the output.
+            _ => return,
+        }
+        if self.utf8_rest == 0 {
+            self.close_output(out);
+        }
+    }
+
+    fn close_output(&mut self, out: &mut Vec<u8>) {
+        if self.output_open {
+            out.extend_from_slice(b"\x1b]8;;\x07");
+            self.output_open = false;
+        }
     }
 
     fn close_mark(&mut self, out: &mut Vec<u8>) {
@@ -338,10 +433,13 @@ mod tests {
     #[test]
     fn a_whole_prompt_cycle() {
         let (out, events) = run(&[b"\x1b]133;A\x07$ \x1b]133;B\x07ls\r\n\x1b]133;C\x07file\r\n\x1b]133;D;2\x07\x1b]133;A\x1b\\$ "]);
+        let out = text(&out);
+        let (out, ms) = out.split_once("&ms=").expect("run time recorded");
         assert_eq!(
-            text(&out),
-            text(b"\x1b]8;;terminaal-prompt:\x07$ \x1b]8;;\x07ls\r\nfile\r\n\x1b]8;;terminaal-prompt:exit=2\x07$ ")
+            out,
+            text(b"\x1b]8;;terminaal-prompt:\x07$ \x1b]8;;\x07ls\r\n\x1b]8;;terminaal-output:\x07f\x1b]8;;\x07ile\r\n\x1b]8;;terminaal-prompt:exit=2")
         );
+        assert!(ms.starts_with('0'), "{ms}");
         assert_eq!(
             events,
             [ShellEvent::Prompt, ShellEvent::CommandStarted, ShellEvent::CommandFinished { exit: Some(2) }, ShellEvent::Prompt]
@@ -389,13 +487,37 @@ mod tests {
         let finished: Vec<_> = events.iter().filter(|e| matches!(e, ShellEvent::CommandFinished { .. })).collect();
         assert_eq!(finished, [&ShellEvent::CommandFinished { exit: Some(1) }]);
         assert_eq!(events.iter().filter(|e| **e == ShellEvent::Prompt).count(), 2);
-        assert!(text(&out).ends_with(&text(b"\x1b]8;;terminaal-prompt:exit=1\x07\x1b]8;;\x07\x1b]8;;terminaal-prompt:\x07")));
-        assert_eq!(mark_exit("terminaal-prompt:exit=130"), Some(130));
-        assert_eq!(mark_exit("terminaal-prompt:"), None);
-        assert_eq!(mark_exit("https://x.org"), None);
+        assert!(text(&out).contains("terminaal-prompt:exit=1&ms="));
+        assert!(text(&out).ends_with(&text(b"\x1b]8;;\x07\x1b]8;;terminaal-prompt:\x07")), "{}", text(&out));
+        let finished = mark_finished("terminaal-prompt:exit=130&ms=2500");
+        assert_eq!((finished.exit, finished.duration), (Some(130), Some(std::time::Duration::from_millis(2500))));
+        assert_eq!(mark_finished("terminaal-prompt:ms=7").exit, None);
+        assert_eq!(mark_finished("terminaal-prompt:exit=1"), Finished { exit: Some(1), duration: None }, "older marks");
+        assert_eq!(mark_finished("terminaal-prompt:"), Finished::default());
+        assert_eq!(mark_finished("https://x.org"), Finished::default());
         // fish 4 sends extra fields after A; still a prompt.
         let (out, _) = run(&[b"\x1b]133;A;click_events=1\x07"]);
         assert_eq!(text(&out), text(b"\x1b]8;;terminaal-prompt:\x07"));
+    }
+
+    #[test]
+    fn output_mark_covers_the_first_character_only() {
+        let c = b"\x1b]133;C\x07";
+        // Blank lines and colors come before; a multi-byte character stays whole.
+        let (out, _) = run(&[c, b"\r\n \x1b[31m\xc3\xa4bc"]);
+        assert_eq!(text(&out), text(b"\x1b]8;;terminaal-output:\x07\r\n \x1b[31m\xc3\xa4\x1b]8;;\x07bc"));
+        // Split between the bytes of it, too.
+        let (split, _) = run(&[c, b"\xe2\x82", b"\xac!"]);
+        assert_eq!(text(&split), text(b"\x1b]8;;terminaal-output:\x07\xe2\x82\xac\x1b]8;;\x07!"));
+        // No output: D closes it.
+        let (out, _) = run(&[c, b"\x1b]133;D;0\x07"]);
+        assert_eq!(text(&out), text(b"\x1b]8;;terminaal-output:\x07\x1b]8;;\x07"));
+        // C again before D (bash, several lines at once): one command, one mark.
+        let (out, _) = run(&[c, b"x", c, b"y"]);
+        assert_eq!(text(&out), text(b"\x1b]8;;terminaal-output:\x07x\x1b]8;;\x07y"));
+        // A program's own link first: ours isn't closed over it.
+        let (out, _) = run(&[c, b"\x1b]8;;https://x.org\x07x\x1b]8;;\x07"]);
+        assert_eq!(text(&out), text(b"\x1b]8;;terminaal-output:\x07\x1b]8;;https://x.org\x07x\x1b]8;;\x07"));
     }
 
     #[test]

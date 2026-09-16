@@ -56,6 +56,22 @@ pub struct TabLook<'a> {
     pub accent: Option<Rgb>,
     /// Its terminal's background, where its host has a theme of its own.
     pub background: Option<Rgb>,
+    /// What happened in it while in the background, or that one of its
+    /// terminals is watched for silence.
+    pub activity: Option<Activity>,
+}
+
+/// A tab's mark in front of its title, most urgent first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Activity {
+    /// A terminal rang the bell.
+    Bell,
+    /// A watched terminal has gone quiet.
+    Silent,
+    /// New output.
+    Output,
+    /// A terminal is watched for silence, nothing yet.
+    Watching,
 }
 
 pub struct TabSlot {
@@ -221,7 +237,7 @@ impl TabBar {
         let text_top = ((h - text.metrics.line_height) * 0.5).round();
 
         for (i, (slot, look)) in layout.tabs.iter().zip(tabs).enumerate() {
-            let TabLook { title, broadcast, accent, background } = look;
+            let TabLook { title, broadcast, accent, background, activity } = look;
             let r = slot.rect;
             let is_active = i == active;
             let is_hovered = matches!(hovered, Some(TabBarHit::Tab(j) | TabBarHit::Close(j)) if j == i);
@@ -258,11 +274,24 @@ impl TabBar {
                 Some(c) if show_close => c.x,
                 _ => r.x + r.w - layout.label_pad * 0.5,
             };
-            let label_left = r.x + layout.label_pad;
+            let mut label_left = r.x + layout.label_pad;
+            // The mark before the title: a dot, colored by what happened.
+            if let Some(activity) = activity {
+                let (mark, color) = match activity {
+                    Activity::Bell => ("●", c.error),
+                    Activity::Silent => ("●", c.success),
+                    Activity::Output => ("●", c.accent),
+                    Activity::Watching => ("○", c.text_weak),
+                };
+                let clip = Rect { x: label_left, y: 0.0, w: cell.width * 2.0, h };
+                self.labels.push(text, mark, label_left, text_top, clip, text_color(color));
+                label_left += cell.width * 2.0;
+            }
             let max_chars = ((label_right - label_left) / cell.width).floor().max(0.0) as usize;
             let color = if is_active {
                 text_active
-            } else if is_hovered {
+            } else if is_hovered || matches!(activity, Some(Activity::Bell | Activity::Silent | Activity::Output)) {
+                // Something happened there: easier to read than the others.
                 text_hover
             } else {
                 text_inactive

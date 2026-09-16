@@ -53,6 +53,9 @@ pub struct Config {
     /// Notify when a command that ran at least this many seconds finishes
     /// while its tab isn't in view (needs shell integration); 0: never.
     pub notify_after_secs: u64,
+    /// A terminal watched for silence ("Watch for silence") counts as
+    /// quiet after this many seconds without output.
+    pub silence_secs: u64,
     /// Show the clickable tab bar along the top of the window.
     pub tab_bar: bool,
     /// Shell new tabs start with, e.g. `/usr/bin/fish`. Unset: `$SHELL`.
@@ -97,6 +100,9 @@ pub struct Config {
     /// Whether the warning about commands running right away has been
     /// acknowledged; set the first time one is used.
     pub commands_warned: bool,
+    /// Ask before a paste with several lines or risky commands
+    /// (`ui::paste_warning`).
+    pub paste_warning: bool,
     /// The system the built-in commands are tailored to, e.g. `debian`
     /// (`commands::Family::key`). Unset (or `auto`): from `/etc/os-release`.
     pub system: Option<String>,
@@ -146,6 +152,7 @@ impl Default for Config {
             cursor_blink: true,
             cursor_blink_interval_ms: 600,
             notify_after_secs: 10,
+            silence_secs: 15,
             tab_bar: true,
             shell: None,
             sidebar: true,
@@ -158,6 +165,7 @@ impl Default for Config {
             commands_run: true,
             commands_assume_yes: false,
             commands_warned: false,
+            paste_warning: true,
             system: None,
             editor: None,
             shortcuts: BTreeMap::new(),
@@ -342,6 +350,7 @@ impl Config {
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
             Setting::NotifyAfter(secs) => self.notify_after_secs = secs,
+            Setting::SilenceAfter(secs) => self.silence_secs = secs.max(1),
             Setting::TabBar(on) => self.tab_bar = on,
             Setting::Sidebar(on) => self.sidebar = on,
             Setting::SidebarWidth(width) => self.sidebar_width = width,
@@ -354,6 +363,7 @@ impl Config {
             Setting::CommandsRun(on) => self.commands_run = on,
             Setting::CommandsAssumeYes(on) => self.commands_assume_yes = on,
             Setting::CommandsWarned(on) => self.commands_warned = on,
+            Setting::PasteWarning(on) => self.paste_warning = on,
         }
     }
 
@@ -400,6 +410,8 @@ pub enum Setting {
     CursorBlinkInterval(u64),
     /// Seconds a command has to run to be notified about; 0: never.
     NotifyAfter(u64),
+    /// Seconds without output a watched terminal counts as quiet after.
+    SilenceAfter(u64),
     TabBar(bool),
     /// Show the sidebar at start.
     Sidebar(bool),
@@ -415,6 +427,7 @@ pub enum Setting {
     CommandsRun(bool),
     CommandsAssumeYes(bool),
     CommandsWarned(bool),
+    PasteWarning(bool),
 }
 
 impl Setting {
@@ -436,6 +449,7 @@ impl Setting {
             Self::CursorBlink(on) => set_value(doc, "cursor_blink", on),
             Self::CursorBlinkInterval(ms) => set_value(doc, "cursor_blink_interval_ms", int(ms)),
             Self::NotifyAfter(secs) => set_value(doc, "notify_after_secs", int(secs)),
+            Self::SilenceAfter(secs) => set_value(doc, "silence_secs", int(secs)),
             Self::TabBar(on) => set_value(doc, "tab_bar", on),
             Self::Sidebar(on) => set_value(doc, "sidebar", on),
             Self::SidebarWidth(width) => set_value(doc, "sidebar_width", float(width.into())),
@@ -448,6 +462,7 @@ impl Setting {
             Self::CommandsRun(on) => set_value(doc, "commands_run", on),
             Self::CommandsAssumeYes(on) => set_value(doc, "commands_assume_yes", on),
             Self::CommandsWarned(on) => set_value(doc, "commands_warned", on),
+            Self::PasteWarning(on) => set_value(doc, "paste_warning", on),
         }
     }
 }
@@ -535,11 +550,13 @@ mod tests {
             Setting::TabBar(false),
             Setting::CursorBlinkInterval(450),
             Setting::NotifyAfter(30),
+            Setting::SilenceAfter(45),
             Setting::Opacity(0.85),
             Setting::Blur(false),
             Setting::CommandsRun(false),
             Setting::CommandsAssumeYes(true),
             Setting::CommandsWarned(true),
+            Setting::PasteWarning(false),
             Setting::RestoreSession(false),
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
@@ -559,10 +576,12 @@ mod tests {
         assert!(!config.tab_bar);
         assert_eq!(config.cursor_blink_interval_ms, 450);
         assert_eq!(config.notify_after_secs, 30);
+        assert_eq!(config.silence_secs, 45);
         assert_eq!(config.opacity(), 0.85);
         assert!(!config.blur);
         assert!(!config.commands_run);
         assert!(config.commands_assume_yes);
+        assert!(!config.paste_warning);
         assert!(config.commands_warned);
         assert!(!config.restore_session);
         assert_eq!(config.quake_height(), 40.0);

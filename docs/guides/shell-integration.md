@@ -9,7 +9,8 @@ directory it's in, you get:
 | New tab opens in the same directory | OSC 7 (local tabs) |
 | Ctrl+click opens relative file names | OSC 7 (local tabs) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump between prompts | OSC 133 `A` |
-| `✘ code` next to a failed command | OSC 133 `A`, `C`, `D` |
+| `✘ code` next to a failed command, and how long a command ran | OSC 133 `A`, `C`, `D` |
+| Copy a command's output, select a command with a click on its prompt | OSC 133 `A`, `C`, `D` |
 | Notification when a long command finishes unseen | OSC 133 `C`, `D` |
 
 ## fish, bash and zsh: nothing to do
@@ -74,8 +75,20 @@ What each sequence means:
 - **Prompt jumps** put the prompt at the top of the screen. Going down past the
   last prompt returns to the bottom.
 - **Exit codes** appear at the right end of the prompt line of the failed command,
-  only where the line has room. Successful commands show nothing. The code is
-  known once the *next* prompt appears.
+  only where the line has room. The code is known once the *next* prompt appears.
+- **Run times** of commands that took a second or longer appear there too, in a
+  weaker color and left of an exit code: `4,2 s`, `3 min 5 s`. Several lines
+  pasted at once count as one command.
+- **Copy the output**: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>
+  (`copy_last_output`) copies what the last command printed – without its
+  prompt and command line, without trailing blank lines. Empty Enters in between
+  don't count; a command that printed nothing copies nothing. Right-click →
+  **Copy output** takes the command under the mouse instead (the last one when
+  there's none). Neither works while a full-screen program has the screen.
+- **Select a command**: click on a prompt (on its prompt text, not what you
+  typed) to select the whole block – prompt, command and output – then copy it
+  as usual. Dragging from a prompt still selects normally. The prompt you're
+  typing at has no block yet.
 - **Notifications**: **Settings → Terminal → Shell integration → Notify after**
   (default 10 seconds, 0 turns it off). You're notified only when the window
   isn't focused or the command's tab isn't the active one. Needs `notify-send`;
@@ -91,6 +104,9 @@ What each sequence means:
 - **No prompt marks in a local tab?** Check you're running fish, bash or zsh as
   started by Terminaal – a shell started inside another (say, `bash` typed in
   fish) doesn't get the integration.
+- **Copy output copies nothing?** The output starts where the shell said the
+  command started (`C`); a command whose very first output is a hyperlink of its
+  own gets no start mark. Output printed before this version has no mark either.
 - **Marks, but no exit codes?** The shell sends `A` but not `C`/`D`. A `D`
   without a preceding `C` is ignored on purpose (it would repeat the last status
   on an empty Enter).

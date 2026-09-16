@@ -64,6 +64,22 @@ Escape characters and Ctrl+C are removed from pasted text. With bracketed paste
 active, this also prevents a crafted clipboard from ending the paste early and
 running the rest as typed commands.
 
+Before a paste that could do more than it looks like, Terminaal asks and shows
+the text (**Settings → Terminal → Pasting**, `paste_warning`, on by default):
+
+- line breaks while the program doesn't take bracketed paste – each line would
+  run the moment it arrives; with paste and run, or going to several terminals
+  by broadcast, already for several lines even with bracketed paste
+- `sudo`, `doas` or `pkexec`
+- something piped into a shell (`| sh`, `| sudo bash`) or a download run by one
+  (`sh -c "$(curl …)"`, `bash <(wget …)`)
+- `rm` with recursive and force flags, `mkfs`, `dd of=/dev/…`, a fork bomb
+
+With the broadcast, the dialog says how many terminals the paste goes to.
+<kbd>Enter</kbd> pastes, <kbd>Esc</kbd> or a click elsewhere cancels. Full-screen
+programs such as editors are left alone. It's a look at the text, not a
+guarantee: a command can do harm without matching any of these.
+
 ## Broadcast
 
 Input goes to other terminals only while the **focused** one is in the broadcast

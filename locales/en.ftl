@@ -45,10 +45,13 @@ app-language-changed = Language changed.
 ## Context menu (right-click into the terminal)
 
 menu-copy = Copy
+menu-copy-output = Copy output
 menu-paste = Paste
 menu-paste-run = Paste and run
 menu-broadcast-on = Broadcast to this terminal
 menu-broadcast-off = Stop broadcasting
+menu-silence-on = Watch for silence
+menu-silence-off = Stop watching for silence
 menu-split-right = Split right
 menu-split-down = Split down
 menu-close-pane = Close pane
@@ -66,10 +69,15 @@ search-hint-jumping = n ↑ · N ↓ · / edit · Esc
 notify-finished = Command finished
 notify-failed = Command failed (exit code { $code })
 notify-body = { $tab } – after { $duration }
+notify-silent = Terminal is quiet
+notify-silent-body = { $tab } – no output for { $duration }
 duration-seconds = { $secs } s
 duration-minutes = { $mins } min { $secs } s
 duration-hours = { $hours } h { $mins } min
 prompt-exit = ✘ { $code }
+prompt-duration-seconds = { $value } s
+prompt-duration-minutes = { $minutes } min { $seconds } s
+prompt-duration-hours = { $hours } h { $minutes } min
 
 ## Key names in shortcuts
 
@@ -126,6 +134,29 @@ settings-notify-after = Notify after
 settings-notify-never = never
 settings-seconds = { $secs } s
 settings-integration-note = Notifies when a command ran this long and its tab isn't in view. fish, bash and zsh report prompts and directory in Terminaal by themselves, other shells with OSC 133 and OSC 7.
+settings-activity = Background tabs
+settings-silence-after = Quiet after
+settings-activity-note = A tab in the background gets a dot before its title: blue for new output, red for the bell, green when a terminal watched for silence (right-click → Watch for silence) has had no output this long – then there's also a notification.
+paste-warn-title = ⚠ Paste this?
+paste-warn-broadcast = Goes to { $terminals } terminals (broadcast).
+paste-warn-runs-lines = { $lines ->
+    [one] The line runs as soon as it arrives – the program doesn't take pastes as a whole.
+   *[other] { $lines } lines, each runs as soon as it arrives – the program doesn't take pastes as a whole.
+}
+paste-warn-lines = { $lines } lines at once.
+paste-warn-sudo = Runs something with root rights (sudo, doas, pkexec).
+paste-warn-pipe = Hands something to a shell to run, maybe a download (| sh, $(curl …)).
+paste-warn-destructive = Can delete files or whole disks (rm -rf, mkfs, dd).
+paste-warn-paste = Paste
+paste-warn-paste-run = Paste and run
+paste-warn-hint = Enter pastes · Esc cancels · turn off under Settings → Terminal
+paste-warn-more-lines = { $lines ->
+    [one] … 1 more line
+   *[other] … { $lines } more lines
+}
+settings-paste = Pasting
+settings-paste-warning = Ask before risky pastes
+settings-paste-warning-hint = Several lines that would run right away, sudo, a download piped into a shell, rm -rf and the like – and several lines going to more than one terminal by broadcast.
 settings-shell = Default shell
 settings-startup = At start
 settings-startup-sidebar = Show sidebar
@@ -212,6 +243,7 @@ shortcut-focus-pane-down = Focus pane below
 shortcut-zoom-pane = Maximize pane / restore
 shortcut-toggle-broadcast = Broadcast on/off (input to all marked terminals)
 shortcut-open-files = Open the SSH connection's files (SFTP)
+shortcut-watch-silence = Watch for silence on/off (tell when the terminal goes quiet)
 shortcut-toggle-sidebar = Show or hide the sidebar
 shortcut-open-settings = Open settings
 shortcut-command-palette = Command palette (actions, hosts, snippets, tabs, themes)
@@ -227,6 +259,7 @@ palette-tab-number = Tab { $number }
 palette-theme-current = current
 palette-new-tab = New tab: { $shell }
 shortcut-copy = Copy
+shortcut-copy-last-output = Copy the last command's output
 shortcut-paste = Paste
 shortcut-paste-and-run = Paste and run
 shortcut-scroll-page-up = One page up

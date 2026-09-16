@@ -41,6 +41,18 @@
 - **Real hyperlinks:** `ls --hyperlink=auto` makes every name a link, even from
   other directories.
 
+## Tabs in the background
+
+- **Waiting for a build?** Right-click → **Watch for silence**, then switch away.
+  Once the terminal has printed nothing for 15 seconds (Settings → Terminal →
+  Background tabs), its tab gets a green dot and you get a notification. With
+  shell integration, a long command finishing notifies you anyway – watching
+  helps where there's no prompt: a log you tail, a program that runs on, SSH to
+  a server without OSC 133.
+- **Dots before tab titles**: blue-ish (the theme's accent) for new output, red
+  for the bell, green for gone quiet, a hollow ○ while a terminal is watched.
+  They go away when you switch to the tab.
+
 ## Pasting
 
 - **Paste and run** (right-click menu) removes trailing newlines and presses Enter
@@ -49,6 +61,10 @@
   (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> is already taken by maximizing a pane).
 - **Multi-line pastes** are inserted, not executed line by line, in bash, zsh,
   fish and editors – review, then press Enter.
+- **Asked before pasting?** Several lines that would run at once, `sudo`,
+  `curl … | sh` or `rm -rf` get a look first – especially useful with the
+  broadcast on. <kbd>Enter</kbd> pastes anyway; turn it off under Settings →
+  Terminal → Pasting.
 
 ## SSH
 

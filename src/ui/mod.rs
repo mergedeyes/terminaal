@@ -14,6 +14,7 @@ pub mod commands_panel;
 pub mod context_menu;
 pub mod files_panel;
 pub mod keys_panel;
+pub mod paste_warning;
 pub mod settings_panel;
 pub mod sidebar;
 pub mod splash;

@@ -418,6 +418,22 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     });
     change(actions, moved, Setting::NotifyAfter(secs));
     ui.label(weak(t!("settings-integration-note")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-activity"));
+    let mut silence = config.silence_secs;
+    let moved = slider(ui, &t!("settings-silence-after"), "silence_secs", &mut silence, 3..=300, 5.0, |secs| {
+        t!("settings-seconds", secs = secs)
+    });
+    change(actions, moved, Setting::SilenceAfter(silence));
+    ui.label(weak(t!("settings-activity-note")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-paste"));
+    if let Some(on) = checkbox(ui, t!("settings-paste-warning"), "paste_warning", config.paste_warning) {
+        actions.push(SidebarAction::ChangeSetting { setting: Setting::PasteWarning(on), save: true });
+    }
+    ui.label(weak(t!("settings-paste-warning-hint")).size(11.0));
 }
 
 impl SettingsPanel {

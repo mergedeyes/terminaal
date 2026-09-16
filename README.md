@@ -16,7 +16,7 @@ in the style of Tabby/Terminus. You can open local shells and SSH sessions side 
 in a sidebar, and never have secrets written to disk.
 
 > **Status:** under active development. It's used as a daily driver on
-> Linux (Wayland and X11). Expect rough edges, and expect the config format to change.
+> Linux (CachyOS/7.2.6-1/Wayland and X11). Expect rough edges, and expect the config format to change.
 
 > **DISCLAIMER:** This project is coded mostly by Claude Code, I do make all decisions though; every feature was planned by me.
 
@@ -31,6 +31,9 @@ in a sidebar, and never have secrets written to disk.
   [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal)
 - Redraws only when something changes (output, input, cursor blink), so it stays
   idle when you do
+- **Activity in background tabs**: a dot before the title for new output, the
+  bell, or a terminal you asked to watch for silence that has gone quiet (with a
+  desktop notification) – right-click → Watch for silence
 - Multiple tabs, each a local shell or an SSH session; a clickable tab bar
 - **Drop-down window** (`terminaal --quake`, bound to a key in your desktop's
   settings): a terminal that drops down from the top of the screen and hides
@@ -51,12 +54,19 @@ in a sidebar, and never have secrets written to disk.
   between them
 - Bracketed paste: pasted text goes to shells and editors as one paste, so a
   multi-line paste isn't run line by line
+- **A look before risky pastes**: lines that would run at once, `sudo`,
+  `curl … | sh`, `rm -rf` and the like – and anything multi-line going to several
+  terminals by broadcast – are shown first and pasted with <kbd>Enter</kbd>
 - **Shell integration** for fish, bash and zsh, set up by Terminaal itself
   (any other shell that sends OSC 7 and OSC 133 works too, and so do remote
   shells over SSH that send them – fish 4 does on its own):
   - tab titles show the working directory, and a new tab opens in it
   - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump from prompt to prompt
-  - a failed command gets its exit code (`✘ 1`) next to its prompt
+  - a failed command gets its exit code (`✘ 1`) next to its prompt, a slow one
+    how long it ran (`4,2 s`)
+  - copy the last command's output (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>,
+    or right-click → Copy output for the one under the mouse), and click a
+    prompt to select that command with its output
   - a desktop notification when a long command finishes in a tab you're not
     looking at (after 10 seconds by default, adjustable)
 - **Files on the server (SFTP)** over the terminal's own connection
@@ -78,7 +88,7 @@ in a sidebar, and never have secrets written to disk.
 - Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
   reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
   hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
-- Right-click menu in the terminal: copy, paste, paste and run, joining or
+- Right-click menu in the terminal: copy, copy a command's output, paste, paste and run, joining or
   leaving the broadcast, splitting and closing the pane, the files of an SSH
   connection
 - A **command palette** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>): type a few
@@ -226,6 +236,7 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Open the settings tab |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> | Command palette |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> | Copy the last command's output |
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
@@ -274,6 +285,8 @@ default_height = 650.0
 cursor_blink = true
 cursor_blink_interval_ms = 600
 notify_after_secs = 10        # notify when a command ran this long unseen (0: never)
+paste_warning = true          # ask before risky pastes (several lines, sudo, curl | sh, rm -rf)
+silence_secs = 15             # a terminal watched for silence is quiet after this long
 tab_bar = true
 sidebar = true                # show the sidebar at start
 sidebar_width = 300.0
@@ -306,9 +319,9 @@ Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
 `close_tab`, `next_tab`, `previous_tab`, `tab_1` … `tab_9`, `move_tab_left`,
 `move_tab_right`, `split_right`, `split_down`, `close_pane`,
 `focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down`,
-`zoom_pane`, `toggle_broadcast`, `open_files`, `toggle_sidebar`, `open_settings`,
+`zoom_pane`, `toggle_broadcast`, `watch_silence`, `open_files`, `toggle_sidebar`, `open_settings`,
 `command_palette`,
-`copy`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
+`copy`, `copy_last_output`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
 `scroll_to_top`, `scroll_to_bottom`, `search`, `previous_prompt`,
 `next_prompt`, `font_bigger`, `font_smaller`, `font_reset`). Key
 combinations are modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) plus one key,
@@ -455,13 +468,13 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Separate update buttons for Flatpak and for AUR helpers (yay/paru)
 - [x] A color per host: a warning color on tab and frame, or a theme of its own
 - [x] Command palette: fuzzy search over actions, hosts and logins, snippets, tabs, themes and shells
+- [x] Command output through the prompt marks: copy the last output, click a prompt to select its command, run times
+- [x] A warning before pasting several lines or risky commands, especially with broadcast on
+- [x] Activity in background tabs: new output, the bell, watching for silence
 
 ### Planned
 
 **Everyday comfort**
-- [ ] Working with command output through the prompt marks: copy the last output, click a prompt to select its output, show how long a command ran
-- [ ] A warning before pasting several lines or risky commands (`sudo`, `curl … | sh`), especially with broadcast on
-- [ ] Activity in background tabs: a mark for new output, the bell, or silence for a while
 - [ ] Reopen a closed tab
 - [ ] Resize and swap panes with the keyboard
 - [ ] Search: number of matches, optional regex
