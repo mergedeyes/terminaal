@@ -78,6 +78,9 @@ Your own commands, in `~/.config/terminaal/snippets.toml`.
 
 - **Add:** **Your commands → Manage → + Add command**. Give it a name and a
   command – several lines are fine.
+- **Category:** optional heading its button sits under. Categories you already
+  use are offered as buttons below the field, so a name only has to be typed
+  once. Without one, the button stands directly under **Your commands**.
 - **Only on system:** show it only in tabs detected as that system.
 - **Where:** **Everywhere (local and all hosts)**, **Local only** (never in
   SSH tabs), or one host – then only in SSH tabs of that host, by its name in
@@ -103,8 +106,16 @@ command = "docker system df && docker image prune"
 [[snippet]]
 name = "Restart app"
 command = "sudo systemctl restart app && journalctl -fu app"
+category = "web1"     # optional, the heading its button sits under
 host = "web1"
 ```
+
+### Folding groups away
+
+Every heading – the built-in groups (Packages, Disk, System, Network) and each
+of your categories – folds away when you click it, and unfolds the same way.
+What's folded is remembered in `commands_collapsed` in `config.toml`, so it
+stays that way the next time you start Terminaal.
 
 ### Startup commands
 

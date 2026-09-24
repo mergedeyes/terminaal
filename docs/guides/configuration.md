@@ -57,6 +57,7 @@ and keeps your comments and formatting. A missing file means defaults.
 | `shell` | `$SHELL` | Default shell for new tabs, a path |
 | `scrollback_lines` | `10000` | Lines kept per tab; lowering it drops the oldest |
 | `scroll_lines` | `3.0` | Lines per mouse-wheel notch |
+| `scroll_select_factor` | `3.0` | How much faster the wheel scrolls while text is being marked (1–10, `1` for the usual speed) |
 | `notify_after_secs` | `10` | Notify when a command that ran this long finishes unseen; `0` = never |
 | `silence_secs` | `15` | A terminal watched for silence counts as quiet after this many seconds without output (3–300) |
 | `paste_warning` | `true` | Ask before pasting several lines that would run at once, `sudo`, a download piped into a shell, `rm -rf` and the like |
@@ -68,6 +69,7 @@ and keeps your comments and formatting. A missing file means defaults.
 | `commands_run` | `true` | A click runs the command; `false` only types it into the prompt |
 | `commands_assume_yes` | `false` | Add `-y`/`--noconfirm` so updates don't ask |
 | `commands_warned` | `false` | Set once you confirmed the first-run warning |
+| `commands_collapsed` | `[]` | Command groups folded away in the sidebar; set by clicking their headings (built-in groups by key, your categories as `custom:<name>`) |
 | `system` | detected | Which system local tabs' commands are for: `arch`, `debian`, `fedora`, `suse`, `alpine`, `void`, `gentoo`, `nixos`, `macos`, `freebsd` |
 
 ### Files

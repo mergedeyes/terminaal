@@ -66,6 +66,8 @@ struct SnippetEditor {
     original: Option<usize>,
     name: String,
     command: String,
+    /// Free text; empty means the snippet stands on its own.
+    category: String,
     system: Option<Family>,
     place: Place,
     autorun: Option<Autorun>,
@@ -80,6 +82,7 @@ impl SnippetEditor {
             original,
             name: snippet.name.clone(),
             command: snippet.command.clone(),
+            category: snippet.category.clone().unwrap_or_default(),
             system: snippet.family(),
             place: Place::of(snippet),
             autorun: snippet.autorun,
@@ -101,9 +104,11 @@ impl SnippetEditor {
         if self.place == Place::Local && self.autorun == Some(Autorun::Login) {
             return Err(t!("snip-local-login"));
         }
+        let category = self.category.trim();
         Ok(Snippet {
             name: name.to_string(),
             command: command.to_string(),
+            category: (!category.is_empty()).then(|| category.to_string()),
             system: self.system.map(|family| family.key().to_string()),
             host: match &self.place {
                 Place::Host(host) => Some(host.clone()),
@@ -197,7 +202,10 @@ impl CommandsPanel {
             if of_group.peek().is_none() {
                 continue;
             }
-            ui.label(weak(group.label()).size(11.0));
+            if !group_header(ui, config, group.key(), &group.label(), actions) {
+                ui.add_space(2.0);
+                continue;
+            }
             ui.horizontal_wrapped(|ui| {
                 for command in of_group {
                     let label = RichText::new(command.builtin.label());
@@ -254,18 +262,36 @@ impl CommandsPanel {
             };
             ui.label(weak(hint).size(11.0));
         }
-        ui.horizontal_wrapped(|ui| {
-            for snippet in &applicable {
-                let hint = if config.commands_run {
-                    t!("cmd-run-hint", line = &snippet.command)
-                } else {
-                    t!("cmd-type-hint", line = &snippet.command)
-                };
-                if ui.button(&snippet.name).on_hover_text(hint).clicked() {
-                    self.activate(&snippet.command, config, actions);
+        // Without a category they stand right under the heading; the
+        // categories follow, each of them foldable.
+        let mut categories: Vec<&str> = applicable.iter().filter_map(|snippet| snippet.category.as_deref()).collect();
+        categories.sort_unstable();
+        categories.dedup();
+        let buttons = |panel: &mut Self, ui: &mut Ui, category: Option<&str>, actions: &mut Vec<SidebarAction>| {
+            let mut run = None;
+            ui.horizontal_wrapped(|ui| {
+                for snippet in applicable.iter().filter(|snippet| snippet.category.as_deref() == category) {
+                    let hint = if config.commands_run {
+                        t!("cmd-run-hint", line = &snippet.command)
+                    } else {
+                        t!("cmd-type-hint", line = &snippet.command)
+                    };
+                    if ui.button(&snippet.name).on_hover_text(hint).clicked() {
+                        run = Some(snippet.command.clone());
+                    }
                 }
+            });
+            if let Some(command) = run {
+                panel.activate(&command, config, actions);
             }
-        });
+        };
+        buttons(self, ui, None, actions);
+        for category in categories {
+            if group_header(ui, config, &category_key(category), category, actions) {
+                buttons(self, ui, Some(category), actions);
+            }
+            ui.add_space(2.0);
+        }
 
         if self.managing {
             ui.add_space(4.0);
@@ -351,6 +377,10 @@ impl CommandsPanel {
     }
 
     fn editor_form(&mut self, ui: &mut Ui, hosts: &[String]) {
+        // The categories already in use, to pick from instead of typing.
+        let mut categories: Vec<String> = self.snippets.iter().filter_map(|snippet| snippet.category.clone()).collect();
+        categories.sort_unstable();
+        categories.dedup();
         let Some(editor) = self.editor.as_mut() else { return };
         let (mut save, mut cancel) = (false, false);
         Frame::group(ui.style()).fill(theme::colors().row).inner_margin(Margin::same(10)).show(ui, |ui| {
@@ -371,6 +401,18 @@ impl CommandsPanel {
                     .hint_text("journalctl -f"),
             );
             ui.label(weak(t!("snip-command-note")).size(11.0));
+
+            ui.label(weak(t!("snip-category")));
+            ui.add(TextEdit::singleline(&mut editor.category).desired_width(f32::INFINITY).hint_text(t!("snip-category-hint")));
+            if !categories.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    for category in &categories {
+                        if ui.small_button(category).on_hover_text(t!("snip-category-use")).clicked() {
+                            editor.category = category.clone();
+                        }
+                    }
+                });
+            }
 
             ui.label(weak(t!("snip-system")));
             let all_systems = t!("snip-all-systems");
@@ -518,6 +560,25 @@ impl CommandsPanel {
 }
 
 /// Where a snippet shows: everywhere, or which system and host.
+/// A group's heading, which folds its buttons away when clicked.
+/// Returns whether the group is open.
+fn group_header(ui: &mut Ui, config: &Config, key: &str, label: &str, actions: &mut Vec<SidebarAction>) -> bool {
+    let collapsed = config.collapsed(key);
+    let mark = if collapsed { "▸" } else { "▾" };
+    let text = weak(format!("{mark} {label}")).size(11.0);
+    let hint = if collapsed { t!("cmd-group-expand") } else { t!("cmd-group-collapse") };
+    if ui.add(egui::Button::new(text).frame(false)).on_hover_text(hint).clicked() {
+        actions.push(SidebarAction::CollapseGroup { key: key.to_string(), collapsed: !collapsed });
+    }
+    !collapsed
+}
+
+/// The key a snippet category is remembered under, kept apart from the
+/// built-in groups' keys.
+fn category_key(category: &str) -> String {
+    format!("custom:{category}")
+}
+
 fn scope_label(snippet: &Snippet) -> String {
     let system = snippet.system.as_ref().map(|key| snippet.family().map_or_else(|| key.clone(), Family::label));
     let scope = match (system, &snippet.host) {
@@ -530,6 +591,10 @@ fn scope_label(snippet: &Snippet) -> String {
     };
     let scope = match snippet.autorun {
         Some(autorun) => format!("{scope} · {}", autorun.label()),
+        None => scope,
+    };
+    let scope = match &snippet.category {
+        Some(category) => format!("{category} · {scope}"),
         None => scope,
     };
     if snippet.hidden { format!("{scope} · {}", t!("snip-hidden-short")) } else { scope }

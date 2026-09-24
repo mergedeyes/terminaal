@@ -403,6 +403,21 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     change(actions, moved, Setting::ScrollLines(lines));
     ui.label(weak(t!("settings-scroll-speed-hint")).size(11.0));
     ui.add_space(4.0);
+    let mut factor = config.scroll_select_factor();
+    let moved = slider(
+        ui,
+        &t!("settings-scroll-select"),
+        "scroll_select_factor",
+        &mut factor,
+        config::SELECT_FACTORS,
+        1.0,
+        |factor| {
+            if factor <= 1.0 { t!("settings-scroll-select-off") } else { t!("settings-scroll-select-times", factor = f64::from(factor)) }
+        },
+    );
+    change(actions, moved, Setting::ScrollSelectFactor(factor));
+    ui.label(weak(t!("settings-scroll-select-hint")).size(11.0));
+    ui.add_space(4.0);
     let mut scrollback = config.scrollback_lines;
     let moved = slider(ui, &t!("settings-scrollback"), "scrollback_lines", &mut scrollback, 0..=100_000, 1000.0, |lines| {
         t!("settings-scrollback-lines", lines = lines)

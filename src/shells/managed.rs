@@ -17,6 +17,9 @@ use crate::i18n::t;
 pub enum EntryKind {
     Alias,
     Function,
+    /// Shell code of its own, written into the file as it stands: what
+    /// you would otherwise add to `.bashrc` by hand.
+    Block,
 }
 
 impl EntryKind {
@@ -24,6 +27,7 @@ impl EntryKind {
         match self {
             Self::Alias => t!("managed-alias"),
             Self::Function => t!("managed-function"),
+            Self::Block => t!("managed-block"),
         }
     }
 }
@@ -32,13 +36,14 @@ impl EntryKind {
 pub struct Entry {
     pub kind: EntryKind,
     pub name: String,
-    /// The alias's command line, or the function's body (unindented,
-    /// possibly several lines).
+    /// The alias's command line, the function's body (unindented,
+    /// possibly several lines), or a block's lines as they are.
     pub value: String,
 }
 
 const MARK_ALIAS: &str = "# terminaal:alias ";
 const MARK_FUNCTION: &str = "# terminaal:function ";
+const MARK_BLOCK: &str = "# terminaal:block ";
 const MARK_END: &str = "# terminaal:end";
 
 /// `None` for shells Terminaal can't manage.
@@ -76,6 +81,15 @@ pub fn save(kind: ShellKind, entries: &[Entry]) -> io::Result<()> {
 
 /// Rejects names that would need quoting or could be mistaken for an
 /// option -- the shells disagree on what else is allowed.
+/// Rejects values that would break the file apart: a line of their own
+/// starting like one of our markers would end or start a block.
+pub fn validate_value(value: &str) -> Result<(), String> {
+    match value.lines().any(|line| line.trim_start().starts_with("# terminaal:")) {
+        true => Err(t!("managed-marker-line")),
+        false => Ok(()),
+    }
+}
+
 pub fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err(t!("common-name-missing"));
@@ -95,6 +109,7 @@ pub fn render(kind: ShellKind, entries: &[Entry]) -> String {
         out.push_str(match entry.kind {
             EntryKind::Alias => MARK_ALIAS,
             EntryKind::Function => MARK_FUNCTION,
+            EntryKind::Block => MARK_BLOCK,
         });
         out.push_str(&entry.name);
         out.push('\n');
@@ -124,6 +139,14 @@ pub fn render(kind: ShellKind, entries: &[Entry]) -> String {
                 out.push_str(close);
                 out.push('\n');
             }
+            // Verbatim: the point of a block is that it's the shell code
+            // the user would have put in their own startup file.
+            EntryKind::Block => {
+                for line in entry.value.lines() {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
         }
         out.push_str(MARK_END);
         out.push('\n');
@@ -139,6 +162,8 @@ pub fn parse(kind: ShellKind, text: &str) -> Vec<Entry> {
             (EntryKind::Alias, name)
         } else if let Some(name) = line.strip_prefix(MARK_FUNCTION) {
             (EntryKind::Function, name)
+        } else if let Some(name) = line.strip_prefix(MARK_BLOCK) {
+            (EntryKind::Block, name)
         } else {
             continue;
         };
@@ -147,6 +172,7 @@ pub fn parse(kind: ShellKind, text: &str) -> Vec<Entry> {
         let value = match entry_kind {
             EntryKind::Alias => parse_alias(kind, &name, &block),
             EntryKind::Function => parse_function(kind, &block),
+            EntryKind::Block => trim_blank_edges(&block).join("\n"),
         };
         entries.push(Entry { kind: entry_kind, name, value });
     }
@@ -167,7 +193,8 @@ fn parse_alias(kind: ShellKind, name: &str, block: &[&str]) -> String {
     }
 }
 
-fn parse_function(kind: ShellKind, block: &[&str]) -> String {
+/// A block without the empty lines at either end of it.
+fn trim_blank_edges<'a, 'b>(block: &'b [&'a str]) -> &'b [&'a str] {
     let mut lines = block;
     while let [first, rest @ ..] = lines
         && first.trim().is_empty()
@@ -179,6 +206,11 @@ fn parse_function(kind: ShellKind, block: &[&str]) -> String {
     {
         lines = rest;
     }
+    lines
+}
+
+fn parse_function(kind: ShellKind, block: &[&str]) -> String {
+    let mut lines = trim_blank_edges(block);
     let close = if kind == ShellKind::Fish { "end" } else { "}" };
     if let [first, inner @ .., last] = lines
         && last.trim() == close
@@ -261,6 +293,11 @@ mod tests {
                 name: "mkcd".into(),
                 value: "mkdir -p \"$1\"\n\nif true\n    cd \"$1\"\nend".into(),
             },
+            Entry {
+                kind: EntryKind::Block,
+                name: "editor".into(),
+                value: "export EDITOR=vim\n\nexport PAGER='less -R'".into(),
+            },
         ]
     }
 
@@ -289,6 +326,19 @@ mod tests {
         assert_eq!(entries[0].value, "git status");
         // Doesn't match the multi-line layout we write, so kept verbatim.
         assert_eq!(entries[1].value, "hi() { echo hi; }");
+    }
+
+    #[test]
+    fn a_block_goes_into_the_file_as_it_stands() {
+        let text = render(ShellKind::Bash, &sample());
+        assert!(text.contains("# terminaal:block editor\nexport EDITOR=vim\n\nexport PAGER='less -R'\n# terminaal:end\n"));
+    }
+
+    #[test]
+    fn rejects_values_that_would_break_the_markers() {
+        assert!(validate_value("export A=1\nexport B=2").is_ok());
+        assert!(validate_value("export A=1\n# terminaal:end").is_err());
+        assert!(validate_value("  # terminaal:block x").is_err());
     }
 
     #[test]

@@ -123,6 +123,10 @@ settings-scroll-lines = { $lines ->
    *[other] { $lines } lines per notch
 }
 settings-scroll-speed-hint = Default 3. Touchpads scroll smoothly.
+settings-scroll-select = While marking
+settings-scroll-select-times = { $factor }× as fast
+settings-scroll-select-off = as usual
+settings-scroll-select-hint = While you hold the button to mark text, the wheel scrolls this much further – a selection reaches over several screens without dragging to the edge. Default 3, 1× turns it off.
 settings-scrollback = Scrollback
 settings-scrollback-lines = { $lines ->
     [one] { $lines } line
@@ -293,8 +297,8 @@ shells-new-tab = ▶  New tab
 shells-new-tab-hint = Opens a new tab with { $shell }
 shells-make-default = ★  Make default
 shells-make-default-hint = New tabs (Ctrl+Shift+T, “+”) start with this shell
-shells-managed-title = Aliases & functions · { $shell }
-shells-managed-unsupported = Terminaal can't manage aliases or functions for { $shell } – fish, bash and zsh are supported.
+shells-managed-title = Aliases, functions & lines · { $shell }
+shells-managed-unsupported = Terminaal can't manage anything for { $shell } – fish, bash and zsh are supported.
 shells-managed-file-hint = Only loaded in Terminaal, not in other terminals. Changes apply to newly opened tabs.
 shells-save-failed = Saving failed: { $err }
 shells-aliases = Aliases ({ $count })
@@ -316,6 +320,14 @@ shells-command-missing = The command is missing.
 shells-body-missing = The body is missing.
 shells-name-taken = “{ $name }” already exists ({ $kind }).
 shells-saved = Saved “{ $name }” – applies to new { $shell } tabs.
+shells-lines = Lines ({ $count })
+shells-no-lines = No lines yet.
+shells-add-lines = +  Add lines
+shells-new-lines = New lines
+shells-edit-lines = Edit lines
+shells-lines-label = Lines
+shells-lines-hint = Runs when a Terminaal tab with this shell starts – like an entry in the shell’s own startup file, but in Terminaal’s file.
+shells-lines-missing = The lines are missing.
 
 ## Sidebar: built-in commands (commands.rs)
 
@@ -353,6 +365,9 @@ snip-local-login = "After login" is for SSH terminals only and doesn't go with "
 snip-everywhere = Everywhere
 snip-on-host = on { $host }
 snip-command-missing = The command is missing.
+snip-category = Category
+snip-category-hint = optional, e.g. Docker
+snip-category-use = Use this category
 snip-name-taken = There is already a command “{ $name }”.
 cmd-system = System: { $system }
 cmd-system-local-hint = Detected from /etc/os-release. If that's wrong, set it in the settings under “Shell”.
@@ -370,6 +385,8 @@ cmd-group-packages = Packages
 cmd-group-disk = Disk
 cmd-group-system = System
 cmd-group-network = Network
+cmd-group-collapse = Fold this group away
+cmd-group-expand = Open this group
 cmd-update = Update the system
 cmd-update-flatpak = Update Flatpaks
 cmd-update-aur = Update AUR packages
@@ -399,10 +416,12 @@ cmd-family-unknown = Detect automatically
 
 managed-alias = alias
 managed-function = function
+managed-block = lines
 managed-unsupported = this shell is not supported
 managed-invalid-name = Only letters, digits and _ . : + - are allowed (and no - at the start).
+managed-marker-line = A line must not start with “# terminaal:” – those are the file’s markers.
 managed-header =
-    # Aliases and functions for Terminaal.
+    # Aliases, functions and lines of your own for Terminaal.
     #
     # Managed by Terminaal and only loaded in Terminaal. The blocks between
     # the markers may be edited by hand as well; anything outside of them

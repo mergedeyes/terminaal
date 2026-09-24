@@ -34,7 +34,8 @@ in a sidebar, and never have secrets written to disk.
 - **Activity in background tabs**: a dot before the title for new output, the
   bell, or a terminal you asked to watch for silence that has gone quiet (with a
   desktop notification) – right-click → Watch for silence
-- Multiple tabs, each a local shell or an SSH session; a clickable tab bar
+- Multiple tabs, each a local shell or an SSH session; a clickable tab bar, and
+  tabs sort by dragging them sideways
 - **Drop-down window** (`terminaal --quake`, bound to a key in your desktop's
   settings): a terminal that drops down from the top of the screen and hides
   again, with tabs of its own that keep running. A real layer surface on
@@ -47,8 +48,9 @@ in a sidebar, and never have secrets written to disk.
   runs the same shell in the same folder, or connects to the same host. Drag the
   line between panes to resize them, click or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+arrow key to move
   between them, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> shows one pane over the whole tab
-- Scrollback with the mouse wheel (speed adjustable in the settings), mouse selection,
-  clipboard copy and paste
+- Scrollback with the mouse wheel (speed adjustable in the settings), mouse selection
+  (drag past the top or bottom edge and it scrolls along, and the wheel scrolls
+  three times as fast while you mark – adjustable), clipboard copy and paste
 - **Search the scrollback** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>): matches
   light up as you type, <kbd>Enter</kbd> and then <kbd>n</kbd>/<kbd>N</kbd> jump
   between them
@@ -60,7 +62,8 @@ in a sidebar, and never have secrets written to disk.
 - **Shell integration** for fish, bash and zsh, set up by Terminaal itself
   (any other shell that sends OSC 7 and OSC 133 works too, and so do remote
   shells over SSH that send them – fish 4 does on its own):
-  - tab titles show the working directory, and a new tab opens in it
+  - tab titles show the working directory, and a new tab opens in it (while a
+    program runs, a local tab is named after it instead)
   - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump from prompt to prompt
   - a failed command gets its exit code (`✘ 1`) next to its prompt, a slow one
     how long it ran (`4,2 s`)
@@ -107,9 +110,12 @@ in a sidebar, and never have secrets written to disk.
 
 ### Shells
 - Choose any shell listed in `/etc/shells` for a new tab, and set a default
-- Manage **aliases and functions** for fish, bash and zsh from the sidebar.
-  They live in a separate file that only Terminaal loads, so your other
-  terminals are unaffected:
+- Manage **aliases, functions and lines of your own** for fish, bash and zsh
+  from the sidebar. Lines are whatever you would otherwise put in your startup
+  file (`export EDITOR=vim`, `set -gx …`), kept as one named entry each that you
+  can edit or drop again. They all live in a separate file that only Terminaal
+  loads – your own `.bashrc` and friends are never touched, so nothing has to be
+  undone:
   `~/.config/fish/terminaal.fish`, `~/.bash_terminaal`, `$ZDOTDIR/.zsh_terminaal`
 - **Built-in commands**: buttons for the everyday chores – update the system,
   and separately Flatpaks and AUR packages (paru/yay) where installed, list what has updates, free space, folder sizes, memory, top processes,
@@ -280,6 +286,7 @@ line_height_factor = 1.25
 padding = 8.0                 # around the terminal grid
 scrollback_lines = 10000
 scroll_lines = 3.0            # lines per mouse-wheel notch
+scroll_select_factor = 3.0    # wheel multiplier while marking text (1 = off)
 default_width = 1000.0        # window size at start
 default_height = 650.0
 cursor_blink = true
@@ -384,6 +391,7 @@ Snippets are managed in the sidebar, but `snippets.toml` is plain TOML too:
 [[snippet]]
 name = "Follow logs"
 command = "journalctl -f"
+category = "Server"  # optional: groups the buttons under a heading you can fold
 system = "arch"     # optional: only on this system (arch, debian, fedora, suse,
                     # alpine, void, gentoo, nixos, macos, freebsd)
 
@@ -445,7 +453,7 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 ## Roadmap
 
 - [x] Local terminal core, tabs and sessions
-- [x] Shell management with per-shell aliases and functions
+- [x] Shell management with per-shell aliases, functions and lines of your own
 - [x] SSH sessions, host manager, keys, per-host options
 - [x] Configurable keyboard shortcuts for every action
 - [x] Appearance: themes for console and interface, console and menu font,
@@ -478,6 +486,10 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [ ] Reopen a closed tab
 - [ ] Resize and swap panes with the keyboard
 - [ ] Search: number of matches, optional regex
+- [ ] `terminaal -c "<command>"`: run a command in the first tab instead of just a
+      shell, `terminaal -s` to list the installed shells and `-s <shell> -c "…"` to
+      pick the one it runs in
+- [ ] A `terminaal(1)` man page, installed by `install.sh`
 
 **Terminal protocols**
 - [ ] OSC 52: programs (also over SSH) may set the clipboard, after asking

@@ -313,6 +313,16 @@ struct Pane {
     default_title: String,
     /// Set by the program (OSC 0/2) until it resets it.
     program_title: Option<String>,
+    /// The foreground program of a local shell, looked up from the PTY
+    /// (`TerminalSession::foreground_program`) -- shells that set no
+    /// title of their own still name what they run.
+    program: Option<String>,
+    /// When to look that up again; set by output, cleared by the look.
+    program_check: Option<Instant>,
+    /// The last title the shell itself set (OSC 0/2 while no program was
+    /// running): anything else while a program runs is that program's
+    /// own title and says more than its name.
+    shell_title: Option<String>,
     /// Working directory the shell reported (OSC 7): host and path.
     cwd: Option<(String, PathBuf)>,
     /// The directory it started in, for the session while the shell
@@ -404,6 +414,42 @@ impl PaneActivity {
 /// How long output after a start or resize is ignored for activity.
 const ACTIVITY_GRACE: Duration = Duration::from_millis(1500);
 
+/// How long output has to hold still before a local pane looks up which
+/// program owns its PTY ([`AppState::check_programs`]).
+const PROGRAM_POLL: Duration = Duration::from_millis(250);
+
+/// How often a selection dragged past the edge of its pane scrolls on.
+const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(40);
+
+/// What a terminal is called in the tab bar, out of everything it says
+/// about itself: the title a running program set for itself, else the
+/// program's name, else the shell's own title, else the working
+/// directory, else the shell or `user@host` it started as.
+///
+/// `shell_title` is the last title the shell set while nothing ran --
+/// anything else during a program is that program's doing.
+fn pane_title(
+    program: Option<&str>,
+    program_title: Option<&str>,
+    shell_title: Option<&str>,
+    cwd: Option<&(String, PathBuf)>,
+    default: &str,
+    local_host: &str,
+) -> String {
+    match (program, program_title, cwd) {
+        (Some(program), title, _) => match title {
+            Some(title) if shell_title != Some(title) => title.to_string(),
+            _ => program.to_string(),
+        },
+        (None, Some(title), _) => title.to_string(),
+        (None, None, Some((host, path))) => {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            integration::short_path(host, path, home.as_deref(), local_host)
+        }
+        (None, None, None) => default.to_string(),
+    }
+}
+
 /// A fingerprint of what `term` shows at the bottom of its scrollback,
 /// cheap enough to take on every output of a background terminal.
 fn screen_fingerprint<T>(term: &Term<T>) -> u64 {
@@ -440,14 +486,14 @@ enum PaneOrigin {
 
 impl Pane {
     fn refresh_title(&mut self, local_host: &str) {
-        self.title = match (&self.program_title, &self.cwd) {
-            (Some(title), _) => title.clone(),
-            (None, Some((host, path))) => {
-                let home = std::env::var_os("HOME").map(PathBuf::from);
-                integration::short_path(host, path, home.as_deref(), local_host)
-            }
-            (None, None) => self.default_title.clone(),
-        };
+        self.title = pane_title(
+            self.program.as_deref(),
+            self.program_title.as_deref(),
+            self.shell_title.as_deref(),
+            self.cwd.as_ref(),
+            &self.default_title,
+            local_host,
+        );
     }
 
     /// The working directory, if it's a folder on this machine: where a
@@ -466,6 +512,23 @@ enum Drag {
     Select(usize),
     /// The line between two panes.
     Divider(Divider),
+    /// The tab at this index, on its way to another place in the bar,
+    /// held `grab` pixels in from its left edge.
+    Tab { index: usize, grab: f32 },
+}
+
+/// Where the item at `index` ends up once the one at `from` is taken
+/// out of the list and put back in at `to`.
+fn moved_index(index: usize, from: usize, to: usize) -> usize {
+    if index == from {
+        to
+    } else if from < index && index <= to {
+        index - 1
+    } else if to <= index && index < from {
+        index + 1
+    } else {
+        index
+    }
 }
 
 /// A split leaves each pane at least this many columns and rows.
@@ -587,6 +650,9 @@ struct AppState {
     modifiers: ModifiersState,
 
     drag: Option<Drag>,
+    /// While a selection is dragged past the top or bottom of its pane:
+    /// when to scroll it along next.
+    drag_scroll_at: Option<Instant>,
     last_cursor_pos: (f64, f64),
 
     cursor_visible: bool,
@@ -703,6 +769,7 @@ impl AppState {
             quads: Vec::new(),
             modifiers: ModifiersState::empty(),
             drag: None,
+            drag_scroll_at: None,
             last_cursor_pos: (0.0, 0.0),
             cursor_visible: true,
             next_blink,
@@ -829,6 +896,9 @@ impl AppState {
             title: title.clone(),
             default_title: title,
             program_title: None,
+            program: None,
+            program_check: None,
+            shell_title: None,
             cwd: None,
             start_cwd,
             command_started: None,
@@ -1264,6 +1334,7 @@ impl AppState {
         self.close_palette();
         self.paste_warning = None;
         self.drag = None;
+        self.drag_scroll_at = None;
     }
 
     fn show_quake(&mut self) {
@@ -1694,6 +1765,48 @@ impl AppState {
         if let Some(startup) = &mut pane.startup {
             startup.output_at = Some(Instant::now());
         }
+        // Coalesce a burst: the look happens once output has held still
+        // for `PROGRAM_POLL`, so starting and ending a program both show
+        // up (its own output, then the prompt after it).
+        if pane.terminal.is_local() && pane.program_check.is_none() {
+            pane.program_check = Some(Instant::now() + PROGRAM_POLL);
+        }
+    }
+
+    /// When a pane wants its foreground program looked up again.
+    fn program_due(&self) -> Option<Instant> {
+        self.tabs.iter().filter_map(Tab::panes).flat_map(|panes| &panes.panes).filter_map(|pane| pane.program_check).min()
+    }
+
+    /// Look up the foreground program of every pane whose look is due and
+    /// retitle it where that changed.
+    fn check_programs(&mut self) {
+        let now = Instant::now();
+        let hostname = self.hostname.clone();
+        let mut changed = false;
+        for tab in self.tabs.iter_mut() {
+            let Some(panes) = tab.panes_mut() else { continue };
+            for pane in panes.panes.iter_mut() {
+                if pane.program_check.is_none_or(|at| now < at) {
+                    continue;
+                }
+                pane.program_check = None;
+                let program = pane.terminal.foreground_program();
+                // At the prompt, whatever title stands is the shell's.
+                if program.is_none() && pane.shell_title != pane.program_title {
+                    pane.shell_title = pane.program_title.clone();
+                }
+                if program != pane.program {
+                    pane.program = program;
+                    pane.refresh_title(&hostname);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.update_window_title();
+            self.window.request_redraw();
+        }
     }
 
     /// When the next waiting startup commands are due.
@@ -1984,6 +2097,8 @@ impl AppState {
             key_repeat,
             self.startup_due(),
             self.silence_due(),
+            self.program_due(),
+            self.drag_scroll_at,
         ]
             .into_iter()
             .flatten()
@@ -2605,8 +2720,18 @@ impl AppState {
     /// Move the active tab one place left (`-1`) or right (`1`).
     fn move_tab(&mut self, by: isize) {
         let Some(to) = self.active_tab.checked_add_signed(by).filter(|&to| to < self.tabs.len()) else { return };
-        self.tabs.swap(self.active_tab, to);
-        self.active_tab = to;
+        self.move_tab_to(self.active_tab, to);
+    }
+
+    /// Take the tab at `from` out and put it back in at `to`; whichever
+    /// tab was active stays active.
+    fn move_tab_to(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active_tab = moved_index(self.active_tab, from, to);
         self.session_changed();
         self.update_window_title();
         self.window.request_redraw();
@@ -2655,6 +2780,64 @@ impl AppState {
         self.window.request_redraw();
     }
 
+    /// Pull the dragged selection in pane `id` out to where the pointer
+    /// is (clamped to the grid).
+    fn extend_selection(&mut self, id: usize) {
+        let (x, y) = self.last_cursor_pos;
+        let Some(pane) =
+            self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| panes.panes.iter().find(|pane| pane.id == id))
+        else {
+            return;
+        };
+        let (col, row, side) = pixel_to_cell(x, y, self.pane_geometry(pane.rect), pane.size);
+        let mut term = pane.terminal.term.lock();
+        let display_offset = term.renderable_content().display_offset as i32;
+        let point = Point::new(Line(row as i32 - display_offset), Column(col));
+        if let Some(sel) = term.selection.as_mut() {
+            sel.update(point, side);
+        }
+        // Dragging off the pressed cell is a selection after all.
+        if self.prompt_press.is_some_and(|(_, pressed)| pressed != point) {
+            self.prompt_press = None;
+        }
+        drop(term);
+        self.window.request_redraw();
+    }
+
+    /// How far the pointer is past the top or bottom of pane `id`'s grid,
+    /// in lines ([`drag_scroll_lines`]).
+    fn drag_scroll_lines(&self, id: usize) -> i32 {
+        let Some(pane) =
+            self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| panes.panes.iter().find(|pane| pane.id == id))
+        else {
+            return 0;
+        };
+        let geometry = self.pane_geometry(pane.rect);
+        let bottom = geometry.origin_y + pane.size.screen_lines as f32 * geometry.cell.height;
+        drag_scroll_lines(self.last_cursor_pos.1 as f32, geometry.origin_y, bottom, geometry.cell.height)
+    }
+
+    /// Scroll a selection that's being dragged past the edge of its pane
+    /// and take the selection along.
+    fn tick_drag_scroll(&mut self) {
+        let Some(Drag::Select(id)) = self.drag else {
+            self.drag_scroll_at = None;
+            return;
+        };
+        let lines = self.drag_scroll_lines(id);
+        if lines == 0 {
+            self.drag_scroll_at = None;
+            return;
+        }
+        if let Some(pane) =
+            self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| panes.panes.iter().find(|pane| pane.id == id))
+        {
+            pane.terminal.term.lock().scroll_display(Scroll::Delta(lines));
+        }
+        self.extend_selection(id);
+        self.drag_scroll_at = Some(Instant::now() + DRAG_SCROLL_INTERVAL);
+    }
+
     fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.last_cursor_pos = (position.x, position.y);
         let (x, y) = self.last_cursor_pos;
@@ -2670,23 +2853,20 @@ impl AppState {
                 }
             }
             Some(Drag::Select(id)) => {
-                let Some(pane) = self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| {
-                    panes.panes.iter().find(|pane| pane.id == id)
-                }) else {
-                    return;
-                };
-                let (col, row, side) = pixel_to_cell(x, y, self.pane_geometry(pane.rect), pane.size);
-                let mut term = pane.terminal.term.lock();
-                let display_offset = term.renderable_content().display_offset as i32;
-                let point = Point::new(Line(row as i32 - display_offset), Column(col));
-                if let Some(sel) = term.selection.as_mut() {
-                    sel.update(point, side);
+                self.extend_selection(id);
+                // Past the pane's edge the selection keeps going: scroll
+                // from now on, starting with the next turn of the loop.
+                self.drag_scroll_at = (self.drag_scroll_lines(id) != 0).then(Instant::now);
+            }
+            Some(Drag::Tab { index: from, grab }) => {
+                let Some(to) = self.tab_bar_layout().map(|layout| layout.drop_index(x as f32)) else { return };
+                if to != from {
+                    self.move_tab_to(from, to);
+                    self.drag = Some(Drag::Tab { index: to, grab });
+                    // The tab under the pointer is another one now.
+                    self.set_hovered(Some(TabBarHit::Tab(to)));
                 }
-                // Dragging off the pressed cell is a selection after all.
-                if self.prompt_press.is_some_and(|(_, pressed)| pressed != point) {
-                    self.prompt_press = None;
-                }
-                drop(term);
+                // It follows the pointer even where nothing is re-sorted.
                 self.window.request_redraw();
             }
             Some(Drag::Divider(divider)) => {
@@ -2715,7 +2895,13 @@ impl AppState {
         }
         match (button, self.tab_bar_hit(x, y)) {
             (MouseButton::Left, Some(TabBarHit::ToggleSidebar)) => self.toggle_sidebar(),
-            (MouseButton::Left, Some(TabBarHit::Tab(idx))) => self.select_tab(idx),
+            (MouseButton::Left, Some(TabBarHit::Tab(idx))) => {
+                self.select_tab(idx);
+                // Dragging it sideways sorts it into another place; it
+                // follows the pointer from where it was taken hold of.
+                let grab = self.tab_bar_layout().and_then(|layout| Some(x as f32 - layout.tabs.get(idx)?.rect.x)).unwrap_or(0.0);
+                self.drag = Some(Drag::Tab { index: idx, grab });
+            }
             (MouseButton::Left, Some(TabBarHit::Close(idx))) => self.close_tab(idx),
             (MouseButton::Middle, Some(TabBarHit::Tab(idx) | TabBarHit::Close(idx))) => self.close_tab(idx),
             (MouseButton::Left, Some(TabBarHit::NewTab)) => self.add_default_tab(),
@@ -2732,6 +2918,7 @@ impl AppState {
     fn on_mouse_input(&mut self, button: MouseButton, button_state: ElementState) {
         if button_state == ElementState::Released {
             if button == MouseButton::Left && self.drag.take().is_some() {
+                self.drag_scroll_at = None;
                 if let Some((id, point)) = self.prompt_press.take() {
                     self.select_command(id, point);
                 }
@@ -2833,6 +3020,20 @@ impl AppState {
         }
         let lines = wheel_lines(delta, self.config.scroll_lines(), self.text.cell.height, &mut self.scroll_remainder);
         if lines == 0 {
+            return;
+        }
+        // With a selection under the hand the wheel belongs to it -- it
+        // scrolls the pane the selection started in, faster than usual,
+        // and takes the selection along. Even a full-screen program
+        // doesn't get it: it isn't the one being marked up.
+        if let Some(Drag::Select(id)) = self.drag {
+            let lines = (lines as f32 * self.config.scroll_select_factor()).round() as i32;
+            if let Some(pane) =
+                self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| panes.panes.iter().find(|pane| pane.id == id))
+            {
+                pane.terminal.term.lock().scroll_display(Scroll::Delta(lines));
+            }
+            self.extend_selection(id);
             return;
         }
         // Full-screen programs (less, htop, ...) may want the wheel
@@ -3097,6 +3298,12 @@ impl AppState {
                 self.window.request_redraw();
             }
             SidebarAction::ChangeSetting { setting, save } => self.change_setting(setting, save),
+            SidebarAction::CollapseGroup { key, collapsed } => {
+                if let Err(err) = self.config.collapse_group(&key, collapsed) {
+                    self.report(origin, Err(err));
+                }
+                self.window.request_redraw();
+            }
             SidebarAction::OpenSettings => self.open_settings(),
             SidebarAction::SetShortcut(action, combos) => self.set_shortcut(action, combos, origin),
             SidebarAction::SetTheme(name) => {
@@ -3289,6 +3496,7 @@ impl AppState {
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
+            | Setting::ScrollSelectFactor(_)
             | Setting::WindowSize { .. }
             | Setting::Sidebar(_)
             | Setting::Splash(_)
@@ -3554,14 +3762,17 @@ impl AppState {
         self.build_pane_borders(&views, area, split);
 
         if let Some(layout) = self.tab_bar_layout() {
-            self.tab_bar.build(
-                &layout,
-                self.tabs.iter().map(Tab::look),
-                self.active_tab,
-                self.hovered,
-                &mut self.text,
-                &mut self.quads,
-            );
+            // How far the dragged tab has come from its slot: where the
+            // pointer holds it, less where the slot starts.
+            let drag = match self.drag {
+                Some(Drag::Tab { index, grab }) => layout
+                    .tabs
+                    .get(index)
+                    .map(|slot| (index, self.last_cursor_pos.0 as f32 - grab - slot.rect.x)),
+                _ => None,
+            };
+            let state = tab_bar::BarState { active: self.active_tab, hovered: self.hovered, drag };
+            self.tab_bar.build(&layout, self.tabs.iter().map(Tab::look), state, &mut self.text, &mut self.quads);
         }
 
         let t_build = Instant::now();
@@ -3862,6 +4073,22 @@ fn pixel_to_cell(x: f64, y: f64, geometry: grid::GridGeometry, size: GridSize) -
     (col, row, side)
 }
 
+/// Lines one tick scrolls while a selection is dragged past the edge of
+/// its grid: none inside `top..bottom`, otherwise one per cell of
+/// overshoot (positive into the scrollback, so above the grid), capped so
+/// a flick of the wrist doesn't jump the whole scrollback at once.
+fn drag_scroll_lines(y: f32, top: f32, bottom: f32, cell_height: f32) -> i32 {
+    let over = if y < top {
+        top - y
+    } else if y > bottom {
+        bottom - y
+    } else {
+        return 0;
+    };
+    let lines = (over.abs() / cell_height.max(1.0)).ceil().clamp(1.0, 8.0) as i32;
+    if over > 0.0 { lines } else { -lines }
+}
+
 /// Lines to scroll for one wheel event (positive: into the scrollback).
 /// A mouse wheel moves `lines_per_step` per notch, a touchpad follows its
 /// pixels. Fractions add up in `remainder` rather than getting lost --
@@ -3972,6 +4199,12 @@ impl ApplicationHandler<UserEvent> for App {
         state.run_due_startups();
         if state.silence_due().is_some_and(|at| Instant::now() >= at) {
             state.check_silence();
+        }
+        if state.program_due().is_some_and(|at| Instant::now() >= at) {
+            state.check_programs();
+        }
+        if state.drag_scroll_at.is_some_and(|at| Instant::now() >= at) {
+            state.tick_drag_scroll();
         }
         let redraw_pending = matches!(&state.window, AppWindow::Layer(window) if window.redraw.get() && state.gpu.surface.is_some());
         let wakeup = if redraw_pending { Some(Instant::now()) } else { state.next_wakeup() };
@@ -4190,6 +4423,65 @@ impl ApplicationHandler<UserEvent> for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn title_names_the_running_program_unless_it_titles_itself() {
+        use std::path::PathBuf;
+
+        use super::pane_title;
+
+        let cwd = ("box".to_string(), PathBuf::from("/srv/www"));
+        let title = |program, program_title, shell_title| {
+            pane_title(program, program_title, shell_title, Some(&cwd), "bash", "box")
+        };
+
+        // At the prompt the shell's own title stands, then the directory.
+        assert_eq!(title(None, Some("jan@box:~"), Some("jan@box:~")), "jan@box:~");
+        assert_eq!(title(None, None, None), "/s/www");
+        assert_eq!(pane_title(None, None, None, None, "bash", "box"), "bash");
+
+        // A program that sets no title of its own is named after its
+        // process -- the shell's title would still say the prompt.
+        assert_eq!(title(Some("btop"), Some("jan@box:~"), Some("jan@box:~")), "btop");
+        assert_eq!(title(Some("btop"), None, None), "btop");
+
+        // One that does keeps it: it says more than the bare name.
+        assert_eq!(title(Some("vim"), Some("notes.md (~) - VIM"), Some("jan@box:~")), "notes.md (~) - VIM");
+    }
+
+    #[test]
+    fn dragging_past_the_edge_scrolls_by_the_overshoot() {
+        use super::drag_scroll_lines;
+
+        // Grid from y = 40 to y = 240, 20px lines.
+        let lines = |y| drag_scroll_lines(y, 40.0, 240.0, 20.0);
+        assert_eq!(lines(40.0), 0);
+        assert_eq!(lines(150.0), 0);
+        assert_eq!(lines(240.0), 0);
+        // Above the top: into the scrollback, one line per cell over.
+        assert_eq!(lines(39.0), 1);
+        assert_eq!(lines(20.0), 1);
+        assert_eq!(lines(0.0), 2);
+        // Below the bottom: back towards the end, and never more than 8.
+        assert_eq!(lines(241.0), -1);
+        assert_eq!(lines(300.0), -3);
+        assert_eq!(lines(1000.0), -8);
+    }
+
+    #[test]
+    fn moving_a_tab_keeps_the_active_one_active() {
+        use super::moved_index;
+
+        // Tabs a b c d, dragging b (1) to the end (3): a c d b.
+        assert_eq!(moved_index(1, 1, 3), 3);
+        assert_eq!(moved_index(2, 1, 3), 1);
+        assert_eq!(moved_index(3, 1, 3), 2);
+        assert_eq!(moved_index(0, 1, 3), 0);
+        // And d (3) to the front: d a b c.
+        assert_eq!(moved_index(3, 3, 0), 0);
+        assert_eq!(moved_index(0, 3, 0), 1);
+        assert_eq!(moved_index(2, 3, 0), 3);
+    }
+
     #[test]
     fn embedded_window_icon_decodes() {
         assert!(super::window_icon().is_some());

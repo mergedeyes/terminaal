@@ -37,6 +37,23 @@ fn quad(rect: Rect, color: Rgb) -> QuadInstance {
     QuadInstance { offset: [rect.x, rect.y], size: [rect.w, rect.h], color: to_linear(color, 1.0) }
 }
 
+/// `rect` with the part `cover` lies over cut away: whichever side of it
+/// is left over, so a label can't spill out from under the tab that's
+/// being dragged across it.
+fn cut(rect: Rect, cover: Option<Rect>) -> Rect {
+    let Some(cover) = cover else { return rect };
+    let (left, right) = (rect.x.max(cover.x), (rect.x + rect.w).min(cover.x + cover.w));
+    if right <= left {
+        return rect;
+    }
+    let (before, after) = (left - rect.x, rect.x + rect.w - right);
+    if before >= after {
+        Rect { w: before, ..rect }
+    } else {
+        Rect { x: right, w: after, ..rect }
+    }
+}
+
 /// What's under a given point in the tab bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabBarHit {
@@ -44,6 +61,17 @@ pub enum TabBarHit {
     Tab(usize),
     Close(usize),
     NewTab,
+}
+
+/// What the bar shows this frame besides the tabs themselves.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BarState {
+    /// The tab in front.
+    pub active: usize,
+    pub hovered: Option<TabBarHit>,
+    /// The tab being dragged and how far sideways it has come: it
+    /// follows the pointer and is drawn over its neighbours.
+    pub drag: Option<(usize, f32)>,
 }
 
 /// What a tab shows besides its place.
@@ -141,6 +169,25 @@ impl TabBarLayout {
         }
     }
 
+    /// Where a tab dragged to `x` belongs: the slot the pointer is over,
+    /// clamped to the ends of the bar. Only `x` counts -- a drag that
+    /// wanders out of the bar keeps sorting.
+    pub fn drop_index(&self, x: f32) -> usize {
+        match self.tabs.iter().position(|slot| x < slot.rect.x + slot.rect.w) {
+            Some(idx) => idx,
+            None => self.tabs.len().saturating_sub(1),
+        }
+    }
+
+    /// Where the tab at `index` sits while it's dragged `dx` sideways:
+    /// its own slot, moved, but never out of the row of tabs.
+    pub fn dragged_rect(&self, index: usize, dx: f32) -> Option<Rect> {
+        let slot = self.tabs.get(index)?;
+        let left = self.tabs.first()?.rect.x;
+        let right = (self.new_tab.x - slot.rect.w).max(left);
+        Some(Rect { x: (slot.rect.x + dx).clamp(left, right), ..slot.rect })
+    }
+
     pub fn hit_test(&self, x: f32, y: f32) -> Option<TabBarHit> {
         if y < 0.0 || y >= self.height {
             return None;
@@ -181,11 +228,11 @@ impl TabBar {
         &mut self,
         layout: &TabBarLayout,
         tabs: impl Iterator<Item = TabLook<'t>>,
-        active: usize,
-        hovered: Option<TabBarHit>,
+        state: BarState,
         text: &mut TextRendererState,
         quads: &mut Vec<QuadInstance>,
     ) {
+        let BarState { active, hovered, drag } = state;
         self.labels.clear();
         let (h, px) = (layout.height, layout.px);
         let cell = text.cell;
@@ -202,10 +249,19 @@ impl TabBar {
         let text_hover = text_color(mix(c.text_weak, c.text, 0.7));
         let text_inactive = text_color(c.text_weak);
 
+        // Where the dragged tab actually sits this frame; the others keep
+        // their slots, they have already sorted themselves around it.
+        let dragged = drag.and_then(|(index, dx)| Some((index, layout.dragged_rect(index, dx)?)));
+        let cover = dragged.map(|(_, rect)| rect);
+
         // The bar's background and bottom border leave the active tab out:
         // under its own see-through background they'd show through.
-        let spans = match layout.tabs.get(active) {
-            Some(slot) => [(layout.left, slot.rect.x), (slot.rect.x + slot.rect.w, layout.right)],
+        let active_rect = match dragged {
+            Some((index, rect)) if index == active => Some(rect),
+            _ => layout.tabs.get(active).map(|slot| slot.rect),
+        };
+        let spans = match active_rect {
+            Some(rect) => [(layout.left, rect.x), (rect.x + rect.w, layout.right)],
             None => [(layout.left, layout.right), (0.0, 0.0)],
         };
         for &(x0, x1) in spans.iter().filter(|(x0, x1)| x1 > x0) {
@@ -236,9 +292,23 @@ impl TabBar {
 
         let text_top = ((h - text.metrics.line_height) * 0.5).round();
 
-        for (i, (slot, look)) in layout.tabs.iter().zip(tabs).enumerate() {
+        // The dragged tab goes last so it lies over its neighbours.
+        let looks: Vec<TabLook<'t>> = tabs.take(layout.tabs.len()).collect();
+        let order = (0..looks.len()).filter(|i| dragged.is_none_or(|(index, _)| *i != index)).chain(dragged.map(|(index, _)| index));
+        for i in order {
+            let (slot, look) = (&layout.tabs[i], looks[i]);
             let TabLook { title, broadcast, accent, background, activity } = look;
-            let r = slot.rect;
+            let is_dragged = dragged.is_some_and(|(index, _)| index == i);
+            let r = match dragged {
+                Some((_, rect)) if is_dragged => rect,
+                _ => slot.rect,
+            };
+            // A label of a tab the dragged one covers stops at its edge;
+            // where that would leave only the tail of a title standing,
+            // with its beginning hidden, nothing is drawn at all.
+            let clip_to = |rect: Rect| if is_dragged { rect } else { cut(rect, cover) };
+            let shows = |left: f32, clip: &Rect| clip.w > 0.0 && clip.x <= left + 0.5;
+            let close_rect = slot.close.map(|close| Rect { x: close.x + (r.x - slot.rect.x), ..close });
             let is_active = i == active;
             let is_hovered = matches!(hovered, Some(TabBarHit::Tab(j) | TabBarHit::Close(j)) if j == i);
 
@@ -264,13 +334,14 @@ impl TabBar {
                 quads.push(quad(Rect { x: r.x, y: 0.0, w: r.w, h: thickness * px }, color));
             }
             // Separator on the right edge, unless the neighbour is the
-            // active tab (its own background already delimits it).
-            if !is_active && i + 1 != active {
+            // active tab (its own background already delimits it) or a
+            // tab is being dragged across the row.
+            if !is_active && i + 1 != active && dragged.is_none() {
                 quads.push(separator(r.x + r.w));
             }
 
             let show_close = is_active || is_hovered;
-            let label_right = match slot.close {
+            let label_right = match close_rect {
                 Some(c) if show_close => c.x,
                 _ => r.x + r.w - layout.label_pad * 0.5,
             };
@@ -283,8 +354,10 @@ impl TabBar {
                     Activity::Output => ("●", c.accent),
                     Activity::Watching => ("○", c.text_weak),
                 };
-                let clip = Rect { x: label_left, y: 0.0, w: cell.width * 2.0, h };
-                self.labels.push(text, mark, label_left, text_top, clip, text_color(color));
+                let clip = clip_to(Rect { x: label_left, y: 0.0, w: cell.width * 2.0, h });
+                if shows(label_left, &clip) {
+                    self.labels.push(text, mark, label_left, text_top, clip, text_color(color));
+                }
                 label_left += cell.width * 2.0;
             }
             let max_chars = ((label_right - label_left) / cell.width).floor().max(0.0) as usize;
@@ -296,17 +369,22 @@ impl TabBar {
             } else {
                 text_inactive
             };
-            let clip = Rect { x: label_left, y: 0.0, w: (label_right - label_left).max(0.0), h };
-            self.labels.push(text, &truncate(title, max_chars), label_left, text_top, clip, color);
+            let clip = clip_to(Rect { x: label_left, y: 0.0, w: (label_right - label_left).max(0.0), h });
+            if shows(label_left, &clip) {
+                self.labels.push(text, &truncate(title, max_chars), label_left, text_top, clip, color);
+            }
 
-            if let Some(close) = slot.close.filter(|_| show_close) {
+            if let Some(close) = close_rect.filter(|_| show_close) {
                 let close_hovered = hovered == Some(TabBarHit::Close(i));
                 if close_hovered {
                     quads.push(fill(close, c.border_strong));
                 }
                 let color = if close_hovered { text_active } else { text_inactive };
                 let left = (close.x + (close.w - cell.width) * 0.5).round();
-                self.labels.push(text, "×", left, text_top, close, color);
+                let clip = clip_to(close);
+                if shows(left, &clip) {
+                    self.labels.push(text, "×", left, text_top, clip, color);
+                }
             }
         }
 
@@ -326,18 +404,29 @@ impl TabBar {
     }
 }
 
-/// Cut `title` down to at most `max_chars` characters, ending in "…"
-/// when anything had to go.
+/// Cut `title` down to at most `max_chars` characters, taking it out of
+/// the middle: both ends of a tab title carry something worth seeing --
+/// the directory or host it starts with, and the program that's running,
+/// which shells put at the end ("~/projects/x: btop - btop").
 fn truncate(title: &str, max_chars: usize) -> String {
-    if title.chars().count() <= max_chars {
+    let chars: Vec<char> = title.chars().collect();
+    if chars.len() <= max_chars {
         return title.to_string();
     }
-    if max_chars == 0 {
-        return String::new();
+    match max_chars {
+        0 => String::new(),
+        1 => "…".to_string(),
+        _ => {
+            // The end gets the odd character: that's where the program is.
+            let keep = max_chars - 1;
+            let head = keep / 2;
+            let tail = keep - head;
+            let mut out: String = chars[..head].iter().collect();
+            out.push('…');
+            out.extend(&chars[chars.len() - tail..]);
+            out
+        }
     }
-    let mut out: String = title.chars().take(max_chars - 1).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]
@@ -363,6 +452,34 @@ mod tests {
     }
 
     #[test]
+    fn a_covered_label_keeps_whichever_side_is_left() {
+        let rect = Rect { x: 100.0, y: 0.0, w: 100.0, h: 30.0 };
+        let over = |x: f32| Some(Rect { x, y: 0.0, w: 60.0, h: 30.0 });
+        // Nothing in the way.
+        assert_eq!(cut(rect, None).x, 100.0);
+        assert_eq!(cut(rect, over(300.0)).w, 100.0);
+        // Covered from the left: what's right of it is left over.
+        let right = cut(rect, over(80.0));
+        assert_eq!((right.x, right.w), (140.0, 60.0));
+        // Covered from the right: it ends where the cover starts.
+        let left = cut(rect, over(170.0));
+        assert_eq!((left.x, left.w), (100.0, 70.0));
+    }
+
+    #[test]
+    fn a_dragged_tab_lands_in_the_slot_under_the_pointer() {
+        // Toggle at 0..34, then three 260px tabs.
+        let layout = TabBarLayout::compute(3, 0.0, 1000.0, CELL, 1.0);
+        assert_eq!(layout.drop_index(0.0), 0);
+        assert_eq!(layout.drop_index(40.0), 0);
+        assert_eq!(layout.drop_index(293.0), 0);
+        assert_eq!(layout.drop_index(295.0), 1);
+        assert_eq!(layout.drop_index(600.0), 2);
+        // Past the last tab, over "+" or beyond the window.
+        assert_eq!(layout.drop_index(900.0), 2);
+    }
+
+    #[test]
     fn bar_starts_right_of_the_sidebar() {
         let layout = TabBarLayout::compute(1, 200.0, 1000.0, CELL, 1.0);
         assert_eq!(layout.hit_test(100.0, 10.0), None);
@@ -379,9 +496,13 @@ mod tests {
     }
 
     #[test]
-    fn truncate_adds_ellipsis_only_when_needed() {
+    fn truncate_takes_it_out_of_the_middle() {
         assert_eq!(truncate("bash", 4), "bash");
-        assert_eq!(truncate("bash", 3), "ba…");
+        assert_eq!(truncate("bash", 3), "b…h");
+        assert_eq!(truncate("bash", 1), "…");
         assert_eq!(truncate("bash", 0), "");
+        // Both ends stay: the directory and the program that's running.
+        assert_eq!(truncate("~/Projekte/Terminal: btop - btop", 20), "~/Projekt…top - btop");
+        assert_eq!(truncate("jan@server: ~/src", 12), "jan@s… ~/src");
     }
 }

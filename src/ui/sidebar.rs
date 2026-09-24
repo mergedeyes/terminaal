@@ -44,6 +44,8 @@ pub enum SidebarAction {
     /// Apply a config option; with `save`, also persist it. Sliders send
     /// this on every step while dragged, and with `save` once let go.
     ChangeSetting { setting: Setting, save: bool },
+    /// Fold a group of command buttons away, or open it again.
+    CollapseGroup { key: String, collapsed: bool },
     /// Switch to the settings tab, opening it if needed.
     OpenSettings,
     /// Bind a shortcut action to these combinations (persisted).
@@ -355,6 +357,7 @@ impl Sidebar {
                 EntryKind::Function,
                 t!("shells-functions", count = count(EntryKind::Function)),
             );
+            ui.selectable_value(&mut self.list, EntryKind::Block, t!("shells-lines", count = count(EntryKind::Block)));
         });
         if self.list != before {
             self.editor = None;
@@ -371,6 +374,7 @@ impl Sidebar {
             ui.label(weak(match self.list {
                 EntryKind::Alias => t!("shells-no-aliases"),
                 EntryKind::Function => t!("shells-no-functions"),
+                EntryKind::Block => t!("shells-no-lines"),
             }));
         }
         for entry in shown {
@@ -437,6 +441,7 @@ impl Sidebar {
             let label = match self.list {
                 EntryKind::Alias => t!("shells-add-alias"),
                 EntryKind::Function => t!("shells-add-function"),
+                EntryKind::Block => t!("shells-add-lines"),
             };
             if ui.button(label).clicked() {
                 self.editor = Some(Editor::new(self.list));
@@ -457,6 +462,8 @@ impl Sidebar {
                 (EntryKind::Alias, true) => t!("shells-edit-alias"),
                 (EntryKind::Function, false) => t!("shells-new-function"),
                 (EntryKind::Function, true) => t!("shells-edit-function"),
+                (EntryKind::Block, false) => t!("shells-new-lines"),
+                (EntryKind::Block, true) => t!("shells-edit-lines"),
             };
             ui.label(RichText::new(title).strong());
             ui.add_space(2.0);
@@ -466,7 +473,11 @@ impl Sidebar {
                 TextEdit::singleline(&mut editor.name)
                     .font(TextStyle::Monospace)
                     .desired_width(f32::INFINITY)
-                    .hint_text(if editor.kind == EntryKind::Alias { "ll" } else { "mkcd" }),
+                    .hint_text(match editor.kind {
+                        EntryKind::Alias => "ll",
+                        EntryKind::Function => "mkcd",
+                        EntryKind::Block => "editor",
+                    }),
             );
             if editor.focus_pending {
                 name.request_focus();
@@ -500,6 +511,21 @@ impl Sidebar {
                             .hint_text(hint),
                     );
                     ui.label(weak(args).size(11.0));
+                }
+                EntryKind::Block => {
+                    ui.label(weak(t!("shells-lines-label")));
+                    let hint = match shell.kind {
+                        ShellKind::Fish => "set -gx EDITOR vim",
+                        _ => "export EDITOR=vim",
+                    };
+                    ui.add(
+                        TextEdit::multiline(&mut editor.value)
+                            .code_editor()
+                            .desired_rows(6)
+                            .desired_width(f32::INFINITY)
+                            .hint_text(hint),
+                    );
+                    ui.label(weak(t!("shells-lines-hint")).size(11.0));
                 }
             }
 
@@ -542,7 +568,7 @@ impl Sidebar {
         let name = editor.name.trim().to_string();
         let value = match kind {
             EntryKind::Alias => editor.value.trim().to_string(),
-            EntryKind::Function => editor.value.trim_end().to_string(),
+            EntryKind::Function | EntryKind::Block => editor.value.trim_end().to_string(),
         };
 
         managed::validate_name(&name)?;
@@ -550,8 +576,10 @@ impl Sidebar {
             return Err(match kind {
                 EntryKind::Alias => t!("shells-command-missing"),
                 EntryKind::Function => t!("shells-body-missing"),
+                EntryKind::Block => t!("shells-lines-missing"),
             });
         }
+        managed::validate_value(&value)?;
 
         let mut entries = self.entries.clone()?;
         let is_original = |e: &Entry| e.kind == kind && original.as_deref() == Some(e.name.as_str());

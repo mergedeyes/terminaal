@@ -26,6 +26,9 @@ pub const FONT_SIZES: RangeInclusive<f32> = 6.0..=36.0;
 /// Window opacities the settings allow; less and the text on top would be
 /// all that's left.
 pub const OPACITIES: RangeInclusive<f32> = 0.2..=1.0;
+/// How much faster the wheel may scroll while marking text; 1 is the
+/// usual speed.
+pub const SELECT_FACTORS: RangeInclusive<f32> = 1.0..=10.0;
 /// Heights of the drop-down window the settings allow, in percent.
 pub const QUAKE_HEIGHTS: RangeInclusive<f32> = 20.0..=100.0;
 
@@ -43,6 +46,10 @@ pub struct Config {
     /// Lines scrolled per mouse-wheel notch; touchpads scroll by their
     /// pixels instead. Read through [`Config::scroll_lines`].
     pub scroll_lines: f32,
+    /// How much faster the wheel scrolls while a selection is being
+    /// dragged. 1 keeps it at [`Config::scroll_lines`]. Read through
+    /// [`Config::scroll_select_factor`].
+    pub scroll_select_factor: f32,
     /// Default window size (logical pixels).
     pub default_width: f64,
     pub default_height: f64,
@@ -100,6 +107,11 @@ pub struct Config {
     /// Whether the warning about commands running right away has been
     /// acknowledged; set the first time one is used.
     pub commands_warned: bool,
+    /// Command groups the sidebar shows collapsed: a built-in group by
+    /// its [`crate::commands::Group::key`], one of your own categories as
+    /// `custom:<name>`. Not an option anyone edits by hand -- it's where
+    /// the sidebar remembers what you folded away.
+    pub commands_collapsed: Vec<String>,
     /// Ask before a paste with several lines or risky commands
     /// (`ui::paste_warning`).
     pub paste_warning: bool,
@@ -147,6 +159,9 @@ impl Default for Config {
             scrollback_lines: 10_000,
             // Like Alacritty and most desktops.
             scroll_lines: 3.0,
+            // Marking up a screenful at a time is what the wheel is for
+            // here; dragging to the edge covers the slow case.
+            scroll_select_factor: 3.0,
             default_width: 1000.0,
             default_height: 650.0,
             cursor_blink: true,
@@ -165,6 +180,7 @@ impl Default for Config {
             commands_run: true,
             commands_assume_yes: false,
             commands_warned: false,
+            commands_collapsed: Vec::new(),
             paste_warning: true,
             system: None,
             editor: None,
@@ -312,6 +328,26 @@ impl Config {
         Ok(())
     }
 
+    /// Fold `group` away in the sidebar's commands, or open it again,
+    /// and remember that in the config file. Like the shortcuts, this is
+    /// a list rather than one value, so it doesn't go through
+    /// [`Setting`].
+    pub fn collapse_group(&mut self, group: &str, collapsed: bool) -> Result<(), String> {
+        let mut groups = self.commands_collapsed.clone();
+        groups.retain(|other| other != group);
+        if collapsed {
+            groups.push(group.to_string());
+        }
+        Self::edit(|doc| set_value(doc, "commands_collapsed", toml_edit::Array::from_iter(groups.iter().map(String::as_str))))?;
+        self.commands_collapsed = groups;
+        Ok(())
+    }
+
+    /// Whether `group` is folded away in the sidebar.
+    pub fn collapsed(&self, group: &str) -> bool {
+        self.commands_collapsed.iter().any(|other| other == group)
+    }
+
     /// Lines per mouse-wheel notch. Zero, negative or not a number counts
     /// as the default rather than breaking scrolling.
     pub fn scroll_lines(&self) -> f32 {
@@ -319,6 +355,16 @@ impl Config {
             self.scroll_lines
         } else {
             Self::default().scroll_lines
+        }
+    }
+
+    /// The wheel's multiplier while a selection is dragged, within
+    /// [`SELECT_FACTORS`]; not a number counts as the default.
+    pub fn scroll_select_factor(&self) -> f32 {
+        if self.scroll_select_factor.is_finite() {
+            self.scroll_select_factor.clamp(*SELECT_FACTORS.start(), *SELECT_FACTORS.end())
+        } else {
+            Self::default().scroll_select_factor
         }
     }
 
@@ -346,6 +392,7 @@ impl Config {
             Setting::Padding(padding) => self.padding = padding,
             Setting::ScrollbackLines(lines) => self.scrollback_lines = lines,
             Setting::ScrollLines(lines) => self.scroll_lines = lines,
+            Setting::ScrollSelectFactor(factor) => self.scroll_select_factor = factor,
             Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
@@ -404,6 +451,8 @@ pub enum Setting {
     Padding(f32),
     ScrollbackLines(usize),
     ScrollLines(f32),
+    /// How much faster the wheel scrolls while marking text.
+    ScrollSelectFactor(f32),
     /// Window size at start; both keys at once.
     WindowSize { width: f64, height: f64 },
     CursorBlink(bool),
@@ -442,6 +491,7 @@ impl Setting {
             Self::Padding(padding) => set_value(doc, "padding", float(padding.into())),
             Self::ScrollbackLines(lines) => set_value(doc, "scrollback_lines", int(lines as u64)),
             Self::ScrollLines(lines) => set_value(doc, "scroll_lines", float(lines.into())),
+            Self::ScrollSelectFactor(factor) => set_value(doc, "scroll_select_factor", float(factor.into())),
             Self::WindowSize { width, height } => {
                 set_value(doc, "default_width", float(width.round()));
                 set_value(doc, "default_height", float(height.round()));
@@ -589,6 +639,22 @@ mod tests {
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);
     }
 
+    /// The sidebar folding a group of command buttons away, as it lands
+    /// in the file. Not through `Config::collapse_group`: that writes to
+    /// the real config file.
+    #[test]
+    fn collapsed_groups_are_a_list_in_the_file() {
+        let mut doc: toml_edit::DocumentMut = "font_size = 12\n".parse().unwrap();
+        let groups = ["packages", "custom:Docker"];
+        super::set_value(&mut doc, "commands_collapsed", toml_edit::Array::from_iter(groups));
+        assert!(doc.to_string().contains(r#"commands_collapsed = ["packages", "custom:Docker"]"#));
+        let config: Config = toml::from_str(&doc.to_string()).unwrap();
+        assert!(config.collapsed("packages"));
+        assert!(config.collapsed("custom:Docker"));
+        assert!(!config.collapsed("network"));
+        assert!(!Config::default().collapsed("packages"));
+    }
+
     /// The system for the built-in commands, as the settings write it.
     #[test]
     fn the_system_is_written_and_removed_again() {
@@ -602,6 +668,16 @@ mod tests {
         assert_eq!(config.system(), None);
         super::write_text(&mut doc, "system", None);
         assert_eq!(doc.to_string().trim(), "font_size = 12");
+    }
+
+    #[test]
+    fn select_factor_is_clamped_to_its_range() {
+        let parse = |text| toml::from_str::<Config>(text).unwrap().scroll_select_factor();
+        assert_eq!(parse(""), 3.0);
+        assert_eq!(parse("scroll_select_factor = 1"), 1.0);
+        assert_eq!(parse("scroll_select_factor = 25"), 10.0);
+        assert_eq!(parse("scroll_select_factor = 0"), 1.0);
+        assert_eq!(parse("scroll_select_factor = nan"), 3.0);
     }
 
     #[test]

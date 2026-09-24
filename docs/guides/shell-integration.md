@@ -93,9 +93,12 @@ What each sequence means:
   (default 10 seconds, 0 turns it off). You're notified only when the window
   isn't focused or the command's tab isn't the active one. Needs `notify-send`;
   the taskbar entry is also marked as needing attention.
-- **Tab titles**: a title set by a program (OSC 0/2) wins over the directory.
-  Many distributions' bash setups set one, so you may see `user@host: dir`
-  instead – that's the program's title.
+- **Tab titles**: while a program runs in a local tab, the tab is named after
+  it (`btop`, `less`) – or after the title the program sets for itself if it
+  sets one (`notes.md (~) - VIM`). At the prompt, a title set by the shell
+  (OSC 0/2) wins over the directory; many distributions' bash setups set one,
+  so you may see `user@host: dir` instead. Over SSH the program runs on the
+  server, so only what it sends as a title shows up.
 - **New tabs** open in the active tab's directory only when it's a local tab and
   the directory is on this machine.
 

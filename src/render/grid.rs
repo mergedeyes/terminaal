@@ -77,6 +77,13 @@ pub struct RowText {
 
 impl RowText {
     fn push(&mut self, ch: char, key: StyleKey) {
+        // Every cell is one column wide, control characters included: a
+        // tab, which `alacritty_terminal` keeps in the cell it started
+        // from (the ones it skipped hold spaces), would otherwise shape
+        // to the next tab stop and slide the rest of the row out from
+        // under its cells -- selecting what you see then copies
+        // something else (`dig` output, whose columns are tabs).
+        let ch = if ch.is_control() { ' ' } else { ch };
         if self.runs.last().is_none_or(|(_, k)| *k != key) {
             self.runs.push((self.text.len(), key));
         }
@@ -397,6 +404,13 @@ mod tests {
         let attrs = Attrs::new();
         let spans: Vec<&str> = r.spans(&attrs).map(|(s, _)| s).collect();
         assert_eq!(spans, ["ab", "c", "d"]);
+    }
+
+    #[test]
+    fn a_tab_cell_stays_one_column_wide() {
+        let r = row(&[('a', RED), ('\t', RED), ('b', RED)]);
+        assert_eq!(r.text, "a b");
+        assert_eq!(r.len(), 3);
     }
 
     #[test]

@@ -123,6 +123,10 @@ settings-scroll-lines = { $lines ->
    *[other] { $lines } Zeilen je Raste
 }
 settings-scroll-speed-hint = Standard 3. Touchpads scrollen stufenlos.
+settings-scroll-select = Beim Markieren
+settings-scroll-select-times = { $factor }× so schnell
+settings-scroll-select-off = wie sonst
+settings-scroll-select-hint = Solange mit gedrückter Maustaste markiert wird, scrollt das Rad um diesen Faktor weiter – so reicht die Auswahl schnell über mehrere Bildschirme, ohne an den Rand ziehen zu müssen. Standard 3, 1× schaltet es ab.
 settings-scrollback = Scrollback
 settings-scrollback-lines = { $lines ->
     [one] { $lines } Zeile
@@ -293,8 +297,8 @@ shells-new-tab = ▶  Neuer Tab
 shells-new-tab-hint = Öffnet einen neuen Tab mit { $shell }
 shells-make-default = ★  Als Standard
 shells-make-default-hint = Neue Tabs (Strg+Umschalt+T, „+“) starten mit dieser Shell
-shells-managed-title = Aliase & Funktionen · { $shell }
-shells-managed-unsupported = Für { $shell } kann Terminaal keine Aliase oder Funktionen verwalten – unterstützt werden fish, bash und zsh.
+shells-managed-title = Aliase, Funktionen & Zeilen · { $shell }
+shells-managed-unsupported = Für { $shell } kann Terminaal nichts verwalten – unterstützt werden fish, bash und zsh.
 shells-managed-file-hint = Wird nur in Terminaal geladen, nicht in anderen Terminals. Änderungen gelten für neu geöffnete Tabs.
 shells-save-failed = Speichern fehlgeschlagen: { $err }
 shells-aliases = Aliase ({ $count })
@@ -316,6 +320,14 @@ shells-command-missing = Der Befehl fehlt.
 shells-body-missing = Der Rumpf fehlt.
 shells-name-taken = „{ $name }“ ist bereits als { $kind } definiert.
 shells-saved = „{ $name }“ gespeichert – gilt für neue { $shell }-Tabs.
+shells-lines = Zeilen ({ $count })
+shells-no-lines = Noch keine Zeilen angelegt.
+shells-add-lines = +  Zeilen hinzufügen
+shells-new-lines = Neue Zeilen
+shells-edit-lines = Zeilen bearbeiten
+shells-lines-label = Zeilen
+shells-lines-hint = Läuft beim Start jedes Terminaal-Tabs mit dieser Shell – wie ein Eintrag in der Startdatei der Shell, nur in Terminaals eigener Datei.
+shells-lines-missing = Die Zeilen fehlen.
 
 ## Seitenleiste: Befehle (commands.rs)
 
@@ -353,6 +365,9 @@ snip-local-login = „Nach dem Login“ gilt nur für SSH-Terminals und passt ni
 snip-everywhere = Überall
 snip-on-host = auf { $host }
 snip-command-missing = Der Befehl fehlt.
+snip-category = Kategorie
+snip-category-hint = optional, z. B. Docker
+snip-category-use = Diese Kategorie übernehmen
 snip-name-taken = Einen Befehl „{ $name }“ gibt es schon.
 cmd-system = System: { $system }
 cmd-system-local-hint = Aus /etc/os-release erkannt. Stimmt das nicht, lässt es sich in den Einstellungen unter „Shell“ festlegen.
@@ -370,6 +385,8 @@ cmd-group-packages = Pakete
 cmd-group-disk = Speicherplatz
 cmd-group-system = System
 cmd-group-network = Netzwerk
+cmd-group-collapse = Gruppe einklappen
+cmd-group-expand = Gruppe ausklappen
 cmd-update = System aktualisieren
 cmd-update-flatpak = Flatpaks aktualisieren
 cmd-update-aur = AUR-Pakete aktualisieren
@@ -399,10 +416,12 @@ cmd-family-unknown = Automatisch erkennen
 
 managed-alias = Alias
 managed-function = Funktion
+managed-block = Zeilen
 managed-unsupported = diese Shell wird nicht unterstützt
 managed-invalid-name = Erlaubt sind Buchstaben, Ziffern und _ . : + - (nicht am Anfang: -).
+managed-marker-line = Eine Zeile darf nicht mit „# terminaal:“ beginnen – das sind die Markierungen der Datei.
 managed-header =
-    # Aliase und Funktionen für Terminaal.
+    # Aliase, Funktionen und eigene Zeilen für Terminaal.
     #
     # Wird von Terminaal verwaltet und nur in Terminaal geladen. Die Blöcke
     # zwischen den Markierungen dürfen auch von Hand bearbeitet werden;

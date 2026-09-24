@@ -96,7 +96,15 @@ F-key or Shift+navigation key). You can still set it in `config.toml`.
   [Shell integration](guides/shell-integration.md#other-shells-or-shells-over-ssh).
 
 **The tab title shows `user@host: dir` instead of just the directory.**
-A program (often your distribution's bash setup) sets the title; that wins.
+At the prompt, a title set by a program (often your distribution's bash setup)
+wins over the directory.
+
+**The tab isn't named after the program that's running.**
+- Only local tabs can tell: over SSH the program runs on the server, so the tab
+  shows whatever title it sends, if any.
+- The shell needs job control, which it has when Terminaal starts it as an
+  interactive shell.
+- The name follows the output, a quarter of a second behind it.
 
 **No notification when a command finishes.**
 - It only fires when the command ran at least `notify_after_secs` and the tab

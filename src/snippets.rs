@@ -9,6 +9,7 @@
 //! [[snippet]]
 //! name = "Logs"
 //! command = "journalctl -f"
+//! category = "Server"  # optional, groups the buttons in the sidebar
 //! system = "arch"   # optional, a `Family` key
 //! host = "web1"     # optional, a host's name in the sidebar
 //! # local = true    # optional instead of host: only in local terminals
@@ -26,6 +27,10 @@ use crate::i18n::t;
 pub struct Snippet {
     pub name: String,
     pub command: String,
+    /// The category it's listed under in the sidebar; without one it
+    /// goes under the commands themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     /// Only on this system (a [`Family`] key).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
@@ -143,14 +148,18 @@ mod tests {
     #[test]
     fn reads_and_writes_the_file_format() {
         let text = "[[snippet]]\nname = \"Logs\"\ncommand = \"journalctl -f\"\nsystem = \"arch\"\n\n\
-                    [[snippet]]\nname = \"Deploy\"\ncommand = \"cd /srv\\n./deploy.sh\"\nhost = \"web1\"\n";
+                    [[snippet]]\nname = \"Deploy\"\ncommand = \"cd /srv\\n./deploy.sh\"\nhost = \"web1\"\ncategory = \"Server\"\n";
         let snippets = parse(text).unwrap();
         assert_eq!(snippets.len(), 2);
         assert_eq!(snippets[0].family(), Some(Family::Arch));
+        // The category is only the heading its button sits under.
+        assert_eq!(snippets[0].category, None);
+        assert_eq!(snippets[1].category.as_deref(), Some("Server"));
         assert_eq!(snippets[1].command, "cd /srv\n./deploy.sh");
         let written = toml::to_string_pretty(&File { snippets: snippets.clone() }).unwrap();
         assert_eq!(parse(&written).unwrap(), snippets);
         assert!(!written.contains("host = \"\""), "unset fields stay out: {written}");
+        assert!(!written.contains("category = \"\""), "unset fields stay out: {written}");
         assert_eq!(parse("").unwrap(), []);
         assert!(parse("[[snippet]]\nname = 1").is_err());
     }

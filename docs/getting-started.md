@@ -38,12 +38,14 @@ Just want to try it? `cargo run --release` starts it without installing.
 └──────────────┴─────────────────────────────────────┘
 ```
 
-- **Tab bar** – one tab per shell or SSH session. Click to switch, middle-click
-  or **×** to close, **+** for a new tab with your default shell. **☰** shows and
-  hides the sidebar.
+- **Tab bar** – one tab per shell or SSH session. Click to switch, drag a tab
+  sideways to sort it into another place (it follows the pointer; long titles are
+  shortened in the middle, so the directory and the running program both stay
+  readable), middle-click or **×** to close, **+**
+  for a new tab with your default shell. **☰** shows and hides the sidebar.
 - **Sidebar** – three sections along its top:
-  - **Shells**: installed shells, aliases and functions, built-in commands and
-    your own commands
+  - **Shells**: installed shells, aliases, functions and startup lines,
+    built-in commands and your own commands
   - **SSH**: saved hosts and the hosts from `~/.ssh/config`, plus the port
     forwards of the active tab
   - **Keys**: your SSH keys
@@ -73,7 +75,7 @@ there. Hover over a setting's name to see its key in the file.
 
 | To… | Do this |
 | --- | --- |
-| Copy | Select with the mouse, then <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or right-click → Copy |
+| Copy | Select with the mouse, then <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or right-click → Copy. A selection can reach further than the screen: drag past the top or bottom edge, or turn the wheel while holding the button (three times the usual speed, see **Settings → Terminal → Scrolling**) |
 | Paste | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> or right-click → Paste |
 | Scroll back | Mouse wheel, or <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> |
 | Search the output | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |

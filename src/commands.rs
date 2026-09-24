@@ -256,6 +256,17 @@ pub enum Group {
 impl Group {
     pub const ALL: [Group; 4] = [Group::Packages, Group::Disk, Group::System, Group::Network];
 
+    /// Its name in `commands_collapsed`, which the language must not
+    /// change.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Packages => "packages",
+            Self::Disk => "disk",
+            Self::System => "system",
+            Self::Network => "network",
+        }
+    }
+
     pub fn label(self) -> String {
         match self {
             Self::Packages => t!("cmd-group-packages"),
