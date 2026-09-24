@@ -22,6 +22,8 @@ use crate::panes::Direction;
 pub enum Action {
     NewTab,
     CloseTab,
+    /// Start the tab that was closed last where it was.
+    ReopenTab,
     NextTab,
     PreviousTab,
     /// Tab 1 to 9, counted from the left.
@@ -35,6 +37,11 @@ pub enum Action {
     ClosePane,
     /// Move the keyboard to the pane in that direction.
     FocusPane(Direction),
+    /// Move the divider on that side of the focused pane: it grows
+    /// towards `Direction`, its neighbour gives way.
+    ResizePane(Direction),
+    /// Trade places with the pane in that direction.
+    SwapPane(Direction),
     /// Show the focused pane alone over the whole tab, or all again.
     ZoomPane,
     /// Take part in the broadcast (input to all such terminals) or not.
@@ -96,9 +103,10 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 43] = [
+    pub const ALL: [Action; 52] = [
         Action::NewTab,
         Action::CloseTab,
+        Action::ReopenTab,
         Action::NextTab,
         Action::PreviousTab,
         Action::SelectTab(1),
@@ -119,6 +127,14 @@ impl Action {
         Action::FocusPane(Direction::Right),
         Action::FocusPane(Direction::Up),
         Action::FocusPane(Direction::Down),
+        Action::ResizePane(Direction::Left),
+        Action::ResizePane(Direction::Right),
+        Action::ResizePane(Direction::Up),
+        Action::ResizePane(Direction::Down),
+        Action::SwapPane(Direction::Left),
+        Action::SwapPane(Direction::Right),
+        Action::SwapPane(Direction::Up),
+        Action::SwapPane(Direction::Down),
         Action::ZoomPane,
         Action::ToggleBroadcast,
         Action::WatchSilence,
@@ -147,6 +163,7 @@ impl Action {
         Cow::Borrowed(match self {
             Action::NewTab => "new_tab",
             Action::CloseTab => "close_tab",
+            Action::ReopenTab => "reopen_tab",
             Action::NextTab => "next_tab",
             Action::PreviousTab => "previous_tab",
             Action::SelectTab(number) => return Cow::Owned(format!("tab_{number}")),
@@ -159,6 +176,14 @@ impl Action {
             Action::FocusPane(Direction::Right) => "focus_pane_right",
             Action::FocusPane(Direction::Up) => "focus_pane_up",
             Action::FocusPane(Direction::Down) => "focus_pane_down",
+            Action::ResizePane(Direction::Left) => "resize_pane_left",
+            Action::ResizePane(Direction::Right) => "resize_pane_right",
+            Action::ResizePane(Direction::Up) => "resize_pane_up",
+            Action::ResizePane(Direction::Down) => "resize_pane_down",
+            Action::SwapPane(Direction::Left) => "swap_pane_left",
+            Action::SwapPane(Direction::Right) => "swap_pane_right",
+            Action::SwapPane(Direction::Up) => "swap_pane_up",
+            Action::SwapPane(Direction::Down) => "swap_pane_down",
             Action::ZoomPane => "zoom_pane",
             Action::ToggleBroadcast => "toggle_broadcast",
             Action::OpenFiles => "open_files",
@@ -191,6 +216,7 @@ impl Action {
         match self {
             Action::NewTab => t!("shortcut-new-tab"),
             Action::CloseTab => t!("shortcut-close-tab"),
+            Action::ReopenTab => t!("shortcut-reopen-tab"),
             Action::NextTab => t!("shortcut-next-tab"),
             Action::PreviousTab => t!("shortcut-previous-tab"),
             Action::SelectTab(number) => t!("shortcut-select-tab", number = u32::from(number)),
@@ -203,6 +229,14 @@ impl Action {
             Action::FocusPane(Direction::Right) => t!("shortcut-focus-pane-right"),
             Action::FocusPane(Direction::Up) => t!("shortcut-focus-pane-up"),
             Action::FocusPane(Direction::Down) => t!("shortcut-focus-pane-down"),
+            Action::ResizePane(Direction::Left) => t!("shortcut-resize-pane-left"),
+            Action::ResizePane(Direction::Right) => t!("shortcut-resize-pane-right"),
+            Action::ResizePane(Direction::Up) => t!("shortcut-resize-pane-up"),
+            Action::ResizePane(Direction::Down) => t!("shortcut-resize-pane-down"),
+            Action::SwapPane(Direction::Left) => t!("shortcut-swap-pane-left"),
+            Action::SwapPane(Direction::Right) => t!("shortcut-swap-pane-right"),
+            Action::SwapPane(Direction::Up) => t!("shortcut-swap-pane-up"),
+            Action::SwapPane(Direction::Down) => t!("shortcut-swap-pane-down"),
             Action::ZoomPane => t!("shortcut-zoom-pane"),
             Action::ToggleBroadcast => t!("shortcut-toggle-broadcast"),
             Action::OpenFiles => t!("shortcut-open-files"),
@@ -231,6 +265,7 @@ impl Action {
         match self {
             Action::NewTab
             | Action::CloseTab
+            | Action::ReopenTab
             | Action::NextTab
             | Action::PreviousTab
             | Action::SelectTab(_)
@@ -241,6 +276,8 @@ impl Action {
             | Action::SplitDown
             | Action::ClosePane
             | Action::FocusPane(_)
+            | Action::ResizePane(_)
+            | Action::SwapPane(_)
             | Action::ZoomPane
             | Action::ToggleBroadcast
             | Action::WatchSilence => Group::Panes,
@@ -268,6 +305,7 @@ impl Action {
         let combos: &[&str] = match self {
             Action::NewTab => &["Ctrl+Shift+T"],
             Action::CloseTab => &["Ctrl+Shift+Alt+W"],
+            Action::ReopenTab => &["Ctrl+Shift+Alt+T"],
             Action::NextTab => &["Ctrl+Tab"],
             Action::PreviousTab => &["Ctrl+Shift+Tab"],
             Action::SelectTab(number) => {
@@ -284,6 +322,13 @@ impl Action {
             Action::FocusPane(Direction::Right) => &["Ctrl+Alt+Right"],
             Action::FocusPane(Direction::Up) => &["Ctrl+Alt+Up"],
             Action::FocusPane(Direction::Down) => &["Ctrl+Alt+Down"],
+            Action::ResizePane(Direction::Left) => &["Ctrl+Shift+Alt+Left"],
+            Action::ResizePane(Direction::Right) => &["Ctrl+Shift+Alt+Right"],
+            Action::ResizePane(Direction::Up) => &["Ctrl+Shift+Alt+Up"],
+            Action::ResizePane(Direction::Down) => &["Ctrl+Shift+Alt+Down"],
+            // Swapping is rarer than the rest and every roomy combination
+            // is taken; the settings page is where to give it one.
+            Action::SwapPane(_) => &[],
             Action::ZoomPane => &["Ctrl+Shift+Enter"],
             Action::ToggleBroadcast => &["Ctrl+Shift+I"],
             Action::OpenFiles => &["Ctrl+Shift+O"],

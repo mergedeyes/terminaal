@@ -24,12 +24,33 @@ common-file-invalid = { $path } ist fehlerhaft: { $err }
 
 ## Kommandozeile
 
-cli-usage = Aufruf: terminaal [--connect [BENUTZER@]HOST | --quake]
+cli-usage = Aufruf: terminaal [--connect [BENUTZER@]HOST] [-s SHELL] [-c ZEILE] [--hold]  |  terminaal --quake
+cli-help =
+    Aufruf: terminaal [OPTIONEN]
+
+      --connect [BENUTZER@]HOST  Ersten Tab per SSH mit diesem gespeicherten
+                                 oder in ~/.ssh/config eingetragenen Host verbinden
+      -s [SHELL]                 Shell des ersten Tabs, als Name (fish) oder Pfad;
+                                 ohne Namen: installierte Shells auflisten und enden
+      -c ZEILE                   Diese Zeile von der Shell ausführen lassen,
+                                 mit --connect auf dem Server
+      --hold                     Tab offen lassen, wenn der Befehl endet
+      --quake                    Dropdown-Fenster anzeigen oder ausblenden;
+                                 verträgt sich mit keinem anderen Argument
+      -h, --help                 Diese Hilfe anzeigen
+      -V, --version              Version anzeigen
+
+    Mit --connect, -s oder -c wird die gespeicherte Sitzung weder wiederhergestellt
+    noch überschrieben. Mehr in der Handbuchseite: man terminaal
 cli-quake-failed = Das Dropdown-Terminal ließ sich nicht starten oder umschalten: { $err }
 cli-unknown-argument = Unbekanntes Argument „{ $arg }“.
-cli-unexpected-argument = Unerwartetes Argument „{ $arg }“.
-cli-connect-needs-host = --connect braucht einen Hostnamen.
+cli-needs-value = { $option } braucht einen Wert.
+cli-quake-alone = --quake verträgt sich mit keinem anderen Argument.
+cli-hold-alone = --hold braucht --connect, -s oder -c: allein gibt es nichts offen zu halten.
 cli-unknown-host = Kein gespeicherter oder in ~/.ssh/config eingetragener Host namens „{ $host }“.
+cli-unknown-shell = Keine installierte Shell namens „{ $shell }“.
+cli-hold-exit = [ Beendet. Tab schließen: Strg+Umschalt+W ]
+cli-hold-exit-code = [ Beendet mit Status { $code }. Tab schließen: Strg+Umschalt+W ]
 
 ## Config-Datei
 
@@ -60,9 +81,13 @@ menu-files = Dateien (SFTP)
 ## Suche im Scrollback (render/search_bar.rs)
 
 search-prompt = Suchen:
+search-prompt-regex = Suchen (Regex):
 search-no-match = Keine Treffer
-search-hint-typing = Enter ↑ · Umschalt+Enter ↓ · Esc
-search-hint-jumping = n ↑ · N ↓ · / ändern · Esc
+search-invalid = Kein gültiger Ausdruck
+search-matches = { $index }/{ $total }
+search-matches-more = { $total }+
+search-hint-typing = Enter ↑ · Umschalt+Enter ↓ · Alt+R Regex · Esc
+search-hint-jumping = n ↑ · N ↓ · / ändern · Alt+R Regex · Esc
 
 ## Shell-Integration (terminal/integration.rs, app.rs)
 
@@ -232,6 +257,7 @@ shortcuts-group-scroll = Scrollen
 shortcuts-group-font = Schriftgröße
 shortcut-new-tab = Neuer Tab mit der Standard-Shell
 shortcut-close-tab = Tab mit allen Bereichen schließen
+shortcut-reopen-tab = Geschlossenen Tab wieder öffnen
 shortcut-next-tab = Nächster Tab
 shortcut-previous-tab = Vorheriger Tab
 shortcut-select-tab = Tab { $number }
@@ -244,6 +270,14 @@ shortcut-focus-pane-left = Zum Bereich links
 shortcut-focus-pane-right = Zum Bereich rechts
 shortcut-focus-pane-up = Zum Bereich oben
 shortcut-focus-pane-down = Zum Bereich unten
+shortcut-resize-pane-left = Trennlinie nach links
+shortcut-resize-pane-right = Trennlinie nach rechts
+shortcut-resize-pane-up = Trennlinie nach oben
+shortcut-resize-pane-down = Trennlinie nach unten
+shortcut-swap-pane-left = Mit dem Bereich links tauschen
+shortcut-swap-pane-right = Mit dem Bereich rechts tauschen
+shortcut-swap-pane-up = Mit dem Bereich oben tauschen
+shortcut-swap-pane-down = Mit dem Bereich unten tauschen
 shortcut-zoom-pane = Bereich vergrößern/wiederherstellen
 shortcut-toggle-broadcast = Broadcast an/aus (Eingabe an alle markierten Terminals)
 shortcut-open-files = Dateien der SSH-Verbindung öffnen (SFTP)

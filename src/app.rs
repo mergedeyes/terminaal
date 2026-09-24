@@ -18,7 +18,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::TermMode;
-use alacritty_terminal::vte::ansi::{NamedColor, Rgb};
+use alacritty_terminal::vte::ansi::{NamedColor, Processor, Rgb};
 use arboard::Clipboard;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
@@ -51,6 +51,7 @@ fn window_icon() -> Option<Icon> {
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
 }
 
+use crate::Cli;
 use crate::commands::{System, Target};
 use crate::config::{self, Config, FontSlot, Setting};
 use crate::i18n::{self, t};
@@ -128,9 +129,8 @@ pub enum UserEvent {
 pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     config: Config,
-    /// Open the first tab as this SSH connection instead of a local shell
-    /// (`--connect`, see `main.rs`).
-    connect: Option<SshTarget>,
+    /// What the command line asked the first tab to be (`main.rs`).
+    cli: Cli,
     /// This is the drop-down Terminaal (`--quake`), toggled over this.
     quake: Option<crate::quake::Toggle>,
     state: Option<AppState>,
@@ -140,10 +140,10 @@ impl App {
     pub fn new(
         proxy: EventLoopProxy<UserEvent>,
         config: Config,
-        connect: Option<SshTarget>,
+        cli: Cli,
         quake: Option<crate::quake::Toggle>,
     ) -> Self {
-        Self { proxy, config, connect, quake, state: None }
+        Self { proxy, config, cli, quake, state: None }
     }
 }
 
@@ -335,6 +335,11 @@ struct Pane {
     /// The SSH connection whose shell got its startup commands (see
     /// `Opener::connection`); a new one gets them again.
     startup_connection: u64,
+    /// `--hold`: stay once what the pane runs has ended, showing how it
+    /// ended, instead of closing with it.
+    hold: bool,
+    /// The status its program exited with, for that notice.
+    exit_code: Option<i32>,
     /// Takes part in the broadcast: input typed into one such terminal
     /// goes to all of them.
     broadcast: bool,
@@ -484,7 +489,38 @@ enum PaneOrigin {
     Ssh(Box<SshTarget>),
 }
 
+/// A closed tab, waiting to be opened again.
+struct ClosedTab {
+    /// Where it sat, so it comes back in its place.
+    at: usize,
+    tab: SavedTab,
+}
+
+/// What the command line asked a pane to run beyond its origin
+/// ([`AppState::add_cli_tab`]); every other pane takes the default.
+#[derive(Clone, Copy, Default)]
+struct Run<'a> {
+    /// `-c`: one line for the shell to evaluate instead of starting
+    /// interactively. Only for [`PaneOrigin::Shell`] -- over SSH the line
+    /// travels as the host's `RemoteCommand`.
+    command: Option<&'a str>,
+    /// `--hold`: keep the pane once that ended.
+    hold: bool,
+}
+
 impl Pane {
+    /// `--hold`: whatever the pane ran has ended, but the pane stays --
+    /// print how it ended where its output stopped, so a command that
+    /// failed in a launcher-started window can still be read.
+    fn hold_notice(&mut self) {
+        let text = match self.exit_code {
+            Some(code) => t!("cli-hold-exit-code", code = code),
+            None => t!("cli-hold-exit"),
+        };
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut *self.terminal.term.lock(), format!("\r\n{text}\r\n").as_bytes());
+    }
+
     fn refresh_title(&mut self, local_host: &str) {
         self.title = pane_title(
             self.program.as_deref(),
@@ -532,6 +568,15 @@ fn moved_index(index: usize, from: usize, to: usize) -> usize {
 }
 
 /// A split leaves each pane at least this many columns and rows.
+/// How far one press of `Action::ResizePane` moves a divider: a column
+/// or two, so it takes a few presses to cross a pane but every press is
+/// visible.
+const RESIZE_STEP_COLUMNS: f32 = 2.0;
+const RESIZE_STEP_ROWS: f32 = 1.0;
+
+/// How many closed tabs `Action::ReopenTab` can bring back.
+const MAX_CLOSED_TABS: usize = 10;
+
 const MIN_PANE_COLS: usize = 8;
 const MIN_PANE_ROWS: usize = 2;
 
@@ -645,6 +690,10 @@ struct AppState {
     session: Option<SessionStore>,
     /// The last tab closed: the event loop ends before anything else.
     exiting: bool,
+    /// Terminal tabs that were closed, oldest first, as the session
+    /// describes them ([`Action::ReopenTab`]). Not saved anywhere: what
+    /// was open at the end comes back through the session itself.
+    closed: Vec<ClosedTab>,
 
     quads: Vec<QuadInstance>,
     modifiers: ModifiersState,
@@ -667,7 +716,7 @@ impl AppState {
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<UserEvent>,
         config: Config,
-        connect: Option<SshTarget>,
+        cli: Cli,
         quake: bool,
     ) -> Self {
         let size = window.inner_size();
@@ -766,6 +815,7 @@ impl AppState {
             next_pane_id: 0,
             session: None,
             exiting: false,
+            closed: Vec::new(),
             quads: Vec::new(),
             modifiers: ModifiersState::empty(),
             drag: None,
@@ -785,11 +835,11 @@ impl AppState {
         // useful at all -- that's the same "just crash" behaviour the
         // single-session version had. Later tabs (Ctrl+Shift+T) are
         // handled leniently instead; see `add_tab`.
-        match connect {
-            // Started for that one connection: the session stays for a
-            // Terminaal started plainly.
-            Some(target) => state.add_ssh_tab(&target).expect("failed to start SSH connection"),
-            None => {
+        match cli.one_off() {
+            // Started for that one job (`--connect`, `-s`, `-c`): the
+            // saved session stays as it is for a Terminaal started plainly.
+            true => state.add_cli_tab(&cli, &default_shell).expect("failed to open the tab asked for"),
+            false => {
                 // The drop-down Terminaal keeps tabs of its own.
                 let name = if quake { "quake-session" } else { "session" };
                 state.session = session::dir().and_then(|dir| {
@@ -824,7 +874,7 @@ impl AppState {
     /// focused pane's directory, if that's on this machine.
     fn add_tab(&mut self, shell: &InstalledShell) -> std::io::Result<()> {
         let cwd = self.tabs.get(self.active_tab).and_then(Tab::focused).and_then(|pane| pane.local_cwd(&self.hostname));
-        let pane = self.spawn_pane(PaneOrigin::Shell(shell.clone()), cwd, self.console_rect())?;
+        let pane = self.spawn_pane(PaneOrigin::Shell(shell.clone()), cwd, self.console_rect(), Run::default())?;
         self.push_tab(TabContent::Terminals(Panes::new(pane)));
         Ok(())
     }
@@ -847,13 +897,29 @@ impl AppState {
     /// Connecting plays out in the tab itself (progress, prompts,
     /// errors), so this only fails if the worker thread can't start.
     fn add_ssh_tab(&mut self, target: &SshTarget) -> std::io::Result<()> {
-        let pane = self.spawn_pane(PaneOrigin::Ssh(Box::new(target.clone())), None, self.console_rect())?;
+        let pane = self.spawn_pane(PaneOrigin::Ssh(Box::new(target.clone())), None, self.console_rect(), Run::default())?;
+        self.push_tab(TabContent::Terminals(Panes::new(pane)));
+        Ok(())
+    }
+
+    /// The single tab of a Terminaal started for one job (`main.rs`):
+    /// an SSH connection (`--connect`), a shell of its own (`-s`), a
+    /// command line for it (`-c`), and whether it stays once that ends
+    /// (`--hold`). Over SSH the command is the host's `RemoteCommand`,
+    /// set while the target was resolved, so only `hold` is left here.
+    fn add_cli_tab(&mut self, cli: &Cli, default_shell: &InstalledShell) -> std::io::Result<()> {
+        let origin = match &cli.connect {
+            Some(target) => PaneOrigin::Ssh(target.clone()),
+            None => PaneOrigin::Shell(cli.shell.clone().unwrap_or_else(|| default_shell.clone())),
+        };
+        let run = Run { command: cli.command.as_deref(), hold: cli.hold };
+        let pane = self.spawn_pane(origin, None, self.console_rect(), run)?;
         self.push_tab(TabContent::Terminals(Panes::new(pane)));
         Ok(())
     }
 
     /// Start a terminal for a pane at `rect`; it gets the next pane id.
-    fn spawn_pane(&mut self, origin: PaneOrigin, cwd: Option<PathBuf>, rect: LabelRect) -> std::io::Result<Pane> {
+    fn spawn_pane(&mut self, origin: PaneOrigin, cwd: Option<PathBuf>, rect: LabelRect, run: Run) -> std::io::Result<Pane> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
         let listener = EventProxyListener::new(self.proxy.clone(), id);
@@ -861,7 +927,12 @@ impl AppState {
         let (cell, scrollback) = (self.text.cell, self.config.scrollback_lines);
         let (terminal, title) = match &origin {
             PaneOrigin::Shell(shell) => {
-                let launch = launch::launch(shell);
+                // `-c`: the shell evaluates that one line instead of
+                // starting interactively (`launch::launch_command`).
+                let launch = match run.command {
+                    Some(line) => launch::launch_command(shell, line),
+                    None => launch::launch(shell),
+                };
                 let terminal = TerminalSession::spawn_local_shell(
                     listener,
                     &launch,
@@ -871,7 +942,11 @@ impl AppState {
                     cell.height,
                     scrollback,
                 )?;
-                (terminal, shell.name.clone())
+                let title = match run.command {
+                    Some(line) => launch::command_title(line),
+                    None => shell.name.clone(),
+                };
+                (terminal, title)
             }
             PaneOrigin::Ssh(target) => {
                 let terminal =
@@ -886,8 +961,9 @@ impl AppState {
         let look = self.pane_look(&origin);
         // SSH terminals wait for their login instead (`pane_output`).
         let startup = match &origin {
-            PaneOrigin::Shell(shell) => Some(Startup::new(shell.kind != ShellKind::Other)),
-            PaneOrigin::Ssh(_) => None,
+            // A `-c` command line isn't a shell to type into.
+            PaneOrigin::Shell(shell) if run.command.is_none() => Some(Startup::new(shell.kind != ShellKind::Other)),
+            PaneOrigin::Shell(_) | PaneOrigin::Ssh(_) => None,
         };
         Ok(Pane {
             id,
@@ -904,6 +980,8 @@ impl AppState {
             command_started: None,
             startup,
             startup_connection: 0,
+            hold: run.hold,
+            exit_code: None,
             broadcast: false,
             look,
             activity: PaneActivity { ignore_until: Some(Instant::now() + ACTIVITY_GRACE), ..PaneActivity::default() },
@@ -1064,6 +1142,7 @@ impl AppState {
         if idx >= self.tabs.len() {
             return;
         }
+        self.remember_closed(idx);
         self.tabs.remove(idx);
         if self.tabs.is_empty() {
             // Closed on purpose: nothing to open again next time.
@@ -1083,6 +1162,42 @@ impl AppState {
             self.update_window_title();
             self.window.request_redraw();
         }
+    }
+
+    /// Keep what the tab at `idx` ran, so `Action::ReopenTab` can start
+    /// it again. Only terminals: the settings and files tabs open again
+    /// from the sidebar, and a files tab needs a terminal that may well
+    /// be gone with it.
+    fn remember_closed(&mut self, idx: usize) {
+        let Some(tab) = self.tabs.get(idx) else { return };
+        let saved = self.saved_tab(tab);
+        if !matches!(saved, SavedTab::Terminals { .. }) {
+            return;
+        }
+        self.closed.push(ClosedTab { at: idx, tab: saved });
+        if self.closed.len() > MAX_CLOSED_TABS {
+            self.closed.remove(0);
+        }
+    }
+
+    /// Start the tab that was closed last again, in its old place: the
+    /// same shells in the same split, each in the directory it had, the
+    /// same SSH hosts (logging in anew). Nothing of its scrollback.
+    fn reopen_tab(&mut self) {
+        let Some(closed) = self.closed.pop() else {
+            log::debug!("nothing to reopen");
+            return;
+        };
+        let SavedTab::Terminals { layout, focus, zoomed, panes } = closed.tab else { return };
+        let Some(panes) = self.restore_panes(&layout, focus, zoomed, panes, &mut None) else {
+            log::info!("the closed tab can't be opened again");
+            return;
+        };
+        let at = closed.at.min(self.tabs.len());
+        self.tabs.insert(at, Tab { content: TabContent::Terminals(panes) });
+        self.active_tab = at;
+        self.relayout();
+        self.switched_tab();
     }
 
     /// Close pane `id` of the tab at `tab_idx`; its neighbour takes the
@@ -1140,7 +1255,7 @@ impl AppState {
             log::info!("pane too small to split");
             return;
         };
-        let pane = match self.spawn_pane(origin, cwd, rect) {
+        let pane = match self.spawn_pane(origin, cwd, rect, Run::default()) {
             Ok(pane) => pane,
             Err(err) => return log::error!("failed to open pane: {err}"),
         };
@@ -1461,37 +1576,39 @@ impl AppState {
 
     /// The tabs as the session file keeps them.
     fn session_snapshot(&self) -> Session {
-        let tabs = self
-            .tabs
-            .iter()
-            .map(|tab| match &tab.content {
-                TabContent::Terminals(panes) => {
-                    let order = panes.layout.ids();
-                    let index = |id: usize| order.iter().position(|&other| other == id).unwrap_or(0);
-                    let saved = order
-                        .iter()
-                        .filter_map(|&id| panes.panes.iter().find(|pane| pane.id == id))
-                        .map(|pane| match &pane.origin {
-                            PaneOrigin::Shell(shell) => SavedPane::Shell {
-                                shell: shell.path.clone(),
-                                cwd: pane.local_cwd(&self.hostname).or_else(|| pane.start_cwd.clone()),
-                            },
-                            PaneOrigin::Ssh(target) => SavedPane::ssh(target),
-                        })
-                        .collect();
-                    let mut layout = panes.layout.clone();
-                    layout.map_ids(&index);
-                    SavedTab::Terminals { layout, focus: index(panes.focus), zoomed: panes.zoomed, panes: saved }
-                }
-                TabContent::Settings { .. } => SavedTab::Settings,
-                TabContent::Files(files) => SavedTab::Files {
-                    host: files.host_name.clone(),
-                    user: files.login.2.clone(),
-                    dir: files.remote.state().dir.clone(),
-                },
-            })
-            .collect();
+        let tabs = self.tabs.iter().map(|tab| self.saved_tab(tab)).collect();
         Session { active: self.active_tab, tabs }
+    }
+
+    /// One tab in that form -- for the session, and for reopening it
+    /// after it was closed ([`AppState::remember_closed`]).
+    fn saved_tab(&self, tab: &Tab) -> SavedTab {
+        match &tab.content {
+            TabContent::Terminals(panes) => {
+                let order = panes.layout.ids();
+                let index = |id: usize| order.iter().position(|&other| other == id).unwrap_or(0);
+                let saved = order
+                    .iter()
+                    .filter_map(|&id| panes.panes.iter().find(|pane| pane.id == id))
+                    .map(|pane| match &pane.origin {
+                        PaneOrigin::Shell(shell) => SavedPane::Shell {
+                            shell: shell.path.clone(),
+                            cwd: pane.local_cwd(&self.hostname).or_else(|| pane.start_cwd.clone()),
+                        },
+                        PaneOrigin::Ssh(target) => SavedPane::ssh(target),
+                    })
+                    .collect();
+                let mut layout = panes.layout.clone();
+                layout.map_ids(&index);
+                SavedTab::Terminals { layout, focus: index(panes.focus), zoomed: panes.zoomed, panes: saved }
+            }
+            TabContent::Settings { .. } => SavedTab::Settings,
+            TabContent::Files(files) => SavedTab::Files {
+                host: files.host_name.clone(),
+                user: files.login.2.clone(),
+                dir: files.remote.state().dir.clone(),
+            },
+        }
     }
 
     /// Open the tabs of a saved session. What can't be opened any more --
@@ -1593,7 +1710,7 @@ impl AppState {
         let mut ids = vec![usize::MAX; origins.len()];
         for (idx, rect) in layout.clone().layout(self.console_rect(), self.divider_gap()) {
             let Some((origin, cwd)) = origins[idx].take() else { continue };
-            match self.spawn_pane(origin, cwd, rect) {
+            match self.spawn_pane(origin, cwd, rect, Run::default()) {
                 Ok(pane) => {
                     ids[idx] = pane.id;
                     panes.push(pane);
@@ -1635,6 +1752,61 @@ impl AppState {
         if let Some(to) = panes::neighbour(&panes.layout.layout(area, gap), panes.focus, direction) {
             self.focus_pane(to);
         }
+        true
+    }
+
+    /// Move the divider along the focused pane's `direction` edge that
+    /// way, by a cell or two -- the keyboard's version of dragging it.
+    /// At the window's edge the opposite divider moves instead, so the
+    /// key always moves a line in its own direction.
+    fn resize_pane(&mut self, direction: Direction) -> bool {
+        let (area, gap, padding, cell) = (self.console_rect(), self.divider_gap(), self.padding(), self.text.cell);
+        let Some(panes) = self.tabs.get(self.active_tab).and_then(Tab::panes) else { return false };
+        if panes.zoomed {
+            return true;
+        }
+        let rects = panes.layout.layout(area, gap);
+        let dividers = panes.layout.dividers(area, gap);
+        let Some(divider) = panes::divider_towards(&dividers, &rects, panes.focus, direction) else { return true };
+        let (pos, min, step) = match divider.axis {
+            Axis::Horizontal => (
+                divider.rect.x + gap / 2.0,
+                2.0 * padding + MIN_PANE_COLS as f32 * cell.width,
+                RESIZE_STEP_COLUMNS * cell.width,
+            ),
+            Axis::Vertical => (
+                divider.rect.y + gap / 2.0,
+                2.0 * padding + MIN_PANE_ROWS as f32 * cell.height,
+                RESIZE_STEP_ROWS * cell.height,
+            ),
+        };
+        let pos = match direction {
+            Direction::Left | Direction::Up => pos - step,
+            Direction::Right | Direction::Down => pos + step,
+        };
+        let ratio = panes::ratio_at(&divider, pos, gap, min);
+        if let Some(panes) = self.tabs.get_mut(self.active_tab).and_then(Tab::panes_mut) {
+            panes.layout.set_ratio(divider.split, ratio);
+        }
+        self.relayout();
+        self.session_changed();
+        true
+    }
+
+    /// Let the focused pane and the one in that direction trade places.
+    /// The keyboard stays with it, in its new spot.
+    fn swap_pane(&mut self, direction: Direction) -> bool {
+        let (area, gap) = (self.console_rect(), self.divider_gap());
+        let Some(panes) = self.tabs.get(self.active_tab).and_then(Tab::panes) else { return false };
+        let Some(other) = panes::neighbour(&panes.layout.layout(area, gap), panes.focus, direction) else {
+            return true;
+        };
+        if let Some(panes) = self.tabs.get_mut(self.active_tab).and_then(Tab::panes_mut) {
+            panes.layout.swap(panes.focus, other);
+        }
+        self.relayout();
+        self.session_changed();
+        self.window.request_redraw();
         true
     }
 
@@ -2566,6 +2738,7 @@ impl AppState {
         match action {
             Action::NewTab => self.add_default_tab(),
             Action::CloseTab => self.close_tab(self.active_tab),
+            Action::ReopenTab => self.reopen_tab(),
             Action::NextTab => self.next_tab(),
             Action::PreviousTab => self.prev_tab(),
             Action::SelectTab(number) => self.select_tab(usize::from(number).saturating_sub(1)),
@@ -2575,6 +2748,8 @@ impl AppState {
             Action::SplitDown => self.split_pane(Axis::Vertical),
             Action::ClosePane => self.close_focused_pane(),
             Action::FocusPane(direction) => return self.focus_pane_towards(direction),
+            Action::ResizePane(direction) => return self.resize_pane(direction),
+            Action::SwapPane(direction) => return self.swap_pane(direction),
             Action::ZoomPane => return self.toggle_zoom(),
             Action::OpenFiles => return self.open_files(),
             Action::ToggleBroadcast => self.toggle_broadcast(),
@@ -2697,6 +2872,15 @@ impl AppState {
             Key::Named(NamedKey::Enter) => {
                 search.jump(&mut term, !mods.shift_key());
                 search.set_editing(false);
+            }
+            // Alt+R: read the query as a regular expression, or as plain
+            // text again. Through the unmodified key, so it's R wherever
+            // R sits on the layout.
+            _ if mods.alt_key()
+                && !mods.control_key()
+                && matches!(&event.key_without_modifiers, Key::Character(key) if key.eq_ignore_ascii_case("r")) =>
+            {
+                search.toggle_regex(&mut term);
             }
             _ if search.editing() => match (&event.logical_key, &event.text) {
                 (Key::Named(NamedKey::Backspace), _) => search.pop(&mut term),
@@ -3614,20 +3798,34 @@ impl AppState {
         if pane.focused
             && let Some(search) = &self.search
         {
-            let prompt = t!("search-prompt");
-            let status = if search.no_match() {
-                t!("search-no-match")
-            } else if search.editing() {
-                t!("search-hint-typing")
-            } else {
-                t!("search-hint-jumping")
+            let prompt = if search.regex_mode() { t!("search-prompt-regex") } else { t!("search-prompt") };
+            // Left of the keys: how many matches there are, or why there
+            // are none.
+            let found = match search.counted() {
+                _ if search.invalid() => t!("search-invalid"),
+                Some(counted) if counted.total == 0 => t!("search-no-match"),
+                Some(counted) => {
+                    let total = if counted.capped {
+                        t!("search-matches-more", total = counted.total as u32)
+                    } else {
+                        counted.total.to_string()
+                    };
+                    match counted.index {
+                        Some(index) => t!("search-matches", index = index as u32, total = &total),
+                        None => total,
+                    }
+                }
+                None if search.no_match() => t!("search-no-match"),
+                None => String::new(),
             };
+            let hint = if search.editing() { t!("search-hint-typing") } else { t!("search-hint-jumping") };
+            let status = if found.is_empty() { hint } else { format!("{found}  ·  {hint}") };
             let view = SearchBarView {
                 prompt: &prompt,
                 query: search.query(),
                 editing: search.editing(),
                 status: &status,
-                no_match: search.no_match(),
+                no_match: search.no_match() || search.invalid(),
                 focus_rows,
             };
             let scale_factor = self.window.scale_factor() as f32;
@@ -4115,7 +4313,7 @@ impl ApplicationHandler<UserEvent> for App {
         });
         if quake.is_some() {
             if let Some(window) = quake_layer(event_loop, self.config.quake_height()) {
-                self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), None, true));
+                self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), Cli::default(), true));
                 return;
             }
             log::warn!("no layer shell: the drop-down Terminaal is a normal window");
@@ -4150,7 +4348,7 @@ impl ApplicationHandler<UserEvent> for App {
         };
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
         let window = AppWindow::Winit(window);
-        self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), self.connect.take(), quake.is_some()));
+        self.state = Some(AppState::new(window, event_loop, self.proxy.clone(), self.config.clone(), std::mem::take(&mut self.cli), quake.is_some()));
     }
 
     /// Fires the scheduled wakeups set in `about_to_wait`: flips the
@@ -4398,6 +4596,12 @@ impl ApplicationHandler<UserEvent> for App {
             // The shell exited (Ctrl+D, `exit`, the process dying, ...).
             // Closes that one pane, its tab with the last one; quits only
             // once that was the last tab.
+            TermEvent::Exit if pane.hold => {
+                pane.hold = false;
+                pane.hold_notice();
+                state.window.request_redraw();
+                return;
+            }
             TermEvent::Exit => {
                 state.close_pane(at.0, pane_id);
                 if state.exiting {
@@ -4411,7 +4615,10 @@ impl ApplicationHandler<UserEvent> for App {
                 state.note_activity(at);
             }
             TermEvent::Bell => state.ring_bell(at),
-            TermEvent::ChildExit(_) | TermEvent::MouseCursorDirty => {}
+            // Comes right before `Exit`, and only for a local shell:
+            // the status `hold_notice` shows.
+            TermEvent::ChildExit(status) => pane.exit_code = status.code(),
+            TermEvent::MouseCursorDirty => {}
         }
 
         // Redrawing only matters if the event's pane is on screen.
