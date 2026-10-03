@@ -4,3 +4,4 @@
 pub mod edit;
 pub mod protocol;
 pub mod session;
+pub mod sync;

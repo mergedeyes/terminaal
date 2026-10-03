@@ -1,0 +1,220 @@
+.\" Manual page for Terminaal. Installed by install.sh to
+.\" $XDG_DATA_HOME/man/man1/terminaal.1; render it while editing with
+.\" `man ./assets/terminaal.1`.
+.TH TERMINAAL 1 "2026-09-24" "Terminaal" "User Commands"
+.SH NAME
+terminaal \- terminal emulator with a built-in SSH manager
+.SH SYNOPSIS
+.B terminaal
+.RB [ \-\-connect
+.RI [ USER @] HOST ]
+.RB [ \-s
+.IR SHELL ]
+.RB [ \-c
+.IR LINE ]
+.RB [ \-\-hold ]
+.br
+.B terminaal \-\-quake
+.br
+.B terminaal
+.RB { \-h | \-\-help | \-V | \-\-version }
+.SH DESCRIPTION
+.B Terminaal
+is a terminal emulator with tabs, split panes, a sidebar for shells, SSH
+hosts and keys, an SFTP file tab over the connection of an SSH terminal,
+and a settings tab for everything in
+.IR config.toml .
+.PP
+Started without arguments it opens the tabs of the session it saved last
+time (see
+.B FILES
+and
+.BR restore_session ),
+or one tab with the default shell.
+.SH OPTIONS
+.TP
+.BI \-\-connect " " [ USER @] HOST
+Open the first tab as an SSH connection instead of a local shell.
+.I HOST
+is the name of a host saved in
+.I hosts.toml
+or of a
+.B Host
+block in
+.IR ~/.ssh/config .
+With
+.IR USER @,
+that host's login for that user, or else its default login under that
+user name. Connecting, host-key questions and password or passphrase
+prompts all play out inside the tab.
+.TP
+.BI \-s " " SHELL
+Start the first tab with this shell instead of the configured default.
+.I SHELL
+is a name as listed in
+.I /etc/shells
+.RB ( fish )
+or a path
+.RB ( /usr/bin/fish );
+a path is run as given even when it isn't listed.
+.TP
+.B \-s
+Without a shell name: write the installed shells
+.RI ( /etc/shells ,
+the same list the sidebar shows) to standard output and exit.
+.TP
+.BI \-c " " LINE
+Have the shell run
+.I LINE
+instead of starting interactively, like
+.BR "sh -c" :
+the whole line is one argument and the shell evaluates it, so pipes,
+redirections and several commands separated by
+.B ;
+work. The tab closes when the line ends, unless
+.B \-\-hold
+is given. Together with
+.BR \-\-connect ,
+the line runs on the server (ssh_config's
+.BR RemoteCommand ).
+The line is evaluated by a non-interactive shell, which for bash and zsh
+means no startup file and none of the aliases Terminaal manages.
+.TP
+.B \-\-hold
+Keep the tab when what it runs has ended, with a last line naming the
+exit status \(en over SSH the one the server reports for its command \(en
+instead of closing with it. Goes with
+.BR \-\-connect ", " \-s " or " \-c :
+on its own there is nothing to keep open, since a plain start restores
+the saved session.
+.TP
+.B \-\-quake
+Show or hide the drop-down window: the first
+.B terminaal \-\-quake
+becomes that window, every later one toggles it over a socket in
+.IR $XDG_RUNTIME_DIR/terminaal .
+It keeps tabs and a session of its own and goes with no other argument.
+There are no global hotkeys under Wayland, so bind this command as a
+shortcut in the desktop's own settings; Settings \(-> General shows the
+command with its full path.
+.TP
+.BR \-h ", " \-\-help
+Print a short usage summary and exit.
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.PP
+With
+.BR \-\-connect ,
+.B \-s
+or
+.BR \-c ,
+the saved session is neither restored nor written: the tab is what the
+command line asked for, and what was open last time stays on disk.
+.SH KEYS
+All of these are configurable under Settings \(-> Shortcuts or in
+.B [shortcuts]
+of
+.IR config.toml .
+The defaults:
+.TS
+tab(@);
+l l.
+Ctrl+Shift+T@New tab
+Ctrl+Shift+W@Close pane (the tab with its last one)
+Ctrl+Shift+Alt+W@Close the tab with all its panes
+Ctrl+Shift+D@Split right
+Ctrl+Shift+Alt+D@Split down
+Ctrl+Alt+arrow@Focus the pane in that direction
+Ctrl+Shift+Enter@Show the focused pane on its own
+Ctrl+Tab, Ctrl+Shift+Tab@Next, previous tab
+Alt+1 ... Alt+9@Tab N
+Ctrl+Shift+PageUp/PageDown@Move the tab left/right
+Ctrl+Shift+I@Broadcast input to this terminal
+Ctrl+Shift+O@Files (SFTP) of this SSH terminal
+Ctrl+Shift+B@Sidebar
+Ctrl+,@Settings
+Ctrl+Shift+P@Command palette
+Ctrl+Shift+C, Ctrl+Shift+V@Copy, paste
+Ctrl+Shift+Alt+C@Copy the last command's output
+Ctrl+Shift+F@Search the scrollback
+Ctrl+Shift+Up/Down@Previous, next prompt
+Shift+PageUp/PageDown/Home/End@Scroll the scrollback
+Ctrl++, Ctrl+-, Ctrl+0@Bigger, smaller, default font size
+.TE
+.SH FILES
+.TP
+.I ~/.config/terminaal/config.toml
+All settings, written key by key so comments and formatting survive.
+.TP
+.I ~/.config/terminaal/hosts.toml
+Saved SSH hosts with their logins and options. Hosts from
+.I ~/.ssh/config
+are read as well, and never written to.
+.TP
+.I ~/.config/terminaal/keys.toml
+The key store: paths of key files, or the public key of an agent key.
+Nothing secret is ever saved \(en passwords and passphrases are asked
+for in the tab.
+.TP
+.I ~/.config/terminaal/snippets.toml
+Your own commands, as buttons in the sidebar and entries in the command
+palette, optionally bound to a system or a host and run at startup.
+.TP
+.I ~/.config/terminaal/themes/
+Your own themes, in Alacritty's color format plus an optional
+.B [ui]
+table. The built-in ones need no file.
+.TP
+.I ~/.config/terminaal/shell-integration/
+Generated startup files that load Terminaal's managed aliases and the
+shell integration (OSC 7 and OSC 133) \(en for Terminaal only. Your own
+.IR config.fish ", " .bashrc " and " .zshrc
+are never touched.
+.TP
+.I ~/.config/fish/terminaal.fish, ~/.bash_terminaal, $ZDOTDIR/.zsh_terminaal
+The aliases, functions and lines the sidebar manages, per shell.
+.TP
+.I $XDG_STATE_HOME/terminaal/session.toml
+The tabs, split layout, shells with their directories and SSH hosts of
+the last session;
+.I quake\-session.toml
+for the drop-down window. Only the first running instance owns it.
+.TP
+.I ~/.ssh/known_hosts
+Host keys, as OpenSSH writes them. New entries are appended; the sidebar
+can remove the entries of one host, leaving the rest of the file
+byte for byte as it was.
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Log level, e.g.
+.BR terminaal=debug " (frame timings) or " terminaal=trace
+(the SSH worker's timeline). Logs are English and go to standard error.
+.TP
+.B SHELL
+The shell of new tabs unless one is configured or picked with
+.BR \-s .
+.TP
+.BR LANGUAGE ", " LC_ALL ", " LC_MESSAGES ", " LANG
+Decide the interface language (German or English) unless
+.B language
+is set in
+.IR config.toml .
+.SH EXIT STATUS
+.TP
+.B 0
+The window was closed, or
+.BR \-\-help ", " \-\-version ", " \-s " without a name or " \-\-quake
+did their job.
+.TP
+.B 2
+The command line was wrong, or the host or shell it named wasn't found.
+.SH SEE ALSO
+.BR ssh (1),
+.BR ssh_config (5),
+.BR sftp (1)
+.PP
+The documentation in the source tree's
+.I docs/
+directory covers all of it in more detail.

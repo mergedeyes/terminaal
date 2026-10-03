@@ -24,12 +24,33 @@ common-file-invalid = { $path } is invalid: { $err }
 
 ## Command line
 
-cli-usage = Usage: terminaal [--connect [USER@]HOST | --quake]
+cli-usage = Usage: terminaal [--connect [USER@]HOST] [-s SHELL] [-c LINE] [--hold]  |  terminaal --quake
+cli-help =
+    Usage: terminaal [OPTIONS]
+
+      --connect [USER@]HOST  Open the first tab as an SSH connection to that
+                             saved or ~/.ssh/config host
+      -s [SHELL]             Shell for the first tab, by name (fish) or path;
+                             without a name: list the installed shells and exit
+      -c LINE                Have that shell run this line,
+                             on the server with --connect
+      --hold                 Keep the tab once the command has ended
+      --quake                Show or hide the drop-down window;
+                             goes with no other argument
+      -h, --help             Show this help
+      -V, --version          Show the version
+
+    With --connect, -s or -c the saved session is neither restored nor
+    overwritten. There is more in the manual page: man terminaal
 cli-quake-failed = Couldn't start or toggle the drop-down terminal: { $err }
 cli-unknown-argument = Unknown argument '{ $arg }'.
-cli-unexpected-argument = Unexpected argument '{ $arg }'.
-cli-connect-needs-host = --connect needs a host name.
+cli-needs-value = { $option } needs a value.
+cli-quake-alone = --quake goes with no other argument.
+cli-hold-alone = --hold needs --connect, -s or -c: on its own there's nothing to keep open.
 cli-unknown-host = No saved or ~/.ssh/config host named '{ $host }'.
+cli-unknown-shell = No installed shell named '{ $shell }'.
+cli-hold-exit = [ Finished. Close the tab with Ctrl+Shift+W ]
+cli-hold-exit-code = [ Finished with status { $code }. Close the tab with Ctrl+Shift+W ]
 
 ## Config file
 
@@ -60,9 +81,13 @@ menu-files = Files (SFTP)
 ## Scrollback search (render/search_bar.rs)
 
 search-prompt = Search:
+search-prompt-regex = Search (regex):
 search-no-match = No matches
-search-hint-typing = Enter ↑ · Shift+Enter ↓ · Esc
-search-hint-jumping = n ↑ · N ↓ · / edit · Esc
+search-invalid = Not a valid pattern
+search-matches = { $index }/{ $total }
+search-matches-more = { $total }+
+search-hint-typing = Enter ↑ · Shift+Enter ↓ · Alt+R regex · Esc
+search-hint-jumping = n ↑ · N ↓ · / edit · Alt+R regex · Esc
 
 ## Shell integration (terminal/integration.rs, app.rs)
 
@@ -232,6 +257,7 @@ shortcuts-group-scroll = Scrolling
 shortcuts-group-font = Font size
 shortcut-new-tab = New tab with the default shell
 shortcut-close-tab = Close tab with all its panes
+shortcut-reopen-tab = Reopen closed tab
 shortcut-next-tab = Next tab
 shortcut-previous-tab = Previous tab
 shortcut-select-tab = Tab { $number }
@@ -244,6 +270,14 @@ shortcut-focus-pane-left = Focus pane on the left
 shortcut-focus-pane-right = Focus pane on the right
 shortcut-focus-pane-up = Focus pane above
 shortcut-focus-pane-down = Focus pane below
+shortcut-resize-pane-left = Move the divider left
+shortcut-resize-pane-right = Move the divider right
+shortcut-resize-pane-up = Move the divider up
+shortcut-resize-pane-down = Move the divider down
+shortcut-swap-pane-left = Swap with the pane on the left
+shortcut-swap-pane-right = Swap with the pane on the right
+shortcut-swap-pane-up = Swap with the pane above
+shortcut-swap-pane-down = Swap with the pane below
 shortcut-zoom-pane = Maximize pane / restore
 shortcut-toggle-broadcast = Broadcast on/off (input to all marked terminals)
 shortcut-open-files = Open the SSH connection's files (SFTP)
@@ -502,6 +536,24 @@ host-forwards-note = Active while the tab is connected. The port may be preceded
 host-forward-missing-port = Forward { $row } is missing the port or socket path.
 host-forward-missing-target = Forward { $row } is missing the target.
 host-forward-invalid = Forward { $row }: { $err }
+host-syncs =
+    { $count ->
+        [0] Folder sync
+       *[other] Folder sync ({ $count })
+    }
+host-sync-local = Folder here
+host-sync-remote = Folder on the server
+host-sync-remote-hint = site, ~/site or /srv/www
+host-sync-live = In the background, live
+host-sync-live-hint = Syncs while a terminal to this host is open – local changes right away. Otherwise when the files tab opens.
+host-sync-delete-remote = Delete on the server what's deleted here
+host-sync-delete-local = Delete here what's deleted on the server
+host-sync-delete-hint = Only files that were synced before and haven't changed on the other side since. Otherwise a deleted file comes back from the other side.
+host-sync-exclude = Leave out (comma-separated)
+host-sync-remove = Remove folder pair
+host-sync-add = +  Folder pair
+host-syncs-note = Syncs when the files tab opens (Ctrl+Shift+O) and after every reconnect. Changed on both sides → both versions are kept, one as “name (conflict)”.
+host-sync-invalid = Folder pair { $row }: { $err }
 host-advanced =
     { $count ->
         [0] Advanced
@@ -793,7 +845,7 @@ files-new-folder = New folder
 files-new-folder-name = Name of the new folder:
 files-delete = Delete
 files-delete-confirm = Really delete?
-files-delete-hint = Files and empty folders; a second click deletes
+files-delete-hint = Files, and folders with everything in them; a second click deletes
 files-ok = OK
 files-cancel = Cancel
 files-created = Created “{ $name }”.
@@ -840,3 +892,59 @@ files-sudo-prepare-failed = Can't create the sudo script: { $err }
 files-sudo-path = The home folder { $path } has characters that can't safely go into a command.
 files-sudo-reading = Terminaal: reading { $path } with sudo
 files-sudo-writing = Terminaal: writing { $path } with sudo
+files-removed-many =
+    { $count ->
+        [one] Deleted { $count } item.
+       *[other] Deleted { $count } items.
+    }
+files-remove-failed = Can't delete “{ $name }”: { $err }
+files-trash-hint = Moves the selected entries to the trash; a second click does it
+files-trashed = Moved “{ $name }” to the trash.
+files-trashed-many =
+    { $count ->
+        [one] Moved { $count } item to the trash.
+       *[other] Moved { $count } items to the trash.
+    }
+files-trash-failed = Not moved to the trash: { $err }
+files-trash-no-gio = Moving to the trash needs “gio” (from GLib).
+files-selected = { $count } selected
+files-select-hint = Ctrl+click selects several, Shift+click a range
+files-syncs = Synced folders
+files-sync-now = Sync now
+files-sync-stop = Stop
+files-sync-live = live
+files-sync-live-hint = Runs in the background while a terminal to this host is open; local changes go up right away.
+files-sync-waiting = waiting for the connection
+files-sync-scanning = comparing …
+files-sync-copying = copying { $done } of { $total }
+files-sync-done = in sync since { $time }
+files-sync-done-changes = in sync since { $time } – { $copied } copied, { $deleted } deleted
+files-sync-busy = running elsewhere right now (another tab or Terminaal) – trying again shortly
+files-sync-more = … and { $count } more
+files-sync-stopped = stopped
+sync-direction-both = Two-way
+sync-direction-upload = Upload only
+sync-direction-download = Download only
+sync-missing-folder = Both folders are needed.
+sync-local-relative = The folder here must be absolute or start with ~/: { $path }
+sync-record-failed = Can't keep the sync record: { $err }
+sync-local-failed = { $path }: { $err }
+sync-remote-failed = { $path } on the server: { $err }
+sync-not-a-folder = { $path } isn't a folder.
+sync-record-header = Terminaal folder sync: { $login }, { $local } ↔ { $remote }. Delete this file to start over.
+sync-copy-failed = { $path }: { $err }
+sync-type-differs = { $path }: a file on one side, a folder on the other – left alone.
+sync-conflict-both = { $path }: changed on both sides – the older version is kept as “{ $copy }”.
+sync-conflict-target = { $path }: changed { $side } too – that version is kept as “{ $copy }”.
+sync-restored-local =
+    { $count ->
+        [one] A file deleted here came back from the server. To delete it there too, switch on “Delete on the server what's deleted here” for this folder pair in the host form.
+       *[other] { $count } files deleted here came back from the server. To delete them there too, switch on “Delete on the server what's deleted here” for this folder pair in the host form.
+    }
+sync-restored-remote =
+    { $count ->
+        [one] A file deleted on the server came back from here. To delete it here too, switch on “Delete here what's deleted on the server” for this folder pair in the host form.
+       *[other] { $count } files deleted on the server came back from here. To delete them here too, switch on “Delete here what's deleted on the server” for this folder pair in the host form.
+    }
+sync-side-local = here
+sync-side-remote = on the server

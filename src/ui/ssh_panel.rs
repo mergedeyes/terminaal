@@ -8,8 +8,8 @@
 //! buttons, where it can be removed after asking ([`HostKeys`]).
 //!
 //! The host form shows what most hosts need -- address, logins, jump
-//! host. Port forwards and all other options fold out below it; a form
-//! opens those fold-outs that have something set.
+//! host. Port forwards, synced folders and all other options fold out
+//! below it; a form opens those fold-outs that have something set.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,6 +18,7 @@ use egui::{Align, CollapsingHeader, ComboBox, CornerRadius, Frame, Layout, Margi
 
 use crate::commands::Family;
 use crate::i18n::t;
+use crate::sftp::sync::{SyncDirection, SyncPair};
 use crate::ssh::options::{
     AddressFamily, Forward, ForwardAgent, ForwardKind, HOST_COLORS, HostKeyCheck, Options, Target, parse_host_color,
 };
@@ -35,17 +36,22 @@ pub struct SshData {
     /// then, so a broken file never gets overwritten with an empty list.
     pub hosts_error: Option<String>,
     pub keys_error: Option<String>,
+    /// Counts the times the saved hosts changed (saved, reloaded): others
+    /// holding on to a host's settings know to look again.
+    pub hosts_generation: u64,
 }
 
 impl SshData {
     pub fn load() -> Self {
         let (saved, hosts_error) = split(ssh::load_hosts());
         let (keys, keys_error) = split(keys::load_keys());
-        Self { catalog: Catalog { saved, config: ssh::ssh_config_hosts(), keys }, hosts_error, keys_error }
+        Self { catalog: Catalog { saved, config: ssh::ssh_config_hosts(), keys }, hosts_error, keys_error, hosts_generation: 0 }
     }
 
     pub fn reload(&mut self) {
+        let generation = self.hosts_generation + 1;
         *self = Self::load();
+        self.hosts_generation = generation;
     }
 
     /// Apply `change` to a copy of the saved hosts and write that. Only
@@ -59,6 +65,7 @@ impl SshData {
         change(&mut hosts);
         ssh::save_hosts(&hosts)?;
         self.catalog.saved = hosts;
+        self.hosts_generation += 1;
         Ok(())
     }
 
@@ -504,6 +511,7 @@ struct HostEditor {
     /// `ProxyJump`; empty for none.
     jump: String,
     forwards: Vec<ForwardRow>,
+    syncs: Vec<SyncRow>,
     advanced: Advanced,
     error: Option<String>,
     focus_pending: bool,
@@ -534,6 +542,7 @@ impl HostEditor {
             logins: host.all_logins(),
             jump: host.jump().unwrap_or_default().to_string(),
             forwards,
+            syncs: host.syncs.iter().map(SyncRow::from_pair).collect(),
             advanced: Advanced::from_host(host),
             error: None,
             focus_pending: true,
@@ -603,6 +612,13 @@ impl HostEditor {
             .push(spec);
         }
 
+        let mut syncs = Vec::new();
+        for (i, row) in self.syncs.iter().enumerate().filter(|(_, row)| !row.is_blank()) {
+            let pair = row.to_pair();
+            pair.check().map_err(|err| t!("host-sync-invalid", row = i + 1, err = err))?;
+            syncs.push(pair);
+        }
+
         let options = Options {
             connect_timeout: number(&advanced.connect_timeout, &t!("adv-connect-timeout-name"))?,
             server_alive_interval: number(&advanced.alive_interval, &t!("adv-alive-interval-name"))?,
@@ -642,6 +658,7 @@ impl HostEditor {
             proxy_jump: Some(jump.to_string()).filter(|j| !j.is_empty()),
             options,
             logins,
+            syncs,
         })
     }
 }
@@ -966,6 +983,7 @@ impl SshPanel {
 
             ui.add_space(4.0);
             forwards_ui(ui, editor);
+            syncs_ui(ui, editor);
             advanced_ui(ui, editor, &self.theme_names);
 
             if let Some(err) = &editor.error {
@@ -1164,6 +1182,93 @@ fn forwards_ui(ui: &mut Ui, editor: &mut HostEditor) {
     });
 }
 
+/// A synced folder pair as typed into the form.
+#[derive(Clone, Debug, Default)]
+struct SyncRow {
+    local: String,
+    remote: String,
+    direction: SyncDirection,
+    delete_remote: bool,
+    delete_local: bool,
+    live: bool,
+    /// Patterns separated by commas.
+    exclude: String,
+}
+
+impl SyncRow {
+    fn from_pair(pair: &SyncPair) -> Self {
+        Self {
+            local: pair.local.clone(),
+            remote: pair.remote.clone(),
+            direction: pair.direction,
+            delete_remote: pair.delete_remote,
+            delete_local: pair.delete_local,
+            live: pair.live,
+            exclude: pair.exclude.join(", "),
+        }
+    }
+
+    /// Deletions only where the direction lets them through.
+    fn to_pair(&self) -> SyncPair {
+        SyncPair {
+            local: self.local.trim().to_string(),
+            remote: self.remote.trim().to_string(),
+            direction: self.direction,
+            delete_remote: self.delete_remote && self.direction.up(),
+            delete_local: self.delete_local && self.direction.down(),
+            live: self.live,
+            exclude: self.exclude.split(',').map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect(),
+        }
+    }
+
+    fn is_blank(&self) -> bool {
+        self.local.trim().is_empty() && self.remote.trim().is_empty()
+    }
+}
+
+fn syncs_ui(ui: &mut Ui, editor: &mut HostEditor) {
+    let count = editor.syncs.iter().filter(|row| !row.is_blank()).count();
+    let id = editor.id;
+    CollapsingHeader::new(t!("host-syncs", count = count)).id_salt(("ssh-syncs", id)).default_open(count > 0).show(ui, |ui| {
+        let mut remove = None;
+        for (i, row) in editor.syncs.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ComboBox::from_id_salt(("ssh-sync-direction", id, i))
+                    .width(160.0)
+                    .selected_text(format!("{} {}", row.direction.arrow(), row.direction.label()))
+                    .show_ui(ui, |ui| {
+                        for direction in SyncDirection::ALL {
+                            ui.selectable_value(&mut row.direction, direction, format!("{} {}", direction.arrow(), direction.label()));
+                        }
+                    });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("🗑").on_hover_text(t!("host-sync-remove")).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            });
+            text_field(ui, &t!("host-sync-local"), &mut row.local, "~/Projects/site");
+            text_field(ui, &t!("host-sync-remote"), &mut row.remote, &t!("host-sync-remote-hint"));
+            ui.checkbox(&mut row.live, t!("host-sync-live")).on_hover_text(t!("host-sync-live-hint"));
+            if row.direction.up() {
+                ui.checkbox(&mut row.delete_remote, t!("host-sync-delete-remote")).on_hover_text(t!("host-sync-delete-hint"));
+            }
+            if row.direction.down() {
+                ui.checkbox(&mut row.delete_local, t!("host-sync-delete-local")).on_hover_text(t!("host-sync-delete-hint"));
+            }
+            text_field(ui, &t!("host-sync-exclude"), &mut row.exclude, ".git, node_modules, *.tmp");
+            ui.add_space(4.0);
+        }
+        if let Some(i) = remove {
+            editor.syncs.remove(i);
+        }
+        if ui.button(t!("host-sync-add")).clicked() {
+            editor.syncs.push(SyncRow::default());
+        }
+        ui.label(weak(t!("host-syncs-note")).size(11.0));
+    });
+}
+
 /// Everything else, grouped; the ssh_config keyword next to each label.
 fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor, theme_names: &[String]) {
     let count = editor.advanced.count_set();
@@ -1338,6 +1443,7 @@ mod tests {
             catalog: Catalog { saved: vec![saved], config: vec![config_host], keys: vec![key] },
             hosts_error: Some("test".into()),
             keys_error: None,
+            hosts_generation: 0,
         }
     }
 
@@ -1417,6 +1523,10 @@ mod tests {
             theme: Some("Nord".into()),
             ..Options::default()
         };
+        host.syncs = vec![
+            SyncPair { local: "~/site".into(), remote: "/srv/www".into(), direction: SyncDirection::Upload, delete_remote: true, live: true, exclude: vec![".git".into(), "*.tmp".into()], ..SyncPair::default() },
+            SyncPair { local: "/data/notes".into(), remote: "notes".into(), delete_local: true, delete_remote: true, ..SyncPair::default() },
+        ];
         assert_eq!(HostEditor::from_host(&host, None).to_host(&data).unwrap(), host);
         let cfg = data.catalog.config[0].clone();
         assert_eq!(HostEditor::from_host(&cfg, None).to_host(&data).unwrap(), cfg);
@@ -1446,6 +1556,9 @@ mod tests {
         assert!(try_commit(&|e| e.logins.push(Login { user: "a b".into(), key: None })).unwrap_err().contains("Leerzeichen"));
         assert!(try_commit(&|e| e.forwards.push(forward("8080", ""))).unwrap_err().contains("Ziel"));
         assert!(try_commit(&|e| e.forwards.push(forward("x", "h:1"))).unwrap_err().contains("Weiterleitung 1"));
+        let sync = |local: &str, remote: &str| SyncRow { local: local.into(), remote: remote.into(), ..SyncRow::default() };
+        assert!(try_commit(&|e| e.syncs.push(sync("relative/dir", "site"))).unwrap_err().contains("Ordnerpaar 1"));
+        assert!(try_commit(&|e| e.syncs.push(sync("~/site", ""))).unwrap_err().contains("Beide Ordner"));
         assert!(try_commit(&|e| e.advanced.connect_timeout = "zehn".into()).unwrap_err().contains("Zahl"));
         assert!(try_commit(&|e| e.advanced.set_env = "X Y".into()).unwrap_err().contains("SetEnv"));
         assert!(

@@ -17,6 +17,10 @@
 //! commands in between -- opening a folder mid-download -- stay quick.
 //! Neither direction overwrites anything: a name that's taken gets a
 //! number (`notes (1).txt`).
+//!
+//! Folder sync ([`super::sync`]) runs here too: its pairs scan and plan in
+//! between, their copies go through the same queue (not shown as
+//! transfers), and every attach syncs them again.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -30,6 +34,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::edit::{EditAction, EditStatus, Edits};
 use super::protocol::{self, Attrs, Client, Entry, open};
+use super::sync::{SyncLink, SyncPair, SyncStatus, SyncTransfer, Syncs};
 use crate::i18n::t;
 use crate::ssh::connection::Opener;
 
@@ -92,8 +97,8 @@ pub enum Command {
     /// A new folder of this name in the current one.
     Mkdir(String),
     Rename { from: String, to: String },
-    /// A file, or an empty folder.
-    Remove { path: String, dir: bool },
+    /// Files, or folders with everything in them: `(path, is a folder)`.
+    Remove(Vec<(String, bool)>),
     /// This file or folder into the local folder.
     Download { remote: String, local_dir: PathBuf },
     /// This local file or folder into the remote folder.
@@ -113,6 +118,15 @@ pub enum Command {
     /// Get streams from here from now on (another terminal to the same
     /// host), and try attaching right away.
     Rebind(Arc<dyn Channels>),
+    /// Keep these folders in sync (`login`: `user@host`, part of their
+    /// records' names); they sync with every attach.
+    SetSyncs { login: String, pairs: Vec<SyncPair> },
+    /// Sync this pair (`None`: all) now.
+    SyncNow(Option<usize>),
+    /// Stop this pair's sync; what's copied stays.
+    StopSync(usize),
+    /// Something changed in a live pair's folder (from the watcher).
+    SyncLocalChanged(PathBuf),
     /// The tab is gone: end the session. Sent on drop -- the watcher holds
     /// a sender too, so the channel alone never says so.
     Close,
@@ -181,6 +195,10 @@ pub struct State {
     pub listing_error: Option<String>,
     pub transfers: Vec<TransferStatus>,
     pub edits: Vec<EditStatus>,
+    /// The synced folder pairs.
+    pub syncs: Vec<SyncStatus>,
+    /// Sync runs that ended so far: the local side may have changed.
+    pub syncs_finished: u64,
     /// The outcome of the last thing asked for.
     pub report: Option<Result<String, String>>,
 }
@@ -196,6 +214,8 @@ impl Default for State {
             listing_error: None,
             transfers: Vec::new(),
             edits: Vec::new(),
+            syncs: Vec::new(),
+            syncs_finished: 0,
             report: None,
         }
     }
@@ -209,17 +229,27 @@ pub struct Remote {
 
 impl Remote {
     /// A session on `channels`; `label` names the host in local folder
-    /// names. Local copies of edited files go under the default place.
+    /// names. Local copies of edited files and sync records go to the
+    /// default places.
     pub fn spawn(channels: Arc<dyn Channels>, label: &str, wake: Wake) -> io::Result<Self> {
-        Self::spawn_with(channels, label, Edits::default_root(label), wake)
+        let sync_dir = crate::session::dir().map(|dir| dir.join("sync"));
+        Self::spawn_with(channels, label, Edits::default_root(label), sync_dir, wake)
     }
 
-    /// Local copies of edited files go under `edit_root`.
-    pub fn spawn_with(channels: Arc<dyn Channels>, label: &str, edit_root: PathBuf, wake: Wake) -> io::Result<Self> {
+    /// Local copies of edited files go under `edit_root`, sync records
+    /// into `sync_dir`.
+    pub fn spawn_with(
+        channels: Arc<dyn Channels>,
+        label: &str,
+        edit_root: PathBuf,
+        sync_dir: Option<PathBuf>,
+        wake: Wake,
+    ) -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(Mutex::new(State::default()));
         let shared = state.clone();
         let edits = Edits::new(edit_root, tx.clone(), channels.clone());
+        let syncs = Syncs::new(sync_dir, tx.clone());
         std::thread::Builder::new().name(format!("sftp {label}")).spawn(move || {
             let mut worker = Worker {
                 channels,
@@ -235,6 +265,7 @@ impl Remote {
                 next_id: 1,
                 last_publish: Instant::now(),
                 edits,
+                syncs,
             };
             worker.run();
         })?;
@@ -269,6 +300,8 @@ struct Transfer {
     /// Everything before this offset arrived: where to carry on after the
     /// connection dropped.
     resume: u64,
+    /// A folder sync's copy: not shown, reported to [`Syncs`] instead.
+    sync: Option<SyncLink>,
 }
 
 enum Job {
@@ -352,6 +385,7 @@ struct Worker {
     next_id: u64,
     last_publish: Instant,
     edits: Edits,
+    syncs: Syncs,
 }
 
 /// The connection broke in the middle of something.
@@ -377,9 +411,9 @@ impl Worker {
             let wait = if busy {
                 Duration::ZERO
             } else {
-                let edits = if connected { self.edits.next_deadline() } else { None };
-                let edits = edits.map(|at| at.saturating_duration_since(Instant::now()));
-                edits.map_or(CHECK_EVERY, |edits| edits.min(CHECK_EVERY))
+                let deadline = if connected { self.edits.next_deadline().into_iter().chain(self.syncs.next_deadline()).min() } else { None };
+                let deadline = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+                deadline.map_or(CHECK_EVERY, |deadline| deadline.min(CHECK_EVERY))
             };
             let command = if wait.is_zero() {
                 self.rx.try_recv().map_err(|err| match err {
@@ -401,6 +435,7 @@ impl Worker {
             }
         }
         self.edits.close_all();
+        self.syncs.close();
         log::debug!("sftp session closed");
     }
 
@@ -446,6 +481,8 @@ impl Worker {
             let home = self.state.home.clone();
             self.list(&home)?;
         }
+        // Whatever happened meanwhile, on either side.
+        self.syncs.request(None);
         Ok(())
     }
 
@@ -496,6 +533,78 @@ impl Worker {
             self.state.edits = self.edits.statuses();
             self.publish();
         }
+        self.sync_tick()
+    }
+
+    /// Scan and plan the pairs whose time has come, queue their copies.
+    fn sync_tick(&mut self) -> Result<(), Fatal> {
+        while self.client.is_some()
+            && let Some(index) = self.syncs.next_due()
+        {
+            self.syncs.scanning(index);
+            self.publish();
+            let client = self.client.as_mut().expect("checked above");
+            let transfers = self.syncs.run(index, client, &*self.channels, &self.state.home)?;
+            let ended = transfers.is_empty();
+            for transfer in transfers {
+                self.push_sync_transfer(transfer);
+            }
+            if ended {
+                self.relist()?;
+            }
+            self.publish();
+        }
+        Ok(())
+    }
+
+    fn push_sync_transfer(&mut self, transfer: SyncTransfer) {
+        let id = self.next_id;
+        self.next_id += 1;
+        let (direction, name, size, job, link) = match transfer {
+            SyncTransfer::Upload { local, temp, size, link } => {
+                (Direction::Upload, temp.clone(), size, Self::upload_job(local, temp), link)
+            }
+            SyncTransfer::Download { remote, local, size, link } => {
+                (Direction::Download, display(&local), size, Self::download_job(remote, local), link)
+            }
+        };
+        let status = TransferStatus { id, direction, name, done: 0, total: size, state: TransferState::Queued };
+        self.queue.push_back(Transfer { status, job, resume: 0, sync: Some(link) });
+    }
+
+    /// Drop the queued copies of pair `index` (`None`: of every pair).
+    fn drop_sync_transfers(&mut self, index: Option<usize>) -> Result<(), Fatal> {
+        let mut kept = VecDeque::new();
+        let mut result = Ok(());
+        while let Some(mut transfer) = self.queue.pop_front() {
+            let ours = transfer.sync.as_ref().is_some_and(|link| index.is_none_or(|index| link.pair == index));
+            if !ours {
+                kept.push_back(transfer);
+            } else if result.is_ok() {
+                result = self.abort(&mut transfer);
+            }
+        }
+        self.queue = kept;
+        result
+    }
+
+    /// A sync copy is through, or failed (`outcome`).
+    fn sync_transfer_done(&mut self, transfer: &Transfer, outcome: Result<(), String>) -> Result<(), Fatal> {
+        let Some(link) = &transfer.sync else { return Ok(()) };
+        let source = match &transfer.job {
+            Job::Download { source, .. } => {
+                let (size, mtime) = source.unwrap_or((None, None));
+                (size.unwrap_or(transfer.status.total), mtime.map(u64::from))
+            }
+            Job::Upload { source, .. } => {
+                let (size, mtime) = source.unwrap_or((transfer.status.total, None));
+                let mtime = mtime.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|since| since.as_secs());
+                (size, mtime)
+            }
+        };
+        if self.syncs.finished(link, source, outcome, self.client.as_mut())? {
+            self.relist()?;
+        }
         Ok(())
     }
 
@@ -506,6 +615,10 @@ impl Worker {
                 | Command::ClearTransfers
                 | Command::Cancel(_)
                 | Command::Rebind(_)
+                | Command::SetSyncs { .. }
+                | Command::SyncNow(_)
+                | Command::StopSync(_)
+                | Command::SyncLocalChanged(_)
                 | Command::Close
                 | Command::EditAction { action: EditAction::Reopen | EditAction::Close, .. }
         );
@@ -540,12 +653,7 @@ impl Worker {
                 self.report(result.map(|()| t!("files-renamed", name = file_name(&to))))?;
                 self.relist()?;
             }
-            Command::Remove { path, dir } => {
-                let client = self.client()?;
-                let result = if dir { client.rmdir(&path) } else { client.remove(&path) };
-                self.report(result.map(|()| t!("files-removed", name = file_name(&path))))?;
-                self.relist()?;
-            }
+            Command::Remove(paths) => self.remove(paths)?,
             Command::Download { remote, local_dir } => self.queue_download(&remote, &local_dir)?,
             Command::Upload { local, remote_dir } => self.queue_upload(&local, &remote_dir)?,
             Command::Cancel(id) => self.cancel(id)?,
@@ -575,9 +683,46 @@ impl Worker {
                     self.lose(&t!("files-reconnected"));
                 }
             }
+            Command::SetSyncs { login, pairs } => {
+                self.drop_sync_transfers(None)?;
+                self.syncs.set(login, pairs);
+                if self.client.is_some() {
+                    self.syncs.request(None);
+                }
+            }
+            Command::SyncNow(index) => self.syncs.request(index),
+            Command::StopSync(index) => {
+                self.drop_sync_transfers(Some(index))?;
+                self.syncs.stop(index);
+            }
+            Command::SyncLocalChanged(path) => self.syncs.local_changed(&path),
             Command::Close => {}
         }
         Ok(())
+    }
+
+    /// Files, and folders with everything in them: `(path, is a folder)`.
+    /// Goes on past one that fails; the first failure is reported.
+    fn remove(&mut self, paths: Vec<(String, bool)>) -> Result<(), Fatal> {
+        let mut removed = Vec::new();
+        let mut failed = None;
+        for (path, dir) in paths {
+            let client = self.client()?;
+            let result = if dir { remove_tree(client, &path) } else { client.remove(&path).map_err(|err| (path.clone(), err)) };
+            match result {
+                Ok(()) => removed.push(path),
+                Err((_, err)) if err.is_fatal() => return Err(err.into()),
+                Err((at, err)) => {
+                    failed.get_or_insert_with(|| t!("files-remove-failed", name = file_name(&at), err = err.to_string()));
+                }
+            }
+        }
+        self.state.report = match (failed, removed.as_slice()) {
+            (Some(err), _) => Some(Err(err)),
+            (None, [one]) => Some(Ok(t!("files-removed", name = file_name(one)))),
+            (None, many) => Some(Ok(t!("files-removed-many", count = many.len()))),
+        };
+        self.relist()
     }
 
     /// Show the outcome; only a broken connection goes further.
@@ -612,6 +757,8 @@ impl Worker {
     }
 
     fn publish(&mut self) {
+        self.state.syncs = self.syncs.statuses();
+        self.state.syncs_finished = self.syncs.finished;
         *lock(&self.shared) = self.state.clone();
         self.last_publish = Instant::now();
         (self.wake)();
@@ -622,7 +769,7 @@ impl Worker {
         self.next_id += 1;
         let status = TransferStatus { id, direction, name, done: 0, total, state: TransferState::Queued };
         self.state.transfers.push(status.clone());
-        self.queue.push_back(Transfer { status, job, resume: 0 });
+        self.queue.push_back(Transfer { status, job, resume: 0, sync: None });
     }
 
     fn download_job(remote: String, local: PathBuf) -> Job {
@@ -798,6 +945,10 @@ impl Worker {
                     self.publish();
                 }
             }
+            Ok(true) if transfer.sync.is_some() => {
+                self.sync_transfer_done(&transfer, Ok(()))?;
+                self.publish();
+            }
             Ok(true) => {
                 transfer.status.state = TransferState::Done;
                 transfer.status.done = transfer.status.done.max(transfer.status.total);
@@ -814,6 +965,7 @@ impl Worker {
             }
             Err(err) => {
                 self.abort(&mut transfer)?;
+                self.sync_transfer_done(&transfer, Err(err.to_string()))?;
                 transfer.status.state = TransferState::Failed(err.to_string());
                 self.update_status(&transfer.status);
                 self.publish();
@@ -930,6 +1082,30 @@ impl Worker {
             }
         }
     }
+}
+
+/// A server folder with everything in it; symlinks inside are removed, not
+/// followed. Stops at the first error, with the path it happened at.
+fn remove_tree(client: &mut SftpClient, dir: &str) -> Result<(), (String, protocol::Error)> {
+    // Folders in the order they were found: a folder before what's in it.
+    let mut dirs = vec![dir.to_string()];
+    let mut at = 0;
+    while let Some(current) = dirs.get(at).cloned() {
+        at += 1;
+        let entries = client.list(&current).map_err(|err| (current.clone(), err))?;
+        for entry in entries {
+            let path = join(&current, &entry.name);
+            if entry.attrs.is_dir() {
+                dirs.push(path);
+            } else {
+                client.remove(&path).map_err(|err| (path.clone(), err))?;
+            }
+        }
+    }
+    for dir in dirs.iter().rev() {
+        client.rmdir(dir).map_err(|err| (dir.clone(), err))?;
+    }
+    Ok(())
 }
 
 /// Folders first, then by name, ignoring case.
@@ -1129,7 +1305,7 @@ pub mod tests {
         });
         let root = scratch(&format!("{name}-edits"));
         let channels: Arc<dyn Channels> = server.clone();
-        let remote = Remote::spawn_with(channels, "test", root.join("local"), wake).unwrap();
+        let remote = Remote::spawn_with(channels, "test", root.join("local"), Some(root.join("sync")), wake).unwrap();
         Some(Session { remote, server, wakes })
     }
 
@@ -1164,14 +1340,29 @@ pub mod tests {
         assert_eq!(state.entries[0].name, "sub");
         remote.send(Command::Rename { from: join(&dir_s, "file.txt"), to: join(&dir_s, "renamed.txt") });
         wait_for(&remote, "rename", |s| s.entries.iter().any(|e| e.name == "renamed.txt"));
-        remote.send(Command::Remove { path: join(&dir_s, "sub"), dir: true });
+        remote.send(Command::Remove(vec![(join(&dir_s, "sub"), true)]));
         wait_for(&remote, "rmdir", |s| s.entries.len() == 1);
+
+        // A folder with everything in it, a symlink inside left as it is.
+        std::fs::create_dir_all(dir.join("tree/deeper/deepest")).unwrap();
+        std::fs::write(dir.join("tree/a.txt"), "a").unwrap();
+        std::fs::write(dir.join("tree/deeper/b.txt"), "b").unwrap();
+        let outside = scratch("browse-outside");
+        std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("tree/deeper/link")).unwrap();
+        remote.send(Command::List(None));
+        wait_for(&remote, "tree listed", |s| s.entries.len() == 2);
+        remote.send(Command::Remove(vec![(join(&dir_s, "tree"), true), (join(&dir_s, "renamed.txt"), false)]));
+        let state = wait_for(&remote, "tree removed", |s| s.entries.is_empty());
+        assert_eq!(state.report, Some(Ok("2 Einträge gelöscht.".into())));
+        assert_eq!(std::fs::read_to_string(outside.join("keep.txt")).unwrap(), "keep");
+        std::fs::remove_dir_all(&outside).unwrap();
 
         remote.send(Command::List(Some(join(&dir_s, "missing"))));
         let state = wait_for(&remote, "failed listing", |s| s.listing_error.is_some());
         assert_eq!(state.dir, dir_s, "stays in the old folder");
 
-        remote.send(Command::Remove { path: join(&dir_s, "nope"), dir: false });
+        remote.send(Command::Remove(vec![(join(&dir_s, "nope"), false)]));
         wait_for(&remote, "error report", |s| matches!(s.report, Some(Err(_))));
 
         drop(remote);

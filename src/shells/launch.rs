@@ -58,6 +58,23 @@ pub fn launch(shell: &InstalledShell) -> Launch {
     })
 }
 
+/// The command `terminaal -c "..."` runs: the shell evaluates the whole
+/// line, like `sh -c`. Deliberately without the managed alias file and
+/// the shell integration -- those belong to an interactive shell, and
+/// bash and zsh don't read any rc file for `-c` anyway. What the line
+/// means is exactly what `<shell> -c '<line>'` means anywhere else.
+pub fn launch_command(shell: &InstalledShell, line: &str) -> Launch {
+    Launch { args: vec!["-c".into(), line.to_string()], ..Launch::plain(shell) }
+}
+
+/// What the tab is called while the command runs: its first word without
+/// its path (`sudo`, `htop`), or the whole line if there's no word in it.
+pub fn command_title(line: &str) -> String {
+    let word = line.split_whitespace().next().unwrap_or("").trim_matches(|c| c == '\'' || c == '"');
+    let name = word.rsplit('/').next().unwrap_or(word);
+    if name.is_empty() { line.trim().to_string() } else { name.to_string() }
+}
+
 const FISH_INTEGRATION: &str = r#"# Von Terminaal erzeugt: meldet Arbeitsverzeichnis (OSC 7) und Prompts
 # (OSC 133) an Terminaal. Ab fish 4 tut fish das selbst.
 if not set -q __terminaal_integration; and test (string split -f1 . -- $version) -lt 4
@@ -189,6 +206,22 @@ fn write_if_changed(path: &Path, content: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_runs_the_whole_line_through_the_shell() {
+        let launch = launch_command(&InstalledShell::new("/usr/bin/fish"), "ls -l | less");
+        assert_eq!(launch.program, "/usr/bin/fish");
+        assert_eq!(launch.args, ["-c", "ls -l | less"]);
+        assert!(launch.env.is_empty());
+    }
+
+    #[test]
+    fn command_title_is_the_first_word_without_its_path() {
+        assert_eq!(command_title("htop"), "htop");
+        assert_eq!(command_title("  /usr/bin/btop --utf-force "), "btop");
+        assert_eq!(command_title("ssh host 'tail -f log'"), "ssh");
+        assert_eq!(command_title("   "), "");
+    }
 
     #[test]
     fn fish_sources_the_managed_file_via_init_command() {

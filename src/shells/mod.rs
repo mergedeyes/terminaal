@@ -99,6 +99,18 @@ pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
     InstalledShell::new(path)
 }
 
+/// The installed shell `arg` names, for `terminaal -s`: either a name as
+/// listed (`fish`) or a path (`/usr/bin/fish`). A path is taken as given
+/// -- something not in `/etc/shells` can still be run deliberately --
+/// while a name has to be one of the installed shells.
+pub fn find(arg: &str, installed: &[InstalledShell]) -> Option<InstalledShell> {
+    if arg.contains('/') {
+        let path = PathBuf::from(arg);
+        return path.is_file().then(|| InstalledShell::new(path));
+    }
+    installed.iter().find(|shell| shell.name == arg).cloned()
+}
+
 fn parse_etc_shells(text: &str) -> Vec<PathBuf> {
     text.lines()
         .map(str::trim)
@@ -143,6 +155,16 @@ mod tests {
     fn parses_etc_shells_skipping_comments_and_non_interactive() {
         let text = "# Pathnames of valid login shells.\n\n/bin/sh\n/usr/bin/git-shell\n  /usr/bin/fish \n/usr/bin/nologin\n";
         assert_eq!(parse_etc_shells(text), vec![PathBuf::from("/bin/sh"), PathBuf::from("/usr/bin/fish")]);
+    }
+
+    #[test]
+    fn finds_shells_by_name_and_by_path() {
+        let installed = vec![InstalledShell::from_parts("/usr/bin/fish".into(), "/usr/bin/fish".into())];
+        assert_eq!(find("fish", &installed).unwrap().path, PathBuf::from("/usr/bin/fish"));
+        assert!(find("zsh", &installed).is_none());
+        // A path is checked against the file system, not the list.
+        assert!(find("/nonexistent/shell", &installed).is_none());
+        assert_eq!(find("/bin/sh", &installed).unwrap().name, "sh");
     }
 
     #[test]

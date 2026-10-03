@@ -38,8 +38,9 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -87,6 +88,12 @@ const LIBSSH2_ERROR_FILE: i32 = -16;
 const LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED: i32 = -19;
 /// libssh2's `LIBSSH2_ERROR_EAGAIN`, i.e. "would block".
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
+
+/// How long the worker waits for the server to close the channel, to
+/// learn the remote exit status ([`Worker::report_exit_status`]), and how
+/// long it sleeps between tries.
+const EXIT_STATUS_WAIT: Duration = Duration::from_millis(150);
+const EXIT_STATUS_STEP: Duration = Duration::from_millis(5);
 
 type SharedTerm = Arc<FairMutex<Term<EventProxyListener>>>;
 
@@ -1098,6 +1105,7 @@ impl Worker {
             }
 
             if channel.eof() {
+                self.report_exit_status(channel);
                 return Ok(End::Exited);
             }
 
@@ -1140,6 +1148,42 @@ impl Worker {
     }
 
     /// Write text into the tab as if the server had sent it.
+    /// The status the remote command ended with, sent on as the very
+    /// `ChildExit` a local PTY sends -- that's what `--hold` names in the
+    /// tab. libssh2 only knows it once the channel is closed, and on this
+    /// non-blocking session closing takes a few rounds, so wait a moment
+    /// for the server's close: the remote side is gone by now, and the
+    /// only cost is the tab closing that much later. Nothing arrived in
+    /// time means no event at all -- no number beats a wrong one.
+    fn report_exit_status(&self, channel: &mut Channel) {
+        let deadline = Instant::now() + EXIT_STATUS_WAIT;
+        loop {
+            match channel.close() {
+                Err(err) if matches!(err.code(), ErrorCode::Session(LIBSSH2_ERROR_EAGAIN)) => {
+                    if Instant::now() >= deadline {
+                        log::debug!("{}: no exit status within {EXIT_STATUS_WAIT:?}", self.target.label);
+                        return;
+                    }
+                    std::thread::sleep(EXIT_STATUS_STEP);
+                }
+                Err(err) => {
+                    log::debug!("{}: closing the channel failed: {err}", self.target.label);
+                    return;
+                }
+                Ok(()) => break,
+            }
+        }
+        match channel.exit_status() {
+            Ok(code) => {
+                log::debug!("{}: remote command exited with {code}", self.target.label);
+                // `ExitStatus` is `wait(2)`'s encoding: the code is the
+                // high byte, so `.code()` gives it back.
+                self.listener.send_event(Event::ChildExit(ExitStatus::from_raw(code << 8)));
+            }
+            Err(err) => log::debug!("{}: no exit status: {err}", self.target.label),
+        }
+    }
+
     fn print(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
         self.parser.advance(&mut *self.term.lock(), text.as_bytes());

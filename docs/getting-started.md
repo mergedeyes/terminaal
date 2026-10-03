@@ -19,8 +19,9 @@ cd terminaal
 ./install.sh
 ```
 
-This puts a release build in `~/.cargo/bin/terminaal` and a desktop entry plus
-icons in `~/.local/share`, so Terminaal shows up in your app launcher. After
+This puts a release build in `~/.cargo/bin/terminaal` and a desktop entry, icons
+and the manual page (`man terminaal`) in `~/.local/share`, so Terminaal shows up
+in your app launcher. After
 pulling new source, run `./install.sh` again – the launcher always starts the
 installed binary. `./install.sh --uninstall` removes everything again.
 
@@ -86,14 +87,18 @@ there. Hover over a setting's name to see its key in the file.
 ## Starting from the command line
 
 ```sh
-terminaal                          # a local shell
-terminaal --connect myserver       # open a saved or ~/.ssh/config host
-terminaal --connect admin@myserver # ...with that host's login for "admin"
-terminaal --quake                  # show or hide the drop-down window
+terminaal                              # a local shell
+terminaal --connect myserver           # open a saved or ~/.ssh/config host
+terminaal --connect admin@myserver     # ...with that host's login for "admin"
+terminaal -s fish                      # first tab with that shell (`-s` alone lists them)
+terminaal -c "journalctl -f" --hold    # run that line, keep the tab when it ends
+terminaal --quake                      # show or hide the drop-down window
 ```
 
-For `--quake`, see [The drop-down window](guides/drop-down-window.md): it's meant
-for a keyboard shortcut in your desktop's settings.
+All of it is in [The command line](guides/command-line.md), and in
+`man terminaal` once you have installed it. For `--quake`, see
+[The drop-down window](guides/drop-down-window.md): it's meant for a keyboard
+shortcut in your desktop's settings.
 
 ## Language
 

@@ -1,9 +1,9 @@
 # Files on a server (SFTP)
 
 Every SSH connection can show its server's files: browse folders, copy files
-and folders in both directions, and edit a file in your local editor – every
-save goes back to the server. Files only root may change work too, through sudo
-in the terminal.
+and folders in both directions, keep folders in sync, and edit a file in your
+local editor – every save goes back to the server. Files only root may change
+work too, through sudo in the terminal.
 
 ## Opening the files tab
 
@@ -46,13 +46,21 @@ The left side is this computer, the right side the server.
   reloads.
 - Click the path above a side to type one and press <kbd>Enter</kbd>
   (`~/` works on the local side).
-- **New folder**, **Rename** and **Delete** act on the server. Delete removes
-  files and empty folders, and asks with **Really delete?** first.
+- **Click** an entry to select it. <kbd>Ctrl</kbd>+click adds or removes one
+  more, <kbd>Shift</kbd>+click selects everything from the last click to this
+  one (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click adds that range). With more than one
+  selected, the buttons show how many.
+- **New folder**, **Rename** and **Delete** on the server side act on the
+  server. Delete removes all selected entries – folders with everything in them
+  (symlinks inside are removed, not followed) – and asks with **Really delete?**
+  first. **Rename** and **Edit** need exactly one entry selected.
+- **Delete** on the local side moves the selected entries to the desktop's
+  trash (with `gio trash`), after the same **Really delete?**.
 
 ## Copying
 
-- Select a local entry and click **Upload**: it goes into the server folder on
-  show. Select a server entry and click **Download**: it goes into the local
+- Select local entries and click **Upload**: they go into the server folder on
+  show. Select server entries and click **Download**: they go into the local
   folder on show.
 - Folders are copied with everything in them. Symlinks inside a folder are
   skipped.
@@ -64,6 +72,108 @@ The left side is this computer, the right side the server.
 
 Transfers run one after another, each with many requests in flight at once, so
 they stay fast even over a slow round trip.
+
+## Syncing folders
+
+A host can keep pairs of folders in sync – a folder here and one on the server.
+Set them up in the host form under **Folder sync** (saved hosts only):
+
+| Field | In hosts.toml | Meaning |
+| --- | --- | --- |
+| Direction | `direction` | **Two-way** (`both`, the default): whatever changed goes to the other side. **Upload only** (`upload`): this computer's folder is the original. **Download only** (`download`): the server's is |
+| Folder here | `local` | Absolute, or starting with `~/`. Created if it doesn't exist yet on the first sync |
+| Folder on the server | `remote` | Absolute (`/srv/www`), or relative to the login's home folder (`site`, `~/site`). Also created on the first sync |
+| In the background, live | `live` | See [When it syncs](#when-it-syncs) |
+| Delete on the server what's deleted here | `delete_remote` | Two-way and upload only. Off by default |
+| Delete here what's deleted on the server | `delete_local` | Two-way and download only. Off by default |
+| Leave out | `exclude` | Names like `.git` or `*.log`; a pattern with a `/` is a path inside the folder (`build/out`). `*` and `?` are wildcards |
+
+In `hosts.toml`, each pair is a `[[host.sync]]` table after the host's other
+settings:
+
+```toml
+[[host]]
+name = "web1"
+host = "web1.example.com"
+user = "deploy"
+
+[[host.sync]]
+local = "~/Projects/site/public"
+remote = "/srv/www/site"
+direction = "upload"
+delete_remote = true
+live = true
+exclude = [".git", "*.tmp"]
+
+[[host.sync]]
+local = "~/Notes"
+remote = "notes"
+```
+
+The pairs apply to every login of the host. Saving the host form applies them
+right away – to open files tabs and background syncs too.
+
+### When it syncs
+
+- A normal pair syncs **when you open the files tab** of a terminal on that host,
+  and again after every reconnect.
+- A **live** pair syncs **in the background** as long as a terminal to the host
+  is open – no files tab needed. It syncs when the terminal has logged in, after
+  every reconnect, and about a second after something changes in its local
+  folder (a folder that keeps changing waits up to 10 seconds). Changes on the
+  server show up with the next sync; there's no watching the server.
+- **Sync now** in the files tab syncs a pair right away; **Stop** ends a sync
+  under way – what's copied stays copied.
+
+The files tab lists all of the host's pairs under **Synced folders** – the live
+ones too, marked **live** – with what they're doing and when they were last in
+sync. Copies of a sync don't show up under **Transfers**.
+
+### How it decides
+
+After each sync, Terminaal remembers every file's size and modification time on
+both sides. Next time, a file that differs from that changed on that side.
+Copies keep their source's modification time, so after a sync both sides agree
+even without that record.
+
+- **Changed on one side:** copied to the other, replacing the old version. The
+  copy is written next to the target under a hidden name and renamed over it at
+  the end, so an interrupted copy never leaves half a file. A file on the server
+  keeps its mode; new files get the mode of their source.
+- **Changed on both sides** (two-way), or in one-way mode **the target changed
+  too:** nothing is lost. If both versions are the same size, their SHA-256 is
+  compared first (on the server with `sha256sum` or `shasum`) – the same content
+  is no conflict. Otherwise the other version is kept next to the file as
+  `name (conflict).ext`: in two-way mode the newer version takes the name and the
+  older one is kept on both sides; one-way, the target's own version is kept, on
+  the target only. The files tab lists each conflict.
+- **New on one side:** copied to the other – except in one-way mode, where a file
+  only the target has is left alone.
+- **Deleted on one side:** by default it comes back from the other side (in
+  one-way mode, a file deleted on the target comes back; one deleted at the
+  source stays on the target). In two-way mode the files tab then says how many
+  came back and which switch would have deleted them instead. With deleting switched on for that direction, the
+  other side's file is deleted too – but only if it was synced before and hasn't
+  changed since. A change always wins over a deletion. Folders are deleted only
+  when they're empty by then.
+- **A side whose folder is completely empty never deletes anything** on the other
+  side – an unmounted disk or a wrong path mustn't empty the server.
+
+Left out on both sides: symlinks, names that aren't valid UTF-8 or contain a
+line break, Terminaal's own `.name.part` files and whatever matches **Leave out**.
+A folder that can't be read is left alone as a whole, and a name that's a file on
+one side and a folder on the other is reported and skipped.
+
+### Where the record lives
+
+In `$XDG_STATE_HOME/terminaal/sync/` (else `~/.local/state/terminaal/sync/`), one
+file per host login and folder pair. Delete it to start over: the next sync then
+treats both sides as new – equal files are recognized, different ones become
+conflicts.
+
+A pair syncs in one place at a time. If another files tab or a second Terminaal
+is syncing it right now, it says **running elsewhere** and tries again 30 seconds
+later.
 
 ## Editing a server file locally
 
@@ -139,8 +249,14 @@ Things to know:
 
 ## Limits
 
-- Deleting a folder needs it to be empty.
+- Folder sync compares by size and modification time (to the second); a change
+  that keeps both isn't noticed. Live pairs watch only the local folder; inotify
+  has a per-user limit on watched folders (`fs.inotify.max_user_watches`), beyond
+  which changes in further folders wait for the next sync.
+- Scanning a pair goes through the whole tree on both sides; while it runs, the
+  files tab's other actions wait.
 - Nothing is overwritten on copying; to replace a file, delete it first or edit it.
+- Deleting on the server is final – there's no trash there.
 - Transfers resume only while Terminaal stays open.
 - On a server without `sha256sum` or `shasum`, a change within the same second
   that keeps the size isn't noticed for files over 1 MB, or at all for files

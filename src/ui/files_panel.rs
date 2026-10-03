@@ -1,6 +1,7 @@
 //! The files tab of an SSH connection (`sftp`): this machine's folders on
-//! the left, the server's on the right, transfers and files being edited
-//! locally below.
+//! the left, the server's on the right, synced folders, transfers and files
+//! being edited locally below. Both lists pick several entries
+//! (Ctrl+click, Shift+click) for uploading, downloading and deleting.
 //!
 //! The panel only lays out what the session's [`State`] says and turns
 //! clicks into [`FilesAction`]s; `app.rs` passes them to the session, or --
@@ -16,14 +17,19 @@ use egui::{Align, Align2, CornerRadius, FontId, Frame, Key, Layout, Margin, Rich
 use crate::i18n::t;
 use crate::sftp::edit::{EditAction, EditState, EditStatus, SudoFor};
 use crate::sftp::session::{Command, Connection, Direction, State, TransferState, TransferStatus, join, parent};
+use crate::sftp::sync::{SyncState, SyncStatus};
 use crate::ui::theme;
 use crate::ui::widgets::{Status, section_title, tilde, weak};
 
 const ROW_HEIGHT: f32 = 22.0;
 const GAP: f32 = 12.0;
+/// A synced pair's notes shown at most; the rest are counted.
+const SYNC_NOTES: usize = 6;
 
 pub enum FilesAction {
     Remote(Command),
+    /// For the host's background sync session (live pairs).
+    Background(Command),
     /// Run this sudo command in the connection's terminal, then tell the
     /// session it's running.
     RunSudo { edit: u64, command: String },
@@ -40,6 +46,75 @@ pub struct FilesView<'a> {
     pub terminal: bool,
     /// The configured editor, `None`: the desktop's default.
     pub editor: Option<&'a str>,
+    /// The host's background sync session, if it has live pairs.
+    pub background: Option<&'a State>,
+}
+
+/// The entries picked in one list: a click picks one, Ctrl+click adds or
+/// removes one, Shift+click picks the range from the last click.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Picked {
+    /// In the order they were picked.
+    names: Vec<String>,
+    /// Where a Shift+click range starts.
+    anchor: Option<String>,
+}
+
+impl Picked {
+    /// `listed`: the list's names in their order.
+    fn click(&mut self, name: &str, listed: &[&str], ctrl: bool, shift: bool) {
+        let at = |name: &str| listed.iter().position(|listed| *listed == name);
+        if shift && let Some((from, to)) = self.anchor.as_deref().and_then(at).zip(at(name)) {
+            let range = &listed[from.min(to)..=from.max(to)];
+            if !ctrl {
+                self.names.clear();
+            }
+            for name in range {
+                if !self.contains(name) {
+                    self.names.push(name.to_string());
+                }
+            }
+            return;
+        }
+        if ctrl {
+            match self.names.iter().position(|picked| picked == name) {
+                Some(i) => drop(self.names.remove(i)),
+                None => self.names.push(name.to_string()),
+            }
+        } else {
+            self.names = vec![name.to_string()];
+        }
+        self.anchor = Some(name.to_string());
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.names.iter().any(|picked| picked == name)
+    }
+
+    fn clear(&mut self) {
+        self.names.clear();
+        self.anchor = None;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// The one entry picked, if it's exactly one.
+    fn only(&self) -> Option<&str> {
+        match self.names.as_slice() {
+            [one] => Some(one),
+            _ => None,
+        }
+    }
+
+    /// Forget what isn't listed any more.
+    fn keep_listed(&mut self, listed: &[&str]) {
+        self.names.retain(|name| listed.contains(&name.as_str()));
+        if self.anchor.as_deref().is_some_and(|anchor| !listed.contains(&anchor)) {
+            self.anchor = None;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,19 +128,27 @@ struct LocalEntry {
 pub struct FilesPanel {
     local_dir: PathBuf,
     local_entries: Result<Vec<LocalEntry>, String>,
-    local_selected: Option<String>,
-    remote_selected: Option<String>,
+    local_selected: Picked,
+    remote_selected: Picked,
+    /// The server folder the remote selection is in.
+    remote_dir: String,
     /// Path fields while they're being typed into.
     local_path: Option<String>,
     remote_path: Option<String>,
     /// Renaming this remote entry: its name and the new one so far.
     rename: Option<(String, String)>,
     new_folder: Option<String>,
-    /// Asked once, the next click deletes.
-    confirm_delete: Option<String>,
+    /// Asked once about these, the next click deletes them.
+    confirm_delete: Option<Vec<String>>,
+    /// The same for local entries, which go to the trash.
+    confirm_trash: Option<Vec<String>>,
+    /// The outcome of the last local action.
+    local_report: Option<Result<String, String>>,
     confirm_close: Option<u64>,
-    /// Finished downloads last frame: more means the local side changed.
+    /// Finished downloads and sync runs last frame: more means the local
+    /// side changed.
     downloads_done: usize,
+    syncs_done: u64,
 }
 
 impl FilesPanel {
@@ -74,15 +157,19 @@ impl FilesPanel {
         let mut panel = Self {
             local_dir: home.clone(),
             local_entries: Ok(Vec::new()),
-            local_selected: None,
-            remote_selected: None,
+            local_selected: Picked::default(),
+            remote_selected: Picked::default(),
+            remote_dir: String::new(),
             local_path: None,
             remote_path: None,
             rename: None,
             new_folder: None,
             confirm_delete: None,
             confirm_close: None,
+            confirm_trash: None,
+            local_report: None,
             downloads_done: 0,
+            syncs_done: 0,
         };
         panel.open_local(home);
         panel
@@ -91,9 +178,14 @@ impl FilesPanel {
     fn open_local(&mut self, dir: PathBuf) {
         match read_local(&dir) {
             Ok(entries) => {
+                if dir != self.local_dir {
+                    self.local_selected.clear();
+                    self.confirm_trash = None;
+                }
+                let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+                self.local_selected.keep_listed(&names);
                 self.local_entries = Ok(entries);
                 self.local_dir = dir;
-                self.local_selected = None;
             }
             Err(err) => self.local_entries = Err(t!("files-local-failed", path = tilde(&dir), err = err.to_string())),
         }
@@ -110,8 +202,10 @@ impl FilesPanel {
     pub fn show_tab(&mut self, ui: &mut Ui, view: &FilesView, actions: &mut Vec<FilesAction>) {
         ui.painter().rect_filled(ui.max_rect(), CornerRadius::ZERO, theme::colors().panel);
         let done = view.state.transfers.iter().filter(|t| t.direction == Direction::Download && t.is_over()).count();
-        if done != self.downloads_done {
+        let syncs_done = view.state.syncs_finished + view.background.map_or(0, |state| state.syncs_finished);
+        if done != self.downloads_done || syncs_done != self.syncs_done {
             self.downloads_done = done;
+            self.syncs_done = syncs_done;
             self.open_local(self.local_dir.clone());
         }
         Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
@@ -121,7 +215,8 @@ impl FilesPanel {
             }
             ui.add_space(6.0);
             // Room below for transfers and edits only when there are any.
-            let below = !view.state.transfers.is_empty() || !view.state.edits.is_empty();
+            let syncs = !view.state.syncs.is_empty() || view.background.is_some_and(|state| !state.syncs.is_empty());
+            let below = syncs || !view.state.transfers.is_empty() || !view.state.edits.is_empty();
             let share = if below { 0.55 } else { 1.0 };
             // Path, buttons and a prompt line above each list.
             let lists_height = ((ui.available_height() - 110.0) * share).max(120.0);
@@ -133,6 +228,7 @@ impl FilesPanel {
             });
             ui.add_space(GAP);
             ScrollArea::vertical().id_salt("files-below").auto_shrink([false, true]).show(ui, |ui| {
+                self.syncs(ui, view, actions);
                 self.transfers(ui, view, actions);
                 self.edits(ui, view, actions);
             });
@@ -185,14 +281,32 @@ impl FilesPanel {
                 self.open_local(self.local_dir.clone());
             }
             let ready = view.state.connection == Connection::Ready;
-            let upload = ui.add_enabled(ready && self.local_selected.is_some(), egui::Button::new(t!("files-upload")));
-            if upload.clicked()
-                && let Some(name) = &self.local_selected
-            {
-                let local = self.local_dir.join(name);
-                actions.push(FilesAction::Remote(Command::Upload { local, remote_dir: view.state.dir.clone() }));
+            let upload = ui.add_enabled(ready && !self.local_selected.is_empty(), egui::Button::new(t!("files-upload")));
+            if upload.clicked() {
+                for name in &self.local_selected.names {
+                    let local = self.local_dir.join(name);
+                    actions.push(FilesAction::Remote(Command::Upload { local, remote_dir: view.state.dir.clone() }));
+                }
             }
+            let picked = !self.local_selected.is_empty();
+            let asked = picked && self.confirm_trash.as_ref() == Some(&self.local_selected.names);
+            let label = if asked { t!("files-delete-confirm") } else { t!("files-delete") };
+            if ui.add_enabled(picked, egui::Button::new(label)).on_hover_text(t!("files-trash-hint")).clicked() {
+                if asked {
+                    let paths: Vec<PathBuf> = self.local_selected.names.iter().map(|name| self.local_dir.join(name)).collect();
+                    self.local_report = Some(trash(&paths));
+                    self.confirm_trash = None;
+                    self.local_selected.clear();
+                    self.open_local(self.local_dir.clone());
+                } else {
+                    self.confirm_trash = Some(self.local_selected.names.clone());
+                }
+            }
+            picked_count(ui, &self.local_selected);
         });
+        if let Some(report) = &self.local_report {
+            Status::from_result(report.clone()).show(ui);
+        }
         let entries = match &self.local_entries {
             Ok(entries) => entries.clone(),
             Err(err) => {
@@ -201,12 +315,17 @@ impl FilesPanel {
             }
         };
         let mut open = None;
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
         list_frame(ui, height, "files-local-list", |ui| {
             for entry in &entries {
-                let selected = self.local_selected.as_ref() == Some(&entry.name);
+                let selected = self.local_selected.contains(&entry.name);
                 let row = entry_row(ui, &entry.name, entry.dir, entry.size, entry.modified.and_then(unix_secs), selected);
                 if row.clicked() {
-                    self.local_selected = Some(entry.name.clone());
+                    let modifiers = ui.input(|i| i.modifiers);
+                    self.local_selected.click(&entry.name, &names, modifiers.command, modifiers.shift);
+                    if self.confirm_trash.as_ref() != Some(&self.local_selected.names) {
+                        self.confirm_trash = None;
+                    }
                 }
                 if row.double_clicked() && entry.dir {
                     open = Some(self.local_dir.join(&entry.name));
@@ -222,31 +341,36 @@ impl FilesPanel {
         let state = view.state;
         let ready = state.connection == Connection::Ready;
         section_title(ui, &t!("files-remote", host = view.label));
+        let names: Vec<&str> = state.entries.iter().map(|entry| entry.name.as_str()).collect();
+        if self.remote_dir != state.dir {
+            self.remote_dir = state.dir.clone();
+            self.remote_selected.clear();
+            self.confirm_delete = None;
+        }
+        self.remote_selected.keep_listed(&names);
         if let Some(dir) = path_bar(ui, "files-remote-path", &mut self.remote_path, &state.dir) {
-            self.remote_selected = None;
             actions.push(FilesAction::Remote(Command::List(Some(dir))));
         }
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(ready, |ui| {
                 if ui.button("⬆").on_hover_text(t!("files-up")).clicked() {
-                    self.remote_selected = None;
                     actions.push(FilesAction::Remote(Command::List(Some(parent(&state.dir)))));
                 }
                 if ui.button("~").on_hover_text(t!("files-home")).clicked() {
-                    self.remote_selected = None;
                     actions.push(FilesAction::Remote(Command::List(Some(state.home.clone()))));
                 }
                 if ui.button("⟳").on_hover_text(t!("files-reload")).clicked() {
                     actions.push(FilesAction::Remote(Command::List(None)));
                 }
-                let selected = self.remote_selected.clone();
-                let entry = selected.as_ref().and_then(|name| state.entries.iter().find(|e| &e.name == name));
-                if ui.add_enabled(entry.is_some(), egui::Button::new(t!("files-download"))).clicked()
-                    && let Some(entry) = entry
-                {
-                    let remote = join(&state.dir, &entry.name);
-                    actions.push(FilesAction::Remote(Command::Download { remote, local_dir: self.local_dir.clone() }));
+                let picked: Vec<_> =
+                    state.entries.iter().filter(|entry| self.remote_selected.contains(&entry.name)).collect();
+                if ui.add_enabled(!picked.is_empty(), egui::Button::new(t!("files-download"))).clicked() {
+                    for entry in &picked {
+                        let remote = join(&state.dir, &entry.name);
+                        actions.push(FilesAction::Remote(Command::Download { remote, local_dir: self.local_dir.clone() }));
+                    }
                 }
+                let entry = self.remote_selected.only().and_then(|name| state.entries.iter().find(|e| e.name == name));
                 let file = entry.filter(|e| !e.attrs.is_dir());
                 let edit = ui.add_enabled(file.is_some(), egui::Button::new(t!("files-edit")));
                 if edit.on_hover_text(t!("files-edit-hint")).clicked()
@@ -262,23 +386,21 @@ impl FilesPanel {
                 if ui.button(t!("files-new-folder")).clicked() {
                     self.new_folder = Some(String::new());
                 }
-                let deletable = entry;
-                let asked = selected.is_some() && self.confirm_delete == selected;
+                let asked = !picked.is_empty() && self.confirm_delete.as_ref() == Some(&self.remote_selected.names);
                 let label = if asked { t!("files-delete-confirm") } else { t!("files-delete") };
-                let delete = ui.add_enabled(deletable.is_some(), egui::Button::new(label));
-                if delete.on_hover_text(t!("files-delete-hint")).clicked()
-                    && let Some(entry) = deletable
-                {
+                let delete = ui.add_enabled(!picked.is_empty(), egui::Button::new(label));
+                if delete.on_hover_text(t!("files-delete-hint")).clicked() {
                     if asked {
-                        let path = join(&state.dir, &entry.name);
-                        actions.push(FilesAction::Remote(Command::Remove { path, dir: entry.attrs.is_dir() }));
+                        let paths = picked.iter().map(|entry| (join(&state.dir, &entry.name), entry.attrs.is_dir())).collect();
+                        actions.push(FilesAction::Remote(Command::Remove(paths)));
                         self.confirm_delete = None;
-                        self.remote_selected = None;
+                        self.remote_selected.clear();
                     } else {
-                        self.confirm_delete = selected.clone();
+                        self.confirm_delete = Some(self.remote_selected.names.clone());
                     }
                 }
             });
+            picked_count(ui, &self.remote_selected);
         });
         self.name_prompts(ui, state, actions);
         if let Some(err) = &state.listing_error {
@@ -287,14 +409,15 @@ impl FilesPanel {
         let mut open = None;
         list_frame(ui, height, "files-remote-list", |ui| {
             for entry in &state.entries {
-                let selected = self.remote_selected.as_ref() == Some(&entry.name);
+                let selected = self.remote_selected.contains(&entry.name);
                 let dir = entry.attrs.is_dir();
                 let row = entry_row(ui, &entry.name, dir, entry.attrs.size.unwrap_or(0), entry.attrs.mtime().map(u64::from), selected);
                 if row.clicked() {
-                    if self.remote_selected.as_ref() != Some(&entry.name) {
+                    let modifiers = ui.input(|i| i.modifiers);
+                    self.remote_selected.click(&entry.name, &names, modifiers.command, modifiers.shift);
+                    if self.confirm_delete.as_ref() != Some(&self.remote_selected.names) {
                         self.confirm_delete = None;
                     }
-                    self.remote_selected = Some(entry.name.clone());
                 }
                 if row.double_clicked() {
                     open = Some(entry.clone());
@@ -304,7 +427,6 @@ impl FilesPanel {
         if let Some(entry) = open.filter(|_| ready) {
             let path = join(&state.dir, &entry.name);
             if entry.attrs.is_dir() {
-                self.remote_selected = None;
                 actions.push(FilesAction::Remote(Command::List(Some(path))));
             } else {
                 // A symlink may lead to a folder: the session looks.
@@ -337,7 +459,7 @@ impl FilesPanel {
                             from: join(&state.dir, &from),
                             to: join(&state.dir, to.trim()),
                         }));
-                        self.remote_selected = Some(to.trim().to_string());
+                        self.remote_selected.names = vec![to.trim().to_string()];
                     }
                 }
                 Some(false) => self.rename = None,
@@ -366,6 +488,49 @@ impl FilesPanel {
                 None => {}
             }
         }
+    }
+
+    /// The pairs synced on opening (this session's) and in the background.
+    fn syncs(&mut self, ui: &mut Ui, view: &FilesView, actions: &mut Vec<FilesAction>) {
+        let own = view.state.syncs.iter().map(|status| (status, false));
+        let background = view.background.into_iter().flat_map(|state| state.syncs.iter().map(|status| (status, true)));
+        let pairs: Vec<(&SyncStatus, bool)> = own.chain(background).collect();
+        if pairs.is_empty() {
+            return;
+        }
+        section_title(ui, &t!("files-syncs"));
+        for (status, background) in pairs {
+            let send = |command| if background { FilesAction::Background(command) } else { FilesAction::Remote(command) };
+            Frame::new().inner_margin(Margin::symmetric(0, 3)).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let text = format!("{} {} {}", status.local, status.direction.arrow(), status.remote);
+                    ui.label(RichText::new(text).monospace()).on_hover_text(status.direction.label());
+                    if status.live {
+                        ui.label(RichText::new(t!("files-sync-live")).color(theme::colors().accent).size(11.0))
+                            .on_hover_text(t!("files-sync-live-hint"));
+                    }
+                    let (text, color) = sync_state_text(&status.state);
+                    if status.running() {
+                        ui.spinner();
+                    }
+                    ui.label(RichText::new(text).color(color));
+                    if status.running() {
+                        if ui.small_button(t!("files-sync-stop")).clicked() {
+                            actions.push(send(Command::StopSync(status.index)));
+                        }
+                    } else if ui.small_button(t!("files-sync-now")).clicked() {
+                        actions.push(send(Command::SyncNow(Some(status.index))));
+                    }
+                });
+                for note in status.notes.iter().take(SYNC_NOTES) {
+                    ui.label(RichText::new(note).color(theme::colors().error).size(12.0));
+                }
+                if status.notes.len() > SYNC_NOTES {
+                    ui.label(weak(t!("files-sync-more", count = status.notes.len() - SYNC_NOTES)).size(12.0));
+                }
+            });
+        }
+        ui.add_space(GAP);
     }
 
     fn transfers(&mut self, ui: &mut Ui, view: &FilesView, actions: &mut Vec<FilesAction>) {
@@ -497,6 +662,47 @@ impl Default for FilesPanel {
     }
 }
 
+/// Into the desktop's trash, with `gio trash` (GLib's, on nearly every
+/// desktop) -- it knows the trash of other disks too.
+fn trash(paths: &[PathBuf]) -> Result<String, String> {
+    let output = std::process::Command::new("gio").arg("trash").arg("--").args(paths).output();
+    match output {
+        Ok(output) if output.status.success() => Ok(match paths {
+            [one] => t!("files-trashed", name = one.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()),
+            many => t!("files-trashed-many", count = many.len()),
+        }),
+        Ok(output) => Err(t!("files-trash-failed", err = String::from_utf8_lossy(&output.stderr).trim().to_string())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(t!("files-trash-no-gio")),
+        Err(err) => Err(t!("files-trash-failed", err = err.to_string())),
+    }
+}
+
+/// "3 selected" next to a list's buttons, once there's more than one.
+fn picked_count(ui: &mut Ui, picked: &Picked) {
+    if picked.names.len() > 1 {
+        ui.label(weak(t!("files-selected", count = picked.names.len()))).on_hover_text(t!("files-select-hint"));
+    }
+}
+
+fn sync_state_text(state: &SyncState) -> (String, egui::Color32) {
+    let colors = theme::colors();
+    match state {
+        SyncState::Waiting => (t!("files-sync-waiting"), colors.text_weak),
+        SyncState::Scanning => (t!("files-sync-scanning"), colors.text_weak),
+        SyncState::Copying { done, total } => (t!("files-sync-copying", done = *done, total = *total), colors.text_weak),
+        SyncState::Done { at, copied: 0, deleted: 0 } => {
+            (t!("files-sync-done", time = unix_secs(*at).map(date_text).unwrap_or_default()), colors.success)
+        }
+        SyncState::Done { at, copied, deleted } => {
+            let time = unix_secs(*at).map(date_text).unwrap_or_default();
+            (t!("files-sync-done-changes", time = time, copied = *copied, deleted = *deleted), colors.success)
+        }
+        SyncState::Busy => (t!("files-sync-busy"), colors.text_weak),
+        SyncState::Stopped => (t!("files-sync-stopped"), colors.text_weak),
+        SyncState::Failed(err) => (err.clone(), colors.error),
+    }
+}
+
 fn edit_command(path: &str, editor: Option<&str>) -> FilesAction {
     FilesAction::Remote(Command::Edit { path: path.to_string(), editor: editor.map(str::to_string) })
 }
@@ -617,6 +823,33 @@ fn date_text(secs: u64) -> String {
 mod tests {
     use super::*;
     use crate::sftp::protocol::{Attrs, Entry};
+    use crate::sftp::sync::SyncDirection;
+
+    #[test]
+    fn picking_with_ctrl_and_shift() {
+        let listed = ["a", "b", "c", "d", "e"];
+        let mut picked = Picked::default();
+        picked.click("b", &listed, false, false);
+        assert_eq!(picked.only(), Some("b"));
+        picked.click("d", &listed, false, true);
+        assert_eq!(picked.names, ["b", "c", "d"], "a range from the last click");
+        picked.click("c", &listed, true, false);
+        assert_eq!(picked.names, ["b", "d"], "Ctrl+click takes one out");
+        picked.click("a", &listed, true, false);
+        assert_eq!(picked.names, ["b", "d", "a"]);
+        // The range starts at the last plain or Ctrl click: a.
+        picked.click("c", &listed, true, true);
+        assert_eq!(picked.names, ["b", "d", "a", "c"], "Ctrl+Shift adds a range");
+        picked.click("e", &listed, false, true);
+        assert_eq!(picked.names, ["a", "b", "c", "d", "e"]);
+        picked.keep_listed(&["b", "e"]);
+        assert_eq!(picked.names, ["b", "e"]);
+        assert_eq!(picked.anchor, None, "the anchor, a, is gone");
+        picked.click("e", &listed, false, true);
+        assert_eq!(picked.names, ["e"], "without an anchor Shift is a plain click");
+        picked.clear();
+        assert!(picked.is_empty() && picked.only().is_none());
+    }
 
     #[test]
     fn sizes_read_well() {
@@ -624,6 +857,17 @@ mod tests {
         assert_eq!(size_text(1023), "1023 B");
         assert_eq!(size_text(1536), "1.5 KB");
         assert_eq!(size_text(5 * 1024 * 1024 * 1024), "5.0 GB");
+    }
+
+    #[test]
+    fn trashing_reports_what_went_wrong() {
+        // Only the failure: a real trashing would write to the user's trash.
+        if std::process::Command::new("gio").arg("help").output().is_err() {
+            return;
+        }
+        let missing = std::env::temp_dir().join(format!("terminaal-not-there-{}.txt", std::process::id()));
+        let err = trash(&[missing]).unwrap_err();
+        assert!(err.contains("terminaal-not-there"), "{err}");
     }
 
     #[test]
@@ -667,6 +911,8 @@ mod tests {
                 edit(5, EditState::SudoRunning(SudoFor::Save)),
                 edit(6, EditState::Failed("gone".into())),
             ],
+            syncs: Vec::new(),
+            syncs_finished: 0,
             report: Some(Err("failed".into())),
         }
     }
@@ -676,8 +922,31 @@ mod tests {
         let ctx = egui::Context::default();
         let mut panel = FilesPanel::new();
         let state = state();
+        let sync = |index, state, live| SyncStatus {
+            index,
+            local: "~/site".into(),
+            remote: "/srv/www".into(),
+            direction: SyncDirection::Both,
+            live,
+            state,
+            notes: (0..8).map(|i| format!("note {i}")).collect(),
+        };
+        let background =
+            State { syncs: vec![sync(0, SyncState::Copying { done: 1, total: 3 }, true), sync(1, SyncState::Busy, true)], ..State::default() };
+        let state = State {
+            syncs: vec![
+                sync(0, SyncState::Waiting, false),
+                sync(1, SyncState::Scanning, false),
+                sync(2, SyncState::Done { at: SystemTime::now(), copied: 0, deleted: 0 }, false),
+                sync(3, SyncState::Done { at: SystemTime::now(), copied: 2, deleted: 1 }, false),
+                sync(4, SyncState::Stopped, false),
+                sync(5, SyncState::Failed("gone".into()), false),
+            ],
+            ..state
+        };
+        panel.remote_selected.names = vec!["docs".into(), "notes.txt".into()];
         for terminal in [true, false] {
-            let view = FilesView { state: &state, label: "u@host", terminal, editor: None };
+            let view = FilesView { state: &state, label: "u@host", terminal, editor: None, background: Some(&background) };
             let mut actions = Vec::new();
             for _ in 0..3 {
                 let input = egui::RawInput {
@@ -694,7 +963,7 @@ mod tests {
 
         // Not connected yet: only the header.
         let connecting = State::default();
-        let view = FilesView { state: &connecting, label: "u@host", terminal: true, editor: None };
+        let view = FilesView { state: &connecting, label: "u@host", terminal: true, editor: None, background: None };
         let mut actions = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| panel.show_tab(ui, &view, &mut actions)).drop_without_applying_deltas();
         assert!(actions.is_empty());

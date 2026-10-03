@@ -163,6 +163,21 @@ impl Node {
         }
     }
 
+    /// Let panes `a` and `b` trade places, layout and all. `false`
+    /// unless both are in the tree and they differ.
+    pub fn swap(&mut self, a: usize, b: usize) -> bool {
+        let ids = self.ids();
+        if a == b || !ids.contains(&a) || !ids.contains(&b) {
+            return false;
+        }
+        self.map_ids(&|id| match id {
+            id if id == a => b,
+            id if id == b => a,
+            id => id,
+        });
+        true
+    }
+
     /// Move split number `split`'s divider so the first half gets `ratio`
     /// of the room. Returns whether there was such a split.
     pub fn set_ratio(&mut self, split: usize, ratio: f32) -> bool {
@@ -207,6 +222,43 @@ pub fn ratio_at(divider: &Divider, pos: f32, gap: f32, min: f32) -> f32 {
     let room = (extent - gap).max(1.0);
     let min = min.min(room / 2.0);
     ((pos - start - gap / 2.0).clamp(min, room - min)) / room
+}
+
+/// The divider to move when pane `from` is resized towards `direction`:
+/// the one along that edge of it, else -- at the edge of the window --
+/// the one along the opposite edge, which then moves the same way (the
+/// pane shrinks). The keys always move a line in their own direction.
+pub fn divider_towards(dividers: &[Divider], rects: &[(usize, Rect)], from: usize, direction: Direction) -> Option<Divider> {
+    let &(_, pane) = rects.iter().find(|(id, _)| *id == from)?;
+    let wanted = match direction {
+        Direction::Left | Direction::Right => Axis::Horizontal,
+        Direction::Up | Direction::Down => Axis::Vertical,
+    };
+    let touching = |divider: &Divider, side: Direction| {
+        let (d, area) = (divider.rect, divider.area);
+        let touches = |a: f32, b: f32| (a - b).abs() < 1.5;
+        let overlaps = match wanted {
+            Axis::Horizontal => area.y < pane.y + pane.h && pane.y < area.y + area.h,
+            Axis::Vertical => area.x < pane.x + pane.w && pane.x < area.x + area.w,
+        };
+        overlaps
+            && match side {
+                Direction::Left => touches(d.x + d.w, pane.x),
+                Direction::Right => touches(d.x, pane.x + pane.w),
+                Direction::Up => touches(d.y + d.h, pane.y),
+                Direction::Down => touches(d.y, pane.y + pane.h),
+            }
+    };
+    let opposite = match direction {
+        Direction::Left => Direction::Right,
+        Direction::Right => Direction::Left,
+        Direction::Up => Direction::Down,
+        Direction::Down => Direction::Up,
+    };
+    let of_side = |side| {
+        dividers.iter().filter(|divider| divider.axis == wanted && touching(divider, side)).copied().next()
+    };
+    of_side(direction).or_else(|| of_side(opposite))
 }
 
 /// The pane next to `from` in `direction`: of those across that edge and
@@ -273,6 +325,43 @@ mod tests {
             assert_eq!(rect.w.fract(), 0.0, "{rect:?}");
             assert_eq!(rect.h.fract(), 0.0, "{rect:?}");
         }
+    }
+
+    #[test]
+    fn swapping_trades_places_and_leaves_the_layout() {
+        let mut node = three();
+        let before = node.layout(AREA, 1.0);
+        assert!(node.swap(0, 2));
+        let after = node.layout(AREA, 1.0);
+        assert_eq!(rect_of(&after, 2), rect_of(&before, 0));
+        assert_eq!(rect_of(&after, 0), rect_of(&before, 2));
+        assert_eq!(rect_of(&after, 1), rect_of(&before, 1));
+        assert_eq!(node.ids(), [2, 1, 0]);
+
+        assert!(!node.swap(0, 0));
+        assert!(!node.swap(0, 9));
+        assert_eq!(node.ids(), [2, 1, 0]);
+    }
+
+    #[test]
+    fn resizing_moves_the_divider_of_that_edge() {
+        let node = three();
+        let (rects, dividers) = (node.layout(AREA, 1.0), node.dividers(AREA, 1.0));
+        let towards = |id, direction| divider_towards(&dividers, &rects, id, direction).map(|d| d.split);
+
+        // Pane 0 is on the left: its own divider either way, since
+        // there is none on its left.
+        assert_eq!(towards(0, Direction::Right), Some(0));
+        assert_eq!(towards(0, Direction::Left), Some(0));
+        // Pane 1 sits top right: the outer divider left of it, the inner
+        // one below it.
+        assert_eq!(towards(1, Direction::Left), Some(0));
+        assert_eq!(towards(1, Direction::Down), Some(1));
+        assert_eq!(towards(2, Direction::Up), Some(1));
+        // Nothing above pane 1 and nothing below pane 0 to move.
+        assert_eq!(towards(1, Direction::Up), Some(1));
+        assert_eq!(towards(0, Direction::Down), None);
+        assert_eq!(towards(9, Direction::Left), None);
     }
 
     #[test]

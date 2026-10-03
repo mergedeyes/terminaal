@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::i18n::t;
+use crate::sftp::sync::SyncPair;
 use options::{AddressFamily, HostKeyCheck, Options, Settings};
 
 /// `Include` nesting limit (OpenSSH uses 16 as well).
@@ -69,6 +70,10 @@ pub struct Host {
     /// personal and an admin account. Jump hosts always use the default.
     #[serde(default, rename = "login", skip_serializing_if = "Vec::is_empty")]
     pub logins: Vec<Login>,
+    /// Folders kept in sync over SFTP (`[[host.sync]]`, see
+    /// [`crate::sftp::sync`]); Terminaal's own, for every login.
+    #[serde(default, rename = "sync", skip_serializing_if = "Vec::is_empty")]
+    pub syncs: Vec<SyncPair>,
 }
 
 /// A user name and the key to log in with.
@@ -129,6 +134,7 @@ impl Host {
             proxy_jump: None,
             options: Options::default(),
             logins: Vec::new(),
+            syncs: Vec::new(),
         }
     }
 
@@ -199,6 +205,8 @@ pub struct SshTarget {
     /// own jumps are flattened into this list; the entries' `jumps` are
     /// always empty.
     pub jumps: Vec<SshTarget>,
+    /// The host's synced folders.
+    pub syncs: Vec<SyncPair>,
 }
 
 /// Which keys to offer, in which order: agent keys first (like ssh),
@@ -284,6 +292,7 @@ impl Catalog {
             auth: self.auth_plan(host)?,
             settings,
             jumps,
+            syncs: host.syncs.clone(),
         })
     }
 
@@ -771,6 +780,25 @@ pub(crate) fn glob(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sftp::sync::SyncDirection;
+
+    #[test]
+    fn reads_the_sync_example_in_the_guide() {
+        let guide = include_str!("../../docs/guides/files-and-sftp.md");
+        let example = guide.split("```toml\n").nth(1).and_then(|rest| rest.split("```").next()).expect("example");
+        let hosts = toml::from_str::<HostsFile>(example).unwrap().hosts;
+        let [host] = hosts.as_slice() else { panic!("{hosts:?}") };
+        assert_eq!(host.syncs.len(), 2);
+        assert_eq!(host.syncs[0].direction, SyncDirection::Upload);
+        assert!(host.syncs[0].delete_remote && host.syncs[0].live && !host.syncs[0].delete_local);
+        assert_eq!(host.syncs[0].exclude, [".git", "*.tmp"]);
+        assert_eq!(host.syncs[1].direction, SyncDirection::Both);
+        assert!(host.syncs.iter().all(|pair| pair.check().is_ok()));
+        // And back: the tables come out after the host's own keys.
+        let text = toml::to_string_pretty(&HostsFile { hosts: hosts.clone() }).unwrap();
+        assert!(text.contains("[[host.sync]]"), "{text}");
+        assert_eq!(toml::from_str::<HostsFile>(&text).unwrap().hosts, hosts);
+    }
 
     fn no_includes(_: &str) -> Vec<String> {
         Vec::new()
