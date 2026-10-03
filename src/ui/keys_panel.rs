@@ -519,6 +519,7 @@ mod tests {
             catalog: Catalog { saved: vec![host], config: Vec::new(), keys: vec![key] },
             hosts_error: Some("test".into()),
             keys_error: Some("test".into()),
+            hosts_generation: 0,
         }
     }
 

@@ -47,8 +47,8 @@ Look something up, or get one thing done.
   when it's saved, several windows
 - [The drop-down window](guides/drop-down-window.md) – a terminal that drops
   down from the top of the screen at a key press
-- [Files on a server (SFTP)](guides/files-and-sftp.md) – browse, copy, edit
-  server files locally, sudo for root's files
+- [Files on a server (SFTP)](guides/files-and-sftp.md) – browse, copy, sync
+  folders, edit server files locally, sudo for root's files
 - [Appearance](guides/appearance.md) – themes, COSMIC, translucency, fonts
 
 ## Explanations

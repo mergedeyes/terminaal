@@ -74,7 +74,11 @@ in a sidebar, and never have secrets written to disk.
     looking at (after 10 seconds by default, adjustable)
 - **Files on the server (SFTP)** over the terminal's own connection
   (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> or the right-click menu): browse,
-  upload and download files and folders (also by dragging files onto the window),
+  upload, download and delete files and folders – several at once with
+  <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+click, or by dragging files onto the window –,
+  **keep folders in sync** (two-way or one-way, per host; when the files tab
+  opens, or live in the background while a terminal is logged in; conflicts keep
+  both versions, deletions only travel where you allow it),
   and **edit a server file in your local editor** – every save goes back, with a
   check (a SHA-256 computed on the server) that nobody changed it meanwhile.
   Transfers and saves wait out a dropped connection and carry on once it's back. Files only root may change go through
@@ -393,7 +397,7 @@ Next to it, Terminaal keeps its own files. None of them holds anything secret:
 
 | File | Contents |
 | --- | --- |
-| `hosts.toml` | Saved SSH hosts, logins and options |
+| `hosts.toml` | Saved SSH hosts, logins, options and synced folders |
 | `keys.toml` | Named keys: file paths, or the public half of agent keys |
 | `snippets.toml` | Your own commands |
 | `shell-integration/` | Startup files Terminaal generates for bash, zsh and fish: they load your own config, then the managed aliases and the shell integration |
@@ -458,8 +462,9 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - A restored session starts every terminal fresh: no scrollback, and SSH
   terminals log in again. Closing the last tab (or `exit` in the last shell)
   leaves nothing to restore – close the window to keep your tabs
-- SFTP never overwrites on copying (taken names get a number) and deletes only
-  files and empty folders. Transfers resume after a dropped connection only while
+- SFTP never overwrites on copying (taken names get a number); deleting on the
+  server is final, local deletions go to the trash. Folder sync compares by size and modification time,
+  live pairs watch only the local folder (server changes come with the next sync). Transfers resume after a dropped connection only while
   Terminaal stays open. Editing through sudo pastes a command into the terminal,
   so that terminal should be at a shell prompt
 - Reconnecting on its own needs a login without prompts (agent, key without

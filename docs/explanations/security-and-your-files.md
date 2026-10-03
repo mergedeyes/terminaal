@@ -29,7 +29,8 @@ deliberately doesn't – to keep them safe.
 | Key files | Create new ones (never overwriting an existing file, mode `0600`). Delete them only for keys generated in Terminaal, only after a second confirmation, and only if no other entry uses the file |
 | Your shell configs (`.bashrc`, `.zshrc`, fish config) | Never touched. Terminaal's aliases and integration live in separate files that only Terminaal loads |
 | `hosts.toml`, `keys.toml`, `snippets.toml` | Rewritten whole, atomically. If one can't be read, Terminaal refuses to save over it |
-| Files on a server (SFTP) | Copies never overwrite: a taken name gets a number. Deleting asks twice and only removes files and empty folders. Edited files are uploaded only after checking nobody changed them meanwhile, written next to the original and renamed over it (or in place where that would change the owner) |
+| Files on a server (SFTP) | Copies never overwrite: a taken name gets a number. Deleting asks twice; on this computer it moves to the trash, on the server it's final (folders with everything in them, symlinks inside removed, not followed). Edited files are uploaded only after checking nobody changed them meanwhile, written next to the original and renamed over it (or in place where that would change the owner) |
+| Synced folders (both sides) | Files are replaced by the other side's newer version and, only where you switched it on, deleted – see [Folder sync](#folder-sync) |
 
 ## Host keys
 
@@ -99,6 +100,16 @@ events are never broadcast.
 - The pasted command contains only the script's path, which Terminaal refuses
   to build from a home folder with quotes or backslashes in it; file paths only
   ever reach `sh` inside the script, properly quoted.
+
+## Folder sync
+
+Syncing never loses a version: a file changed on both sides (or, one-way, on the
+target too) is kept next to the other as `name (conflict).ext`. Deletions only
+travel in a direction you switched on, only for files synced before and unchanged
+on the other side since, and never from a side whose folder is empty. Copies are
+renamed into place at the end, so an interrupted sync leaves no half-written
+files. The record of the last sync (`~/.local/state/terminaal/sync/`) holds paths,
+sizes and times – no contents.
 
 ## Agent forwarding
 

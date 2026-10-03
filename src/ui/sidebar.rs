@@ -172,6 +172,20 @@ impl Sidebar {
         &self.data.catalog
     }
 
+    /// The folder pairs saved for host `name` (none for a host only in
+    /// `~/.ssh/config`); `None` while hosts.toml can't be read.
+    pub fn host_syncs(&self, name: &str) -> Option<Vec<crate::sftp::sync::SyncPair>> {
+        if self.data.hosts_error.is_some() {
+            return None;
+        }
+        Some(self.data.catalog.find(name).map(|host| host.syncs.clone()).unwrap_or_default())
+    }
+
+    /// Changes whenever the saved hosts do.
+    pub fn hosts_generation(&self) -> u64 {
+        self.data.hosts_generation
+    }
+
     /// Run a command line as a button in the shell section would: right
     /// away, or -- before the first one ever ran -- once the warning there
     /// is acknowledged. Empty then, and that section shows.

@@ -81,6 +81,7 @@ use crate::terminal::search::Search;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::sftp::edit::EditAction;
 use crate::sftp::session::{Command as SftpCommand, Remote};
+use crate::sftp::sync::SyncPair;
 use crate::ssh::connection::Opener;
 use crate::ui::command_palette::{self, CommandPalette};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
@@ -122,6 +123,8 @@ pub enum UserEvent {
     Shell(usize, ShellEvent),
     /// A files tab's SFTP session has something new to show.
     Files,
+    /// A background sync session (`SyncJob`) has something new to show.
+    Sync,
     /// `terminaal --quake` ran again: show or hide the drop-down window.
     QuakeToggle,
 }
@@ -165,6 +168,22 @@ enum TabContent {
     Files(Box<FilesTab>),
 }
 
+/// A host's live synced folders (`sftp::sync`): an SFTP session of their
+/// own, without a tab, while a terminal is logged in to the host. One per
+/// login; a new terminal of that login takes over when its own is gone.
+struct SyncJob {
+    login: (String, u16, String),
+    /// The host's name in the sidebar: its pairs come from there.
+    host_name: String,
+    /// `user@host`, for the records.
+    label: String,
+    /// The pane whose connection it uses.
+    pane: usize,
+    /// The live pairs it was given.
+    pairs: Vec<SyncPair>,
+    remote: Remote,
+}
+
 /// A files tab: an SFTP session over the connection of one SSH pane.
 struct FilesTab {
     /// The pane whose connection it uses; sudo commands run in its terminal.
@@ -176,6 +195,8 @@ struct FilesTab {
     login: (String, u16, String),
     /// `user@host`.
     label: String,
+    /// The pairs it syncs on opening (the host's not live ones).
+    syncs: Vec<SyncPair>,
     remote: Remote,
     panel: FilesPanel,
     /// As shown: marked while an edit needs the user.
@@ -663,6 +684,10 @@ struct AppState {
     paste_warning: Option<PasteWarning>,
     /// The open command palette; it has the keyboard while open.
     command_palette: Option<CommandPalette>,
+    /// Background sessions of hosts with live synced folders.
+    sync_jobs: Vec<SyncJob>,
+    /// The saved hosts' generation the folder pairs were taken from.
+    hosts_seen: u64,
     /// This machine's name, to tell its working directories from others'.
     hostname: String,
     /// The window has the keyboard focus.
@@ -798,6 +823,8 @@ impl AppState {
             context_output: None,
             prompt_press: None,
             command_palette: None,
+            sync_jobs: Vec::new(),
+            hosts_seen: 0,
             paste_warning: None,
             hostname: hostname(),
             focused: true,
@@ -953,6 +980,7 @@ impl AppState {
                     TerminalSession::connect_ssh(listener, (**target).clone(), size, cell.width, cell.height, scrollback)?;
                 if let Some(opener) = terminal.opener() {
                     self.adopt_files_tabs(id, &login_of(target), &opener);
+                    self.sync_in_background(id, target, &opener);
                 }
                 (terminal, target.label.clone())
             }
@@ -1296,11 +1324,19 @@ impl AppState {
         let remote = Remote::spawn(Arc::new(opener), &label, wake)
             .inspect_err(|err| log::error!("failed to start SFTP for {label}: {err}"))
             .ok()?;
+        // As saved now, not as when the terminal opened. Live pairs sync in
+        // the background session instead.
+        let all = self.sidebar.host_syncs(&target.name).unwrap_or_else(|| target.syncs.clone());
+        let syncs: Vec<_> = all.into_iter().filter(|pair| !pair.live).collect();
+        if !syncs.is_empty() {
+            remote.send(SftpCommand::SetSyncs { login: target.label.clone(), pairs: syncs.clone() });
+        }
         let mut files = FilesTab {
             pane: pane.id,
             host_name: target.name.clone(),
             login: login_of(target),
             label,
+            syncs,
             remote,
             panel: FilesPanel::new(),
             title: String::new(),
@@ -1321,6 +1357,93 @@ impl AppState {
                 files.pane = pane;
                 files.remote.send(SftpCommand::Rebind(Arc::new(opener.clone())));
             }
+        }
+    }
+
+    /// A terminal logged in to `target` started: its live synced folders get
+    /// a background session -- or the one there is takes this terminal's
+    /// connection if its own terminal is gone, and the pairs as they're
+    /// configured now.
+    fn sync_in_background(&mut self, pane: usize, target: &SshTarget, opener: &Opener) {
+        let login = login_of(target);
+        let all = self.sidebar.host_syncs(&target.name).unwrap_or_else(|| target.syncs.clone());
+        let pairs: Vec<_> = all.into_iter().filter(|pair| pair.live).collect();
+        let at = self.sync_jobs.iter().position(|job| job.login == login);
+        if let Some(at) = at {
+            let orphaned = self.locate(self.sync_jobs[at].pane).is_none();
+            let job = &mut self.sync_jobs[at];
+            if orphaned {
+                job.pane = pane;
+                job.remote.send(SftpCommand::Rebind(Arc::new(opener.clone())));
+            }
+            // The host form changed meanwhile (else it'd start over).
+            if job.pairs != pairs {
+                job.pairs = pairs.clone();
+                job.remote.send(SftpCommand::SetSyncs { login: target.label.clone(), pairs });
+            }
+            return;
+        }
+        if pairs.is_empty() {
+            return;
+        }
+        let proxy = self.proxy.clone();
+        let wake = Arc::new(move || drop(proxy.send_event(UserEvent::Sync)));
+        let label = format!("sync {}", target.label);
+        match Remote::spawn(Arc::new(opener.clone()), &label, wake) {
+            Ok(remote) => {
+                remote.send(SftpCommand::SetSyncs { login: target.label.clone(), pairs: pairs.clone() });
+                let (host_name, label) = (target.name.clone(), target.label.clone());
+                self.sync_jobs.push(SyncJob { login, host_name, label, pane, pairs, remote });
+            }
+            Err(err) => log::error!("failed to start the folder sync for {}: {err}", target.label),
+        }
+    }
+
+    /// The saved hosts changed (a host form was saved): files tabs and
+    /// background syncs take their folder pairs as they are now, and
+    /// terminals of a host that just got live pairs start syncing them.
+    fn refresh_syncs(&mut self) {
+        let generation = self.sidebar.hosts_generation();
+        if generation == self.hosts_seen {
+            return;
+        }
+        self.hosts_seen = generation;
+        for tab in &mut self.tabs {
+            let TabContent::Files(files) = &mut tab.content else { continue };
+            let Some(all) = self.sidebar.host_syncs(&files.host_name) else { continue };
+            let syncs: Vec<_> = all.into_iter().filter(|pair| !pair.live).collect();
+            if syncs != files.syncs {
+                files.syncs = syncs.clone();
+                files.remote.send(SftpCommand::SetSyncs { login: files.label.clone(), pairs: syncs });
+            }
+        }
+        for job in &mut self.sync_jobs {
+            let Some(all) = self.sidebar.host_syncs(&job.host_name) else { continue };
+            let pairs: Vec<_> = all.into_iter().filter(|pair| pair.live).collect();
+            if pairs != job.pairs {
+                job.pairs = pairs.clone();
+                job.remote.send(SftpCommand::SetSyncs { login: job.label.clone(), pairs });
+            }
+        }
+        let terminals: Vec<(usize, SshTarget, Opener)> = self
+            .tabs
+            .iter()
+            .filter_map(Tab::panes)
+            .flat_map(|panes| &panes.panes)
+            .filter_map(|pane| match (&pane.origin, pane.terminal.opener()) {
+                (PaneOrigin::Ssh(target), Some(opener)) => Some((pane.id, (**target).clone(), opener)),
+                _ => None,
+            })
+            .collect();
+        for (pane, target, opener) in terminals {
+            self.sync_in_background(pane, &target, &opener);
+        }
+    }
+
+    /// A background sync changed: shown only in a files tab of its login.
+    fn sync_changed(&mut self) {
+        if self.tabs.get(self.active_tab).and_then(Tab::files).is_some() {
+            self.window.request_redraw();
         }
     }
 
@@ -1361,6 +1484,11 @@ impl AppState {
         let (pane, label) = (files.pane, files.label.clone());
         match action {
             FilesAction::Remote(command) => files.remote.send(command),
+            FilesAction::Background(command) => {
+                if let Some(job) = self.sync_jobs.iter().find(|job| job.login == files.login) {
+                    job.remote.send(command);
+                }
+            }
             // Try again on its terminal -- or on any other with that login.
             FilesAction::Reconnect => {
                 let login = files.login.clone();
@@ -3334,6 +3462,7 @@ impl AppState {
             Some(TabContent::Files(files)) => Some(files),
             _ => None,
         };
+        let sync_job = files_tab.as_ref().and_then(|files| self.sync_jobs.iter().find(|job| job.login == files.login));
         let repaint = self.ui.run(&self.window, &self.gpu.device, &self.gpu.queue, |ui| {
             // egui may run this more than once per frame; only the last
             // pass counts.
@@ -3370,11 +3499,13 @@ impl AppState {
                 let page = egui::Rect::from_min_max(egui::pos2(right_edge, page_top), ui.max_rect().max);
                 ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
                     let state = files.remote.state();
+                    let background = sync_job.map(|job| job.remote.state());
                     let view = FilesView {
                         state: &state,
                         label: &files.label,
                         terminal: files_terminal.unwrap_or(false),
                         editor: editor.as_deref(),
+                        background: background.as_deref(),
                     };
                     files.panel.show_tab(ui, &view, &mut files_actions);
                 });
@@ -3424,6 +3555,8 @@ impl AppState {
         for action in files_actions {
             self.apply_files_action(active_tab, action);
         }
+        // A host form saved in the sidebar may have changed folder pairs.
+        self.refresh_syncs();
         // The menu is in this frame already; the redraw takes it away.
         if let Some(action) = menu_action {
             self.close_context_menu();
@@ -4510,6 +4643,10 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Files => {
                 state.files_changed();
+                return;
+            }
+            UserEvent::Sync => {
+                state.sync_changed();
                 return;
             }
             UserEvent::QuakeToggle => {

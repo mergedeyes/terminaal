@@ -537,6 +537,24 @@ host-forwards-note = Aktiv, solange der Tab verbunden ist. Vor dem Port kann ein
 host-forward-missing-port = Bei Weiterleitung { $row } fehlt der Port bzw. Socket-Pfad.
 host-forward-missing-target = Bei Weiterleitung { $row } fehlt das Ziel.
 host-forward-invalid = Weiterleitung { $row }: { $err }
+host-syncs =
+    { $count ->
+        [0] Ordner-Sync
+       *[other] Ordner-Sync ({ $count })
+    }
+host-sync-local = Ordner hier
+host-sync-remote = Ordner auf dem Server
+host-sync-remote-hint = site, ~/site oder /srv/www
+host-sync-live = Im Hintergrund, live
+host-sync-live-hint = Synchronisiert, solange ein Terminal zu diesem Host offen ist – lokale Änderungen sofort. Sonst beim Öffnen des Dateien-Tabs.
+host-sync-delete-remote = Hier Gelöschtes auf dem Server löschen
+host-sync-delete-local = Auf dem Server Gelöschtes hier löschen
+host-sync-delete-hint = Nur Dateien, die schon synchronisiert waren und sich auf der anderen Seite seitdem nicht geändert haben. Sonst kommt eine gelöschte Datei von der anderen Seite zurück.
+host-sync-exclude = Auslassen (durch Kommas getrennt)
+host-sync-remove = Ordnerpaar entfernen
+host-sync-add = +  Ordnerpaar
+host-syncs-note = Synchronisiert wird beim Öffnen des Dateien-Tabs (Strg+Umschalt+O) und nach jedem Wiederverbinden. Auf beiden Seiten geändert → beide Fassungen bleiben, eine als „Name (conflict)“.
+host-sync-invalid = Ordnerpaar { $row }: { $err }
 host-advanced =
     { $count ->
         [0] Erweitert
@@ -828,7 +846,7 @@ files-new-folder = Neuer Ordner
 files-new-folder-name = Name des neuen Ordners:
 files-delete = Löschen
 files-delete-confirm = Wirklich löschen?
-files-delete-hint = Dateien und leere Ordner; ein zweiter Klick löscht
+files-delete-hint = Dateien und Ordner samt Inhalt; ein zweiter Klick löscht
 files-ok = OK
 files-cancel = Abbrechen
 files-created = „{ $name }“ angelegt.
@@ -875,3 +893,63 @@ files-sudo-prepare-failed = Das sudo-Skript lässt sich nicht anlegen: { $err }
 files-sudo-path = Der Home-Ordner { $path } enthält Zeichen, die sich nicht sicher in einen Befehl einfügen lassen.
 files-sudo-reading = Terminaal: { $path } mit sudo lesen
 files-sudo-writing = Terminaal: { $path } mit sudo schreiben
+files-removed-many =
+    { $count ->
+        [one] { $count } Eintrag gelöscht.
+       *[other] { $count } Einträge gelöscht.
+    }
+files-remove-failed = „{ $name }“ lässt sich nicht löschen: { $err }
+files-trash-hint = Verschiebt die gewählten Einträge in den Papierkorb; ein zweiter Klick tut es
+files-trashed = „{ $name }“ in den Papierkorb verschoben.
+files-trashed-many =
+    { $count ->
+        [one] { $count } Eintrag in den Papierkorb verschoben.
+       *[other] { $count } Einträge in den Papierkorb verschoben.
+    }
+files-trash-failed = Nicht in den Papierkorb verschoben: { $err }
+files-trash-no-gio = Für den Papierkorb fehlt „gio“ (aus GLib).
+files-selected =
+    { $count ->
+        [one] { $count } ausgewählt
+       *[other] { $count } ausgewählt
+    }
+files-select-hint = Strg+Klick wählt mehrere, Umschalt+Klick einen Bereich
+files-syncs = Synchronisierte Ordner
+files-sync-now = Jetzt synchronisieren
+files-sync-stop = Anhalten
+files-sync-live = live
+files-sync-live-hint = Läuft im Hintergrund, solange ein Terminal zu diesem Host offen ist; lokale Änderungen gehen sofort hoch.
+files-sync-waiting = wartet auf die Verbindung
+files-sync-scanning = vergleicht …
+files-sync-copying = kopiert { $done } von { $total }
+files-sync-done = synchron seit { $time }
+files-sync-done-changes = synchron seit { $time } – { $copied } kopiert, { $deleted } gelöscht
+files-sync-busy = läuft gerade woanders (anderer Tab oder anderes Terminaal) – gleich noch einmal
+files-sync-more = … und { $count } weitere
+files-sync-stopped = angehalten
+sync-direction-both = Beide Richtungen
+sync-direction-upload = Nur hochladen
+sync-direction-download = Nur herunterladen
+sync-missing-folder = Beide Ordner werden gebraucht.
+sync-local-relative = Der Ordner hier muss absolut sein oder mit ~/ beginnen: { $path }
+sync-record-failed = Der Sync-Stand lässt sich nicht speichern: { $err }
+sync-local-failed = { $path }: { $err }
+sync-remote-failed = { $path } auf dem Server: { $err }
+sync-not-a-folder = { $path } ist kein Ordner.
+sync-record-header = Terminaal-Ordner-Sync: { $login }, { $local } ↔ { $remote }. Diese Datei löschen, um von vorn anzufangen.
+sync-copy-failed = { $path }: { $err }
+sync-type-differs = { $path }: auf einer Seite eine Datei, auf der anderen ein Ordner – nicht angefasst.
+sync-conflict-both = { $path }: auf beiden Seiten geändert – die ältere Fassung bleibt als „{ $copy }“.
+sync-conflict-target = { $path }: { $side } ebenfalls geändert – diese Fassung bleibt als „{ $copy }“.
+sync-restored-local =
+    { $count ->
+        [one] Eine hier gelöschte Datei kam vom Server zurück. Damit sie dort auch gelöscht wird: im Host-Formular beim Ordnerpaar „Hier Gelöschtes auf dem Server löschen“ einschalten.
+       *[other] { $count } hier gelöschte Dateien kamen vom Server zurück. Damit sie dort auch gelöscht werden: im Host-Formular beim Ordnerpaar „Hier Gelöschtes auf dem Server löschen“ einschalten.
+    }
+sync-restored-remote =
+    { $count ->
+        [one] Eine auf dem Server gelöschte Datei kam von hier zurück. Damit sie hier auch gelöscht wird: im Host-Formular beim Ordnerpaar „Auf dem Server Gelöschtes hier löschen“ einschalten.
+       *[other] { $count } auf dem Server gelöschte Dateien kamen von hier zurück. Damit sie hier auch gelöscht werden: im Host-Formular beim Ordnerpaar „Auf dem Server Gelöschtes hier löschen“ einschalten.
+    }
+sync-side-local = hier
+sync-side-remote = auf dem Server

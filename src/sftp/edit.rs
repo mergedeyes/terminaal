@@ -908,16 +908,24 @@ pub fn sudo_script(purpose: SudoFor, dir: &str, target: &str, message: &str, exp
 
 /// inotify on the folders of local copies, on a thread of its own:
 /// `changed` gets a file that was written (closed after writing) or renamed
-/// into a watched folder, until it returns `false`.
-struct Watcher {
+/// into a watched folder, until it returns `false`. Folder sync
+/// ([`super::sync`]) watches for more ([`Watcher::with`]).
+pub(super) struct Watcher {
     fd: Arc<OwnedFd>,
     dirs: Arc<Mutex<HashMap<i32, PathBuf>>>,
+    /// What the folders are watched for.
+    mask: u32,
     /// Writing to it ends the thread.
     stop: std::os::unix::net::UnixStream,
 }
 
 impl Watcher {
     fn new(changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
+        Self::with("edit-watch", libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO, changed)
+    }
+
+    /// A watcher thread called `name`, watching folders for `mask`.
+    pub(super) fn with(name: &str, mask: u32, changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
         // SAFETY: a plain syscall; the descriptor is owned right away.
         let raw = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
         if raw < 0 {
@@ -927,7 +935,7 @@ impl Watcher {
         let dirs: Arc<Mutex<HashMap<i32, PathBuf>>> = Arc::default();
         let (stop, stop_rx) = std::os::unix::net::UnixStream::pair()?;
         let (thread_fd, thread_dirs) = (fd.clone(), dirs.clone());
-        std::thread::Builder::new().name("edit-watch".into()).spawn(move || {
+        std::thread::Builder::new().name(name.into()).spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
                 let mut fds = [
@@ -957,14 +965,13 @@ impl Watcher {
                 }
             }
         })?;
-        Ok(Self { fd, dirs, stop })
+        Ok(Self { fd, dirs, mask, stop })
     }
 
-    fn add(&self, dir: &Path) -> std::io::Result<()> {
+    pub(super) fn add(&self, dir: &Path) -> std::io::Result<()> {
         let path = CString::new(dir.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
-        let mask = libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO;
         // SAFETY: a valid descriptor and NUL-terminated path.
-        let wd = unsafe { libc::inotify_add_watch(self.fd.as_raw_fd(), path.as_ptr(), mask) };
+        let wd = unsafe { libc::inotify_add_watch(self.fd.as_raw_fd(), path.as_ptr(), self.mask) };
         if wd < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -972,7 +979,7 @@ impl Watcher {
         Ok(())
     }
 
-    fn remove(&self, dir: &Path) {
+    pub(super) fn remove(&self, dir: &Path) {
         let mut dirs = self.dirs.lock().unwrap_or_else(PoisonError::into_inner);
         let wds: Vec<i32> = dirs.iter().filter(|(_, watched)| *watched == dir).map(|(wd, _)| *wd).collect();
         for wd in wds {

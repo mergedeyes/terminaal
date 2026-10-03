@@ -18,6 +18,8 @@ The form shows what most hosts need, and folds the rest away:
 - **Login** – user and key; **+ Another login** adds more
 - **Jump host (ProxyJump)** – any saved or config host
 - **Port forwarding** – see [the tutorial](../tutorials/03-port-forwarding.md)
+- **Folder sync** – folders kept in sync over SFTP, see
+  [Files on a server](files-and-sftp.md#syncing-folders)
 - **Advanced** – everything else, grouped below
 
 Fold-outs open by themselves when something in them is set. Each field names its
