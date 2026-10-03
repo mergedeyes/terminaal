@@ -9,196 +9,195 @@
   Written in Rust. English and German UI.
 </p>
 
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#getting-around">Getting around</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
+
 ---
 
-Terminaal combines an everyday terminal with Termius-style host management
-in the style of Tabby/Terminus. You can open local shells and SSH sessions side by side in tabs, keep your hosts, logins and keys
-in a sidebar, and never have secrets written to disk.
+Terminaal combines an everyday terminal with Termius-style host management, in
+the spirit of Tabby/Terminus. Open local shells and SSH sessions side by side in
+tabs and split panes, keep your hosts, logins and keys in a sidebar, work with a
+server's files over the same connection – and never have a secret written to
+disk.
 
-> **Status:** under active development. It's used as a daily driver on
-> Linux (CachyOS/7.2.6-1/Wayland and X11). Expect rough edges, and expect the config format to change.
+> [!NOTE]
+> **Status:** under active development and used as a daily driver on Linux
+> (CachyOS, Wayland and X11). Expect rough edges, and expect the config format
+> to change.
 
-> **DISCLAIMER:** This project is coded mostly by Claude Code, I do make all decisions though; every feature was planned by me.
+> [!IMPORTANT]
+> **Disclaimer:** this project is coded mostly by Claude Code. I make all the
+> decisions, though – every feature was planned by me.
 
-**SCREENSHOTS:**
-<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/95a72250-0e38-4be0-86cd-d9cbce21ce06" />
-<img width="2557" height="1383" alt="image" src="https://github.com/user-attachments/assets/5d820773-2745-474c-bb17-9327a6339164" />
+<img width="2557" height="1383" alt="Terminaal with local and SSH tabs and the sidebar" src="https://github.com/user-attachments/assets/95a72250-0e38-4be0-86cd-d9cbce21ce06" />
+<img width="2557" height="1383" alt="Terminaal with split panes" src="https://github.com/user-attachments/assets/5d820773-2745-474c-bb17-9327a6339164" />
+
+## Contents
+
+- [Highlights](#highlights)
+- [Features](#features)
+  - [Terminal](#terminal) · [Shell integration](#shell-integration) · [SSH](#ssh) · [Files on the server](#files-on-the-server-sftp) · [Shells and commands](#shells-and-commands) · [Keys](#keys) · [Look and feel](#look-and-feel)
+- [Installation](#installation)
+- [Getting around](#getting-around) – shortcuts, mouse, command line
+- [Configuration](#configuration)
+- [Documentation](#documentation)
+- [Known limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+
+## Highlights
+
+- **Fast and quiet:** a custom wgpu renderer that redraws only when something changes
+- **SSH manager built in:** hosts, several logins per host, keys, jump hosts, port forwards, automatic reconnect
+- **Files over the same connection:** browse, copy, edit locally and **keep folders in sync** – no second login
+- **Split panes, broadcast, command palette** for working on many terminals at once
+- **Shell integration** without setup for fish, bash and zsh: prompt jumps, exit codes, run times, notifications
+- **Nothing secret on disk**, and your own config files are never rewritten behind your back
+- **Fits COSMIC:** follows the desktop theme live, frosted see-through window, drop-down mode
 
 ## Features
 
 ### Terminal
-- Custom **wgpu** renderer for the terminal grid; VT parsing by
-  [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal)
-- Redraws only when something changes (output, input, cursor blink), so it stays
-  idle when you do
-- **Activity in background tabs**: a dot before the title for new output, the
-  bell, or a terminal you asked to watch for silence that has gone quiet (with a
-  desktop notification) – right-click → Watch for silence
-- Multiple tabs, each a local shell or an SSH session; a clickable tab bar, and
-  tabs sort by dragging them sideways
-- **Drop-down window** (`terminaal --quake`, bound to a key in your desktop's
-  settings): a terminal that drops down from the top of the screen and hides
-  again, with tabs of its own that keep running. A real layer surface on
-  COSMIC, KDE, Sway and Hyprland
-- **Restores the last session** at start: tabs, splits, shells in their
-  working directories, SSH connections, files and settings tabs (no scrollback).
-  A second window starts fresh
-- **Split panes**: divide a tab into several terminals side by side or one above
-  the other (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd>, or the right-click menu). A new pane
-  runs the same shell in the same folder, or connects to the same host. Drag the
-  line between panes to resize them, click or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+arrow key to move
-  between them, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> shows one pane over the whole tab
-- Scrollback with the mouse wheel (speed adjustable in the settings), mouse selection
-  (drag past the top or bottom edge and it scrolls along, and the wheel scrolls
-  three times as fast while you mark – adjustable), clipboard copy and paste
-- **Search the scrollback** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>): matches
-  light up as you type, <kbd>Enter</kbd> and then <kbd>n</kbd>/<kbd>N</kbd> jump
-  between them
-- Bracketed paste: pasted text goes to shells and editors as one paste, so a
-  multi-line paste isn't run line by line
-- **A look before risky pastes**: lines that would run at once, `sudo`,
-  `curl … | sh`, `rm -rf` and the like – and anything multi-line going to several
-  terminals by broadcast – are shown first and pasted with <kbd>Enter</kbd>
-- **Shell integration** for fish, bash and zsh, set up by Terminaal itself
-  (any other shell that sends OSC 7 and OSC 133 works too, and so do remote
-  shells over SSH that send them – fish 4 does on its own):
-  - tab titles show the working directory, and a new tab opens in it (while a
-    program runs, a local tab is named after it instead)
-  - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump from prompt to prompt
-  - a failed command gets its exit code (`✘ 1`) next to its prompt, a slow one
-    how long it ran (`4,2 s`)
-  - copy the last command's output (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>,
-    or right-click → Copy output for the one under the mouse), and click a
-    prompt to select that command with its output
-  - a desktop notification when a long command finishes in a tab you're not
-    looking at (after 10 seconds by default, adjustable)
-- **Files on the server (SFTP)** over the terminal's own connection
-  (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> or the right-click menu): browse,
-  upload, download and delete files and folders – several at once with
-  <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+click, or by dragging files onto the window –,
-  **keep folders in sync** (two-way or one-way, per host; when the files tab
-  opens, or live in the background while a terminal is logged in; conflicts keep
-  both versions, deletions only travel where you allow it),
-  and **edit a server file in your local editor** – every save goes back, with a
-  check (a SHA-256 computed on the server) that nobody changed it meanwhile.
-  Transfers and saves wait out a dropped connection and carry on once it's back. Files only root may change go through
-  sudo in the terminal, where it asks for the password as usual
-- **Broadcast**: put terminals into a broadcast group (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>
-  or the right-click menu), and what you type, paste or send with a command
-  button in one of them goes to all of them – the same command on ten servers
-  at once, in separate tabs or in the panes of one. Tabs holding a terminal of
-  the group are marked red in the tab bar, panes get a red frame
-- **Clickable links**: hold <kbd>Ctrl</kbd> to underline URLs, hyperlinks
-  (OSC 8) and existing files under the mouse; <kbd>Ctrl</kbd>+click opens them
-  with your default application. File names count relative to the shell's
-  working directory, and only in local tabs
-- Mouse wheel in full-screen programs: arrow keys for `less`/`man`, wheel
-  reports for programs with mouse support (`htop`, `mc`, `vim` with `mouse=a`);
-  hold <kbd>Shift</kbd> to scroll Terminaal's scrollback instead
-- Right-click menu in the terminal: copy, copy a command's output, paste, paste and run, joining or
-  leaving the broadcast, splitting and closing the pane, the files of an SSH
-  connection
-- A **command palette** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>): type a few
-  letters to switch to a tab, connect to a host with any of its logins, run a
-  snippet, trigger an action or pick a theme
-- A **settings tab** for every option (**⚙** in the sidebar or <kbd>Ctrl</kbd>+<kbd>,</kbd>)
-- **Themes** for the console and the interface alike: seven built in, and your
-  own in Alacritty's format (its themes work as they are)
-- On the COSMIC desktop, a **COSMIC theme** that follows the desktop's colors,
-  light/dark switch and accent color included, as they change
-- A **see-through window** with adjustable opacity, frosted (blurred behind) on
-  COSMIC and other compositors with `ext-background-effect`, and on KDE
-- Choose the **console font** and the **menu font** from the installed ones
-- **Configurable keyboard shortcuts** for every action, several per action if you like
-- Optional start-up animation
 
-### Shells
-- Choose any shell listed in `/etc/shells` for a new tab, and set a default
-- Manage **aliases, functions and lines of your own** for fish, bash and zsh
-  from the sidebar. Lines are whatever you would otherwise put in your startup
-  file (`export EDITOR=vim`, `set -gx …`), kept as one named entry each that you
-  can edit or drop again. They all live in a separate file that only Terminaal
-  loads – your own `.bashrc` and friends are never touched, so nothing has to be
-  undone:
-  `~/.config/fish/terminaal.fish`, `~/.bash_terminaal`, `$ZDOTDIR/.zsh_terminaal`
-- **Built-in commands**: buttons for the everyday chores – update the system,
-  and separately Flatpaks and AUR packages (paru/yay) where installed, list what has updates, free space, folder sizes, memory, top processes,
-  uptime, failed services, log errors, open ports, addresses. The
-  lines are tailored to the system the active tab is on (pacman, apt, dnf,
-  zypper, apk, xbps, emerge, nixos-rebuild, brew, pkg), detected from
-  `/etc/os-release` locally and asked of the host over SSH – overridable in
-  the settings and per host. Confirmation prompts are left alone unless you
-  turn that off (`commands_assume_yes`), and the first click explains that
-  commands go straight to the shell
-- **Your own commands** (snippets) as buttons next to the built-in ones: a
-  name and a command of one or more lines, optionally only for one system or
-  one host. Add, edit and delete them under **Manage**. A snippet can also run
-  by itself as a **startup command**: with every new shell, or after an SSH
-  login
+- **Tabs and split panes** – local shells and SSH sessions side by side; drag
+  tabs to reorder them, split a tab right or down, resize panes by dragging the
+  line between them, maximize one pane. → [Split panes](docs/guides/split-panes.md)
+- **Search the scrollback** – matches light up as you type. →
+  [Search and links](docs/guides/search-and-links.md)
+- **Clickable links** – hold <kbd>Ctrl</kbd> to underline URLs, hyperlinks
+  (OSC 8) and existing files; <kbd>Ctrl</kbd>+click opens them
+- **Broadcast** – what you type into one terminal of the group goes to all of
+  them: one command on ten servers at once. →
+  [Tutorial](docs/tutorials/04-one-command-many-servers.md)
+- **Command palette** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) – switch
+  tabs, connect to hosts, run snippets, trigger actions or pick a theme by typing
+  a few letters. → [Command palette](docs/guides/command-palette.md)
+- **Activity in background tabs** – a dot for new output or the bell, and
+  "watch for silence" with a desktop notification
+- **A look before risky pastes** – several lines that would run at once, `sudo`,
+  `curl … | sh`, `rm -rf`, or anything going to several terminals is shown first
+- **Restores the last session** – tabs, splits, working directories, SSH
+  connections, files and settings tabs. → [Sessions](docs/guides/sessions.md)
+- **Drop-down window** (`terminaal --quake`) – drops down from the top of the
+  screen and hides again, a real layer surface on COSMIC, KDE, Sway and
+  Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
+- Bracketed paste, mouse selection that scrolls along, the mouse wheel in
+  full-screen programs (`less`, `htop`, `vim`), a right-click menu, and a
+  settings tab for every option
+
+### Shell integration
+
+Set up by Terminaal itself for **fish, bash and zsh**; any shell that sends
+OSC 7 and OSC 133 works too, also over SSH. →
+[Shell integration](docs/guides/shell-integration.md)
+
+- Tab titles show the working directory (or the running program), and a new tab
+  opens in the same folder
+- <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> jump from prompt to prompt
+- A failed command gets its exit code (`✘ 1`) next to the prompt, a slow one its
+  run time (`4.2 s`)
+- Copy the last command's output, or click a prompt to select a command with its output
+- A desktop notification when a long command finishes in a tab you're not looking at
 
 ### SSH
-- Saved hosts plus the hosts from your **`~/.ssh/config`**, read-only or
-  copied over to edit. Supports `Include`, `Match`, `%` tokens and more
-- **Several logins per host** (user + key), with one as the default
+
+→ [SSH hosts](docs/guides/ssh-hosts.md) ·
+[Tutorial: your first SSH host](docs/tutorials/01-your-first-ssh-host.md)
+
+- **Saved hosts plus your `~/.ssh/config`** (`Include`, `Match`, `%` tokens …),
+  read-only or copied over to edit
+- **Several logins per host** (user + key), one of them the default
 - **ProxyJump** chains and **ProxyCommand**
-- **Reconnects on its own** when a connection drops – after 2, 4, 8 … seconds, as
-  long as logging in needs no answer – keeping the scrollback. <kbd>Enter</kbd>
-  tries right away, <kbd>Ctrl</kbd>+<kbd>D</kbd> closes the tab
-- **Port forwarding**: `LocalForward`, `RemoteForward` and `DynamicForward`
-  (a SOCKS 4/4a/5 proxy; a `RemoteForward` with only a port runs one on the
-  server). Unix socket paths work on either side, except for the server
-  listening on one
-- Per-host options, grouped in the form with their `ssh_config` keyword:
-  timeouts, keepalives, compression, address family, authentication order,
-  agent forwarding (`ForwardAgent`), `StrictHostKeyChecking`, `RemoteCommand`, `SetEnv`/`SendEnv`, and the
-  algorithm lists (kex, host key, ciphers, MACs)
-- **A color per host**: a warning color marks the host's tabs and frames its
-  terminals, and a theme of its own gives them different console colors – so a
-  production server never looks like a test box
-- The sidebar shows the active tab's **port forwards** – running, paused or
-  failed and why – and pauses, starts or retries each while connected
-- Host keys are checked against `~/.ssh/known_hosts`, and new entries are appended.
-  If a host's key changed, the tab shows the stored fingerprint next to the new
-  one. The **Host key** button on a host in the sidebar shows what's stored and
-  removes it after asking – only those lines, the rest of the file stays as it is
-- Host-key prompts, passphrases and passwords are asked **inside the tab**,
-  like OpenSSH does. Nothing secret is ever stored
+- **Reconnects on its own** when a connection drops, keeping the scrollback
+- **Port forwarding** – local, remote and SOCKS (`DynamicForward`), Unix
+  sockets too; pause, start and retry each one live from the sidebar. →
+  [Tutorial](docs/tutorials/03-port-forwarding.md)
+- **Per-host options** with their `ssh_config` keyword: timeouts, keepalives,
+  compression, agent forwarding, `StrictHostKeyChecking`, `RemoteCommand`,
+  `SetEnv`, algorithms and more
+- **A color per host** – a warning color on its tabs and frames, or a theme of
+  its own, so production never looks like a test box
+- **Host keys** checked against `~/.ssh/known_hosts`; a changed key shows both
+  fingerprints, and old entries can be removed from the sidebar. →
+  [Host keys](docs/guides/host-keys.md)
+- Prompts for host keys, passphrases and passwords appear **inside the tab**,
+  like OpenSSH – nothing secret is stored
+
+### Files on the server (SFTP)
+
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> in an SSH terminal opens its
+files tab, over the terminal's own connection. →
+[Files on a server](docs/guides/files-and-sftp.md)
+
+- **Browse, upload, download and delete** – several entries at once with
+  <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+click, or by dropping files onto the window.
+  Copies never overwrite; local deletions go to the trash
+- **Keep folders in sync** – per host, two-way or one-way, when the files tab
+  opens or **live in the background** while a terminal is logged in. Conflicts
+  keep both versions; deletions only travel where you allow it. →
+  [Syncing folders](docs/guides/files-and-sftp.md#syncing-folders)
+- **Edit a server file in your local editor** – every save goes back, after
+  checking (by SHA-256 on the server) that nobody changed it meanwhile
+- **Files only root may change** go through sudo in the terminal, where it asks
+  for the password as usual
+- Transfers and saves wait out a dropped connection and carry on once it's back
+
+### Shells and commands
+
+→ [Commands and snippets](docs/guides/commands-and-snippets.md)
+
+- Any shell from `/etc/shells` for a new tab, and a default one
+- **Aliases, functions and lines of your own** for fish, bash and zsh, managed
+  in the sidebar. They live in a separate file only Terminaal loads – your
+  `.bashrc` and friends are never touched
+- **Built-in commands** as buttons: update the system (plus Flatpak and AUR
+  separately), pending updates, disk space, memory, top processes, failed
+  services, log errors, open ports – tailored to the system of the active tab
+  (pacman, apt, dnf, zypper, apk, xbps, emerge, nixos-rebuild, brew, pkg),
+  locally and over SSH
+- **Snippets** – your own commands as buttons, optionally only for one system or
+  host, or run by themselves with every new shell or after an SSH login
 
 ### Keys
-- Generate **Ed25519** keys (optionally with a passphrase) in OpenSSH
-  format, add existing key files, or take over keys from your **SSH agent**
-  (e.g. 1Password)
-- Copy the public key with one click, and rename keys; hosts that use a key follow the rename
-- Only keys generated in Terminaal can have their files deleted, and only
-  after asking
 
-### Languages
-- English and German, via [Project Fluent](https://projectfluent.org/).
-  The default follows your system locale (German for a German locale, English
-  otherwise). Switch it any time in the settings tab
+→ [Tutorial: keys and the agent](docs/tutorials/02-keys-and-the-agent.md)
 
-## Documentation
+- Generate **Ed25519** keys (optionally with a passphrase), add existing key
+  files, or take over keys from your **SSH agent** (e.g. 1Password)
+- Copy the public key with one click; renaming a key updates the hosts that use it
+- Only keys generated in Terminaal can have their files deleted, and only after asking
 
-The [`docs/`](docs/README.md) folder has more: a
-[getting started](docs/getting-started.md) guide, tutorials (your first SSH host,
-keys and agents, port forwarding, one command on many servers, your own theme),
-guides for configuration, shortcuts, SSH hosts and host keys, shell integration,
-commands and snippets, search and links, split panes, restoring the session, the
-drop-down window, files over SFTP and appearance, background on the architecture,
-the security model and prompt marks, plus
-[tips](docs/tips.md) and [troubleshooting](docs/troubleshooting.md).
+### Look and feel
+
+→ [Appearance](docs/guides/appearance.md) ·
+[Tutorial: your own theme](docs/tutorials/05-make-your-own-theme.md)
+
+- **Themes** for console and interface alike: seven built in, and your own in
+  Alacritty's format (its themes work as they are)
+- A **COSMIC theme** that follows the desktop's colors, light/dark and accent live
+- A **see-through window**, frosted on COSMIC (and other compositors with
+  `ext-background-effect`) and KDE
+- Your choice of **console font** and **menu font**
+- **Every keyboard shortcut configurable**, several per action if you like
+- **English and German**, following your locale or set in the settings
 
 ## Installation
 
 Terminaal is built from source.
 
 **Requirements**
+
 - Rust **1.88** or newer ([rustup](https://rustup.rs/))
-- A C compiler, `pkg-config`, and the OpenSSL and zlib development headers
-  (for libssh2). On Debian/Ubuntu: `sudo apt install build-essential pkg-config libssl-dev zlib1g-dev`
+- A C compiler, `pkg-config`, and the OpenSSL and zlib development headers (for libssh2).
+  On Debian/Ubuntu: `sudo apt install build-essential pkg-config libssl-dev zlib1g-dev`
 - A GPU driver with Vulkan or OpenGL support
-- [ImageMagick](https://imagemagick.org/) (`magick`), only for `install.sh`,
-  which scales the icons
+- [ImageMagick](https://imagemagick.org/) (`magick`), only for `install.sh`, which scales the icons
 
 **Install for the current user**
 
@@ -209,7 +208,7 @@ cd terminaal
 ```
 
 This installs a release build to `~/.cargo/bin/terminaal`, plus a desktop entry,
-icons and the manual page (`man terminaal`) under `~/.local/share`, so Terminaal
+icons and the man page (`man terminaal`) under `~/.local/share`, so Terminaal
 appears in your app launcher.
 
 | Command | What it does |
@@ -218,7 +217,8 @@ appears in your app launcher.
 | `./install.sh --no-binary` | Desktop entry, icons and man page only |
 | `./install.sh --uninstall` | Removes all of the above |
 
-Run `./install.sh` again after updating the source; the launcher always starts the installed binary.
+Run `./install.sh` again after updating the source – the launcher always starts
+the installed binary.
 
 **Just try it**
 
@@ -226,9 +226,30 @@ Run `./install.sh` again after updating the source; the launcher always starts t
 cargo run --release
 ```
 
-## Usage
+New here? [Getting started](docs/getting-started.md) walks through the window
+and the first steps.
+
+## Getting around
 
 ### Keyboard shortcuts
+
+The ones you'll use most:
+
+| Shortcut | Action |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | New tab |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close the pane (the tab, when it's the only one) |
+| <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> | Split right / down |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> | Command palette |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Files of the SSH connection |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> | Show or hide the sidebar |
+| <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
+
+<details>
+<summary><b>All default shortcuts</b></summary>
 
 | Shortcut | Action |
 | --- | --- |
@@ -254,22 +275,22 @@ cargo run --release
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Previous / next prompt |
 | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
 
-Every shortcut can be changed, removed or given more key combinations in the
-settings tab under **Shortcuts** (click **+** and press the keys), or in
-`config.toml` (see below). "Paste and run" has no default. In full-screen
-programs such as `less` or `vim`, the scrolling keys go to the program.
+"Paste and run" and "Watch for silence" have no default. In full-screen programs
+such as `less` or `vim`, the scrolling keys go to the program.
 
-In the search bar, type to search upwards from the bottom of the screen (case
-matters only once you type a capital letter). <kbd>Enter</kbd> jumps to the next
-match up, <kbd>Shift</kbd>+<kbd>Enter</kbd> down; after that <kbd>n</kbd> and
-<kbd>N</kbd> do the same, and <kbd>/</kbd> or <kbd>Backspace</kbd> edit the query
-again. <kbd>Esc</kbd> closes the bar, as does any other key, which then goes to
-the shell.
+</details>
 
-Hold <kbd>Ctrl</kbd> and click a link or file name to open it (not a
-configurable shortcut). Tabs can also be closed with a middle click; the ☰
-button in the tab bar toggles the sidebar as well. Clicking into a pane gives
-it the keyboard; the mouse wheel scrolls the pane under the mouse.
+Every shortcut can be changed, removed or given more key combinations – in the
+settings tab under **Shortcuts** (click **+** and press the keys) or in
+`config.toml`. → [Keyboard shortcuts](docs/guides/keyboard-shortcuts.md)
+
+### Mouse
+
+- <kbd>Ctrl</kbd>+click a link or file name to open it
+- Middle-click a tab to close it; the ☰ button in the tab bar toggles the sidebar
+- Clicking into a pane gives it the keyboard; the wheel scrolls the pane under the mouse
+  (<kbd>Shift</kbd>+wheel scrolls Terminaal's scrollback even in full-screen programs)
+- Right-click in a terminal for copy, paste, broadcast, splitting and the files tab
 
 ### Command line
 
@@ -286,19 +307,29 @@ terminaal --quake                      # show or hide the drop-down window (bind
 terminaal --help                       # all of it, and `man terminaal` for more
 ```
 
-`-c` takes one line that the shell evaluates, so pipes, redirections and
-several commands separated by `;` work. That shell is not interactive: as with
-`sh -c` anywhere else, bash and zsh read no startup file and none of the
-aliases Terminaal manages. Without `--hold` the tab closes when the line ends.
-
-With `--connect`, `-s` or `-c`, the saved session is neither restored nor
-written — the tab is what the command line asked for, and what was open last
-time stays on disk.
+With `--connect`, `-s` or `-c` the saved session is neither restored nor
+written. → [The command line](docs/guides/command-line.md)
 
 ## Configuration
 
-Everything is optional. Terminaal reads `~/.config/terminaal/config.toml`.
-A missing or broken file just means defaults, never a failed start.
+Everything is optional and can be set in the settings tab (**⚙** in the sidebar,
+or <kbd>Ctrl</kbd>+<kbd>,</kbd>). Behind it, everything lives in
+`~/.config/terminaal/` – plain TOML you may edit by hand. None of it holds
+anything secret.
+
+| File | Contents |
+| --- | --- |
+| `config.toml` | Your settings. Terminaal changes just the line you changed in the settings and keeps your comments |
+| `hosts.toml` | Saved SSH hosts, logins, options and synced folders |
+| `keys.toml` | Named keys: file paths, or the public half of agent keys |
+| `snippets.toml` | Your own commands |
+| `themes/*.toml` | Your own color themes, in [Alacritty's format](https://alacritty.org/config-alacritty.html#colors) |
+| `shell-integration/` | Startup files Terminaal generates for bash, zsh and fish |
+
+A missing or broken `config.toml` just means defaults, never a failed start.
+
+<details>
+<summary><b>Example <code>config.toml</code> with every option</b></summary>
 
 ```toml
 font_size = 15.0              # logical pixels
@@ -323,7 +354,7 @@ quake_height = 50.0           # drop-down window height, percent of the screen
 quake_hide_on_unfocus = true  # hide it when another window gets the keyboard
 # shell = "/usr/bin/fish"     # default shell for new tabs (default: $SHELL)
 # language = "en"             # "en" or "de" (default: from your locale)
-# theme = "Dracula"           # color theme, see below (default: "Terminaal")
+# theme = "Dracula"           # color theme (default: "Terminaal")
 # font_family = "Hack"        # console font (default: Noto Sans Mono)
 # ui_font_family = "Inter"    # font of menus and panels (default: built in)
 opacity = 1.0                 # below 1 the window is see-through (0.2–1.0)
@@ -342,136 +373,70 @@ paste_and_run = "Ctrl+Shift+Alt+V"
 tab_9 = []                    # no shortcut
 ```
 
-Shortcut names are the ones listed in the settings tab's tooltips (`new_tab`,
-`close_tab`, `next_tab`, `previous_tab`, `tab_1` … `tab_9`, `move_tab_left`,
-`move_tab_right`, `split_right`, `split_down`, `close_pane`,
-`focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down`,
-`zoom_pane`, `toggle_broadcast`, `watch_silence`, `open_files`, `toggle_sidebar`, `open_settings`,
-`command_palette`,
-`copy`, `copy_last_output`, `paste`, `paste_and_run`, `scroll_page_up`, `scroll_page_down`,
-`scroll_to_top`, `scroll_to_bottom`, `search`, `previous_prompt`,
-`next_prompt`, `font_bigger`, `font_smaller`, `font_reset`). Key
-combinations are modifiers (`Ctrl`, `Shift`, `Alt`, `Super`) plus one key,
-joined by `+`; write `Plus` and `Minus` for those keys.
+</details>
 
-### Themes
+→ The [configuration reference](docs/guides/configuration.md) documents every
+key of every file, including `hosts.toml` and `snippets.toml`.
 
-A theme colors the console as well as the sidebar, tab bar and settings.
-Built in are Terminaal, Catppuccin Mocha, Dracula, Gruvbox Dark, Nord,
-Solarized Dark and Solarized Light. On COSMIC there's also **COSMIC**, made
-from the desktop's own theme and following it live. Your own go into
-`~/.config/terminaal/themes/` as `.toml` files, named after the file. The
-format is [Alacritty's](https://alacritty.org/config-alacritty.html#colors),
-so its themes (e.g. from [alacritty-theme](https://github.com/alacritty/alacritty-theme))
-work as they are:
+## Documentation
 
-```toml
-[colors.primary]
-background = "#1e1e2e"
-foreground = "#cdd6f4"
+The [`docs/`](docs/README.md) folder goes into detail:
 
-[colors.normal]   # black red green yellow blue magenta cyan white, all eight
-black = "#45475a"
-# ...
-
-# Optional: [colors.bright], [colors.dim], [colors.cursor] cursor,
-# [colors.selection] background/text,
-# [colors.search.matches] and [colors.search.focused_match] background/foreground.
-
-[ui]              # optional, all keys too; the rest follows from the colors above
-accent = "#cba6f7"
-# background, row, hover, selected, border, border_strong, text, text_weak,
-# error, success, input, text_selection
-```
-
-After editing a theme file, click **Reload** next to the theme in the settings.
-
-Every option can also be set in the settings tab (**⚙** in the sidebar, or
-<kbd>Ctrl</kbd>+<kbd>,</kbd>; hover a setting's name to see its key). Font,
-padding, tab bar, cursor, scrolling and notifications apply right away, the sidebar width once
-you let go of its slider; window size, sidebar and animation at the next start. When you
-change something there, Terminaal edits just that line and keeps your comments and
-formatting.
-
-Next to it, Terminaal keeps its own files. None of them holds anything secret:
-
-| File | Contents |
+| | |
 | --- | --- |
-| `hosts.toml` | Saved SSH hosts, logins, options and synced folders |
-| `keys.toml` | Named keys: file paths, or the public half of agent keys |
-| `snippets.toml` | Your own commands |
-| `shell-integration/` | Startup files Terminaal generates for bash, zsh and fish: they load your own config, then the managed aliases and the shell integration |
-| `themes/*.toml` | Your own color themes (you write these; Terminaal only reads them) |
-
-### Snippets
-
-Snippets are managed in the sidebar, but `snippets.toml` is plain TOML too:
-
-```toml
-[[snippet]]
-name = "Follow logs"
-command = "journalctl -f"
-category = "Server"  # optional: groups the buttons under a heading you can fold
-system = "arch"     # optional: only on this system (arch, debian, fedora, suse,
-                    # alpine, void, gentoo, nixos, macos, freebsd)
-
-[[snippet]]
-name = "Deploy"
-command = """
-cd /srv/app
-./deploy.sh"""
-host = "web1"       # optional: only in SSH tabs of this host (its name in the sidebar)
-# local = true      # optional instead of host: only in local terminals
-autorun = "login"   # optional: run by itself, "shell" (every new terminal)
-                    # or "login" (SSH terminals, after login)
-hidden = true       # optional: no button, only listed under Manage
-```
-
-## Translations
-
-The texts live in [`locales/`](locales/), one [Fluent](https://projectfluent.org/fluent/guide/)
-file per language, and are compiled into the binary. To improve a
-translation, edit the `.ftl` file. `cargo test` checks that every
-language has the same messages with the same arguments.
-
-To add a language, copy `locales/en.ftl`, translate it, and register it
-in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
+| **Start here** | [Getting started](docs/getting-started.md) · [Tips and tricks](docs/tips.md) · [Troubleshooting](docs/troubleshooting.md) |
+| **Tutorials** | [Your first SSH host](docs/tutorials/01-your-first-ssh-host.md) · [Keys and the agent](docs/tutorials/02-keys-and-the-agent.md) · [Port forwarding](docs/tutorials/03-port-forwarding.md) · [One command on many servers](docs/tutorials/04-one-command-many-servers.md) · [Your own theme](docs/tutorials/05-make-your-own-theme.md) |
+| **Guides** | [Configuration](docs/guides/configuration.md) · [Shortcuts](docs/guides/keyboard-shortcuts.md) · [Command line](docs/guides/command-line.md) · [SSH hosts](docs/guides/ssh-hosts.md) · [Host keys](docs/guides/host-keys.md) · [Files and SFTP](docs/guides/files-and-sftp.md) · [Shell integration](docs/guides/shell-integration.md) · [Commands and snippets](docs/guides/commands-and-snippets.md) · [Command palette](docs/guides/command-palette.md) · [Search and links](docs/guides/search-and-links.md) · [Split panes](docs/guides/split-panes.md) · [Sessions](docs/guides/sessions.md) · [Drop-down window](docs/guides/drop-down-window.md) · [Appearance](docs/guides/appearance.md) |
+| **Background** | [Architecture](docs/explanations/architecture.md) · [Security and your files](docs/explanations/security-and-your-files.md) · [How prompt marks work](docs/explanations/prompt-marks.md) |
 
 ## Known limitations
 
+**Platform**
 - Linux only for now
-- SSH is based on libssh2, which can't have the server listen on a Unix
-  socket. `ControlMaster` isn't supported either
-- Only Ed25519 keys can be generated. Existing RSA/ECDSA keys work
-- `Match exec` in `~/.ssh/config` is never evaluated, on purpose
 - A see-through window needs Wayland; on X11 it stays opaque
-- The built-in commands ask an SSH host what it is right after login, which
-  can hold the tab for up to two seconds on a slow link; set the host's
-  system under "Advanced" to skip that
-- Desktop notifications need `notify-send`, opening links needs `xdg-open`
-- A command's exit code shows once the next prompt appears. Over SSH, prompt
-  marks and the working directory only work if the remote shell sends them
+- The drop-down window needs a Wayland desktop with the layer shell (not GNOME);
+  on X11 it's an always-on-top window. It takes no dropped files and no input
+  method (dead keys work)
+- Desktop notifications need `notify-send`, opening links `xdg-open`, the local
+  trash `gio`
+
+**SSH**
+- Based on libssh2: the server can't listen on a Unix socket, and there's no
+  `ControlMaster`
+- Only Ed25519 keys can be generated; existing RSA/ECDSA keys work
+- `Match exec` in `~/.ssh/config` is never evaluated, on purpose
+- Reconnecting on its own needs a login without prompts (agent, key without
+  passphrase); otherwise press <kbd>Enter</kbd> and answer them. A dropped
+  connection is noticed through keepalives – with the defaults after about a
+  minute and a half
 - A paused remote port forward keeps listening on the server and turns
   connections away; libssh2 can't cancel it cleanly mid-session
+- The built-in commands ask an SSH host what it is right after login, which can
+  hold the tab for up to two seconds on a slow link; set the host's system under
+  **Advanced** to skip that
+
+**Files**
+- Deleting on the server is final. Transfers resume after a dropped connection
+  only while Terminaal stays open
+- Folder sync compares by size and modification time; live pairs watch only the
+  local folder, so server changes arrive with the next sync
+- Editing through sudo pastes a command into the terminal, so that terminal
+  should be at a shell prompt
+
+**Terminal**
+- A command's exit code shows once the next prompt appears. Over SSH, prompt
+  marks and the working directory only work if the remote shell sends them
 - With broadcast on, the built-in command buttons send the line for the focused
   terminal's system to every terminal in the group
 - Split panes are resized with the mouse only
-- The drop-down window needs a Wayland desktop with the layer shell (not
-  GNOME); on X11 it's an always-on-top window. It takes no dropped files and
-  no input method (dead keys work)
 - A restored session starts every terminal fresh: no scrollback, and SSH
-  terminals log in again. Closing the last tab (or `exit` in the last shell)
-  leaves nothing to restore – close the window to keep your tabs
-- SFTP never overwrites on copying (taken names get a number); deleting on the
-  server is final, local deletions go to the trash. Folder sync compares by size and modification time,
-  live pairs watch only the local folder (server changes come with the next sync). Transfers resume after a dropped connection only while
-  Terminaal stays open. Editing through sudo pastes a command into the terminal,
-  so that terminal should be at a shell prompt
-- Reconnecting on its own needs a login without prompts (agent, key without
-  passphrase); otherwise press Enter and answer them. A dropped connection is
-  noticed through keepalives – with the defaults after about a minute and a half
+  terminals log in again. Closing the last tab leaves nothing to restore – close
+  the window to keep your tabs
 
 ## Roadmap
+
+<details>
+<summary><b>Done</b></summary>
 
 - [x] Local terminal core, tabs and sessions
 - [x] Shell management with per-shell aliases, functions and lines of your own
@@ -482,41 +447,38 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [x] Built-in commands per system, local and over SSH
 - [x] Terminal correctness and search: bracketed paste, search in the
   scrollback, `known_hosts` entries shown and removable from the sidebar
-- [x] Shell integration: working directory (OSC 7) and prompt marks (OSC 133)
-  for new tabs in the same folder, jumping between prompts, exit codes and
-  notifications, plus clickable URLs and paths
-- [x] Own commands: named snippets bound to a system or host, input broadcast
-  to several tabs, and a live list of a session's port forwards
-- [x] Split panes: several terminals in one tab, resizable, with keyboard focus
-  moves and a maximized view
+- [x] Shell integration: working directory (OSC 7) and prompt marks (OSC 133),
+  plus clickable URLs and paths
+- [x] Own commands: snippets bound to a system or host, input broadcast, a live
+  list of a session's port forwards
+- [x] Split panes
 - [x] SFTP: browse, transfer, edit server files locally with conflict check,
   through sudo where needed
-- [x] Restoring the last session: tabs, splits, directories, SSH connections
-- [x] Drop-down (Quake) window: a layer surface toggled by `terminaal --quake`
+- [x] Restoring the last session
+- [x] Drop-down (Quake) window
 - [x] Startup commands: snippets that run with every new shell, or after an SSH login
-- [x] Separate update buttons for Flatpak and for AUR helpers (yay/paru)
-- [x] A color per host: a warning color on tab and frame, or a theme of its own
-- [x] Command palette: fuzzy search over actions, hosts and logins, snippets, tabs, themes and shells
-- [x] Command output through the prompt marks: copy the last output, click a prompt to select its command, run times
-- [x] A warning before pasting several lines or risky commands, especially with broadcast on
-- [x] Activity in background tabs: new output, the bell, watching for silence
+- [x] Separate update buttons for Flatpak and AUR helpers (yay/paru)
+- [x] A color per host
+- [x] Command palette
+- [x] Command output through the prompt marks: copy the last output, select a command, run times
+- [x] A warning before risky pastes
+- [x] Activity in background tabs
+- [x] `terminaal -c`, `-s` and `--hold`, and a `terminaal(1)` man page
+- [x] Folder sync over SFTP – two-way or one-way, on opening or live in the background
+- [x] Selecting several files at once in the files tab
 
-### Planned
+</details>
 
 **Everyday comfort**
 - [ ] Reopen a closed tab
 - [ ] Resize and swap panes with the keyboard
 - [ ] Search: number of matches, optional regex
-- [x] `terminaal -c "<command>"`: run a command in the first tab instead of just a
-      shell, `terminaal -s` to list the installed shells and `-s <shell> -c "…"` to
-      pick the one it runs in, `--hold` to keep the tab once it ends
-- [x] A `terminaal(1)` man page, installed by `install.sh`
 
 **Terminal protocols**
 - [ ] OSC 52: programs (also over SSH) may set the clipboard, after asking
 - [ ] Kitty keyboard protocol
 - [ ] Synchronized output (mode 2026)
-- [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter to copy or open them
+- [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter
 - [ ] Vi mode for selecting and copying in the scrollback
 - [ ] Images in the terminal (Kitty graphics protocol or Sixel)
 
@@ -526,33 +488,44 @@ in `Language` in [`src/i18n.rs`](src/i18n.rs), which takes a few lines.
 - [ ] Add a port forward on the fly from a connected tab
 - [ ] Connection quality in the tab (latency, reconnecting)
 - [ ] Import hosts from Termius, PuTTY and Remmina
-- [ ] More session types: serial console (`/dev/ttyUSB*`), containers (`docker`/`podman exec`, distrobox/toolbox, `kubectl exec`)
+- [ ] More session types: serial console, containers (`docker`/`podman exec`, distrobox/toolbox, `kubectl exec`)
 
 **Files (SFTP)**
 - [ ] Drag and drop between the local and the server side
 - [ ] Sort by name, type, size and date
-- [ ] Filters that combine: hidden files, folders or files only, name pattern, size (below, above or between), modification date range, file type
-- [ ] Change permissions in a small dialog: tick read/write/execute for owner, group and others (plus setuid/setgid/sticky), with the octal mode shown alongside and editable; recursively for folders; owner and group too
+- [ ] Filters: hidden files, folders or files only, name pattern, size, date range, file type
+- [ ] Change permissions in a small dialog, with the octal mode alongside; recursively for folders
 - [ ] Preview text and images
-- [ ] Sync a folder one way, with a preview of what would be copied
+- [ ] A preview of what a folder sync would copy
 
 **Bigger pieces**
-- [ ] Workspaces: named layouts with splits, folders, hosts and startup commands, opened with one click
-- [ ] Recording a tab's output as an asciinema cast or a log file, optionally per host
-- [ ] tmux control mode (`tmux -CC`): a server's tmux windows and panes as real tabs and splits
+- [ ] Workspaces: named layouts with splits, folders, hosts and startup commands
+- [ ] Recording a tab's output as an asciinema cast or a log file
+- [ ] tmux control mode (`tmux -CC`): a server's tmux windows as real tabs and splits
 - [ ] Detach a tab into a window of its own
 - [ ] Profiles: font, theme and environment per shell or host
 
-## Development
+## Contributing
+
+### Development
 
 ```sh
-cargo run                        # dev build
-cargo run -- --connect myserver  # pass arguments after --
+cargo run                            # dev build
+cargo run -- --connect myserver      # pass arguments after --
 cargo test
-cargo clippy --all-targets       # should stay warning-free
+cargo clippy --all-targets           # should stay warning-free
 RUST_LOG=terminaal=debug cargo run   # per-frame timing
 RUST_LOG=terminaal=trace cargo run   # plus the SSH worker's timeline
 ```
 
-Code comments are in English. User-facing text goes in `locales/*.ftl`,
-never inline in the code.
+Code comments are in English. User-facing text goes in `locales/*.ftl`, never
+inline in the code. The [architecture overview](docs/explanations/architecture.md)
+explains how the pieces fit together.
+
+### Translations
+
+The texts live in [`locales/`](locales/), one [Fluent](https://projectfluent.org/fluent/guide/)
+file per language, compiled into the binary. To improve a translation, edit the
+`.ftl` file; `cargo test` checks that every language has the same messages with
+the same arguments. To add a language, copy `locales/en.ftl`, translate it, and
+register it in `Language` in [`src/i18n.rs`](src/i18n.rs) – a few lines.
