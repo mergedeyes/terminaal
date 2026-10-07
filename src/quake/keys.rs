@@ -6,7 +6,7 @@ use std::os::fd::OwnedFd;
 use std::time::Duration;
 
 use winit::event::ElementState;
-use winit::keyboard::{Key, ModifiersState, NamedKey, NativeKey, SmolStr};
+use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey, NativeKey, SmolStr};
 use xkbcommon::xkb::{self, compose, keysyms};
 
 use crate::input::KeyInput;
@@ -98,7 +98,15 @@ impl Keyboard {
                 compose::Status::Nothing => {}
             }
         }
-        Some(KeyInput { state, key_without_modifiers: key_of(plain, None), logical_key, text: text.map(SmolStr::from) })
+        Some(KeyInput {
+            state,
+            key_without_modifiers: key_of(plain, None),
+            logical_key,
+            text: text.map(SmolStr::from),
+            location: location_of(sym),
+            // Set by the layer for the repeats it makes up.
+            repeat: false,
+        })
     }
 
     /// Whether holding key `code` repeats it.
@@ -132,6 +140,17 @@ pub fn key_of(sym: xkb::Keysym, text: Option<&str>) -> Key {
             Some(text) => Key::Character(SmolStr::new(text)),
             None => Key::Unidentified(NativeKey::Xkb(raw)),
         },
+    }
+}
+
+/// Where a keysym's key sits: on the keypad, or left or right of a pair.
+fn location_of(sym: xkb::Keysym) -> KeyLocation {
+    use keysyms as k;
+    match sym.raw() {
+        k::KEY_KP_Space..=k::KEY_KP_Equal => KeyLocation::Numpad,
+        k::KEY_Shift_L | k::KEY_Control_L | k::KEY_Meta_L | k::KEY_Alt_L | k::KEY_Super_L | k::KEY_Hyper_L => KeyLocation::Left,
+        k::KEY_Shift_R | k::KEY_Control_R | k::KEY_Meta_R | k::KEY_Alt_R | k::KEY_Super_R | k::KEY_Hyper_R => KeyLocation::Right,
+        _ => KeyLocation::Standard,
     }
 }
 
@@ -213,6 +232,10 @@ mod tests {
         assert_eq!(key_of(sym(keysyms::KEY_plus), Some("+")), Key::Character("+".into()));
         assert_eq!(key_of(sym(keysyms::KEY_dead_circumflex), None), Key::Dead(None));
         assert_eq!(key_of(sym(keysyms::KEY_F12), None), Key::Named(NamedKey::F12));
+        assert_eq!(location_of(sym(keysyms::KEY_KP_1)), KeyLocation::Numpad);
+        assert_eq!(location_of(sym(keysyms::KEY_KP_Enter)), KeyLocation::Numpad);
+        assert_eq!(location_of(sym(keysyms::KEY_Control_R)), KeyLocation::Right);
+        assert_eq!(location_of(sym(keysyms::KEY_a)), KeyLocation::Standard);
     }
 
     /// Against a real keymap: German layout, Shift, Ctrl and a dead key.

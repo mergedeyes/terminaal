@@ -84,6 +84,13 @@ menu-files = Files (SFTP)
 vi-prompt = Vi mode
 vi-line = Line { $line } of { $total }
 vi-keys = v selects, y copies, / searches, Esc ends
+hints-prompt = Hints:
+hints-none = Nothing to pick on screen
+hints-count = { $count ->
+    [one] 1 match
+   *[other] { $count } matches
+}
+hints-keys = letters copy, Shift opens, Alt inserts, Esc ends
 search-prompt = Search:
 search-prompt-regex = Search (regex):
 search-no-match = No matches
@@ -207,6 +214,9 @@ paste-warn-more-lines = { $lines ->
 settings-paste = Pasting
 settings-paste-warning = Ask before risky pastes
 settings-paste-warning-hint = Several lines that would run right away, sudo, a download piped into a shell, rm -rf and the like – and several lines going to more than one terminal by broadcast.
+settings-keyboard = Keyboard
+settings-kitty-keyboard = Kitty keyboard protocol for programs that ask for it
+settings-kitty-keyboard-hint = fish 4, Neovim, Helix and others tell keys apart with it that otherwise arrive the same – Ctrl+I and Tab, Esc and Alt+[, Ctrl+Shift+A and Ctrl+A – and can see keys being let go. Turn it off if a program gets keys wrong – that takes effect at once; switched on, programs use it from their next start.
 settings-clipboard = Clipboard for programs (OSC 52)
 settings-clipboard-write = Programs may write to the clipboard
 settings-clipboard-write-hint = How vim, Neovim or tmux – on a server over SSH too – copy into this computer's clipboard.
@@ -330,6 +340,7 @@ palette-theme-current = current
 palette-new-tab = New tab: { $shell }
 shortcut-copy = Copy
 shortcut-copy-last-output = Copy the last command's output
+shortcut-hints = Hints: pick links, paths, IPs and hashes by letters
 shortcut-paste = Paste
 shortcut-paste-and-run = Paste and run
 shortcut-scroll-page-up = One page up

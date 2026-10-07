@@ -1,5 +1,6 @@
 pub mod listener;
 pub mod filtered_pty;
+pub mod hints;
 pub mod integration;
 pub mod links;
 pub mod prompts;

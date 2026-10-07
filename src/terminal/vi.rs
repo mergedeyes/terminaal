@@ -197,7 +197,7 @@ mod tests {
     use alacritty_terminal::term::Config;
     use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
     use winit::event::ElementState;
-    use winit::keyboard::SmolStr;
+    use winit::keyboard::{KeyLocation, SmolStr};
 
     use super::*;
     use crate::terminal::GridSize;
@@ -209,6 +209,8 @@ mod tests {
             logical_key: Key::Character(SmolStr::new(typed)),
             key_without_modifiers: Key::Character(SmolStr::new(plain)),
             text: Some(SmolStr::new(typed)),
+            location: KeyLocation::Standard,
+            repeat: false,
         }
     }
 
@@ -218,6 +220,8 @@ mod tests {
             logical_key: Key::Named(named),
             key_without_modifiers: Key::Named(named),
             text: None,
+            location: KeyLocation::Standard,
+            repeat: false,
         }
     }
 
