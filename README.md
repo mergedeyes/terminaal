@@ -291,11 +291,13 @@ The ones you'll use most:
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | New tab with the default shell |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close the pane (the tab, when it's the only one) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd> | Close the tab with all its panes |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> | Reopen the tab closed last |
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
 | <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> | Go to tab 1 … 9 |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Move the tab left / right |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> | Split right / split down |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> | Go to the pane in that direction |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> | Move the divider of the pane that way |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Maximize the pane / show all panes again |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> | Terminal joins / leaves the broadcast |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Files of the SSH connection (SFTP) |
@@ -312,7 +314,7 @@ The ones you'll use most:
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Previous / next prompt |
 | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
 
-"Paste and run" and "Watch for silence" have no default. In full-screen programs
+"Paste and run", "Watch for silence" and swapping panes have no default. In full-screen programs
 such as `less` or `vim`, the scrolling keys go to the program.
 
 </details>
@@ -475,7 +477,6 @@ The [`docs/`](docs/README.md) folder goes into detail:
   marks and the working directory only work if the remote shell sends them
 - With broadcast on, the built-in command buttons send the line for the focused
   terminal's system to every terminal in the group
-- Split panes are resized with the mouse only
 - A restored session starts every terminal fresh: no scrollback, and SSH
   terminals log in again. Closing the last tab leaves nothing to restore – close
   the window to keep your tabs
@@ -521,16 +522,14 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Kitty keyboard protocol, and modifiers on every key the xterm way
 - [x] Vi mode for selecting and copying in the scrollback
 - [x] Images in the terminal (kitty graphics protocol)
+- [x] Reopen a closed tab
+- [x] Resize and swap panes with the keyboard
+- [x] Search: number of matches, optional regex
 
 </details>
 
 **Everyday comfort**
-- [ ] Reopen a closed tab
-- [ ] Resize and swap panes with the keyboard
-- [ ] Search: number of matches, optional regex
 - [ ] An integrated title bar: window buttons in the tab bar instead of the desktop's title bar
-- [ ] A scrollbar for the scrollback
-- [ ] Update check at start-up against the GitHub releases, updating on request
 
 **SSH**
 - [ ] Folders and tags for hosts, search in the sidebar

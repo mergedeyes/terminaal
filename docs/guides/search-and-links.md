@@ -39,6 +39,7 @@ bottom right corner (it moves to the top if it would cover the match).
 | <kbd>Enter</kbd> | next match upwards (older), and stop typing |
 | <kbd>Shift</kbd>+<kbd>Enter</kbd> | next match downwards (newer), and stop typing |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> | paste into the query |
+| <kbd>Alt</kbd>+<kbd>R</kbd> | read the query as a regular expression, or as plain text again |
 | <kbd>Esc</kbd> | close |
 
 **After Enter:**
@@ -48,12 +49,19 @@ bottom right corner (it moves to the top if it would cover the match).
 | <kbd>n</kbd> | next match up |
 | <kbd>N</kbd> | next match down |
 | <kbd>/</kbd> or <kbd>Backspace</kbd> | edit the query again (a click on the bar too) |
+| <kbd>Alt</kbd>+<kbd>R</kbd> | regular expression on / off |
 | <kbd>Esc</kbd> | close |
 | anything else | close the bar, and the key goes to the shell |
 
 Good to know:
 
-- The query is plain text, not a regex: `a.b` finds "a.b".
+- The query is plain text: `a.b` finds "a.b". <kbd>Alt</kbd>+<kbd>R</kbd> reads it
+  as a regular expression instead – the bar then says **Search (regex)**, and
+  **Not a valid pattern** while what you've typed isn't one yet.
+- The bar counts the matches: `3/12` is the third of twelve, counted from the
+  top of the scrollback. `1000+` means there are at least that many – it stops
+  counting at 1000, and while you type it only looks as far up as the search
+  does.
 - Case is ignored until you type a capital letter.
 - Matches across wrapped lines are found.
 - Searching wraps around the ends of the scrollback.

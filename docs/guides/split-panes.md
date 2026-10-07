@@ -38,6 +38,18 @@ scrolls whichever pane is under the mouse.
 Drag the thin line between two panes. The mouse pointer turns into a resize arrow
 over it. Each side keeps room for at least a few columns or rows.
 
+With the keyboard, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+arrow moves a
+line of the focused pane that way, two columns or one row at a time. At the edge
+of the window the line on the other side moves instead, so the key always moves
+a line in its own direction.
+
+## Swapping
+
+**Swap with the pane on the left / right / above / below** lets the focused pane
+trade places with its neighbour; the keyboard goes along. It has no default
+shortcut – give it one under **Settings → Shortcuts → Split panes**, or run it
+from the command palette.
+
 ## Maximizing
 
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> shows the focused pane over the
@@ -66,12 +78,13 @@ others. See [One command on many servers](../tutorials/04-one-command-many-serve
 
 All of these can be changed under **Settings → Shortcuts → Split panes** or in
 `config.toml`: `split_right`, `split_down`, `close_pane`, `focus_pane_left`,
-`focus_pane_right`, `focus_pane_up`, `focus_pane_down`, `zoom_pane`. See
+`focus_pane_right`, `focus_pane_up`, `focus_pane_down`, `resize_pane_left`,
+`resize_pane_right`, `resize_pane_up`, `resize_pane_down`, `swap_pane_left`,
+`swap_pane_right`, `swap_pane_up`, `swap_pane_down`, `zoom_pane`. See
 [Keyboard shortcuts](keyboard-shortcuts.md).
 
 ## Limits
 
-- Panes can only be resized with the mouse.
 - The layout is saved with the session and comes back at the next start, but
   every pane starts a fresh shell or connection. See
   [Restoring the last session](sessions.md).
