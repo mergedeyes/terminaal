@@ -94,6 +94,8 @@ there. Hover over a setting's name to see its key in the file.
 | Search the output | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |
 | Jump between prompts | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
 | Open a URL or file | Hold <kbd>Ctrl</kbd>, click it |
+| Copy a URL, path, IP or hash without the mouse | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, then the letters shown on it ([hints](guides/search-and-links.md#hints)) |
+| Select and copy with the keyboard | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>, move with vi's keys, `v` and `y` ([vi mode](guides/search-and-links.md#vi-mode)) |
 | Make text bigger | <kbd>Ctrl</kbd>+<kbd>+</kbd> (back with <kbd>Ctrl</kbd>+<kbd>0</kbd>) |
 
 ## Starting from the command line

@@ -26,10 +26,16 @@ unchanged, and only collects OSC sequences to look at them:
 
 - **OSC 7** → a "working directory" event; the sequence itself passes on.
 - **OSC 133 `C`** → "command started", **`D;code`** → "command finished".
+- Two jobs besides the shell's: kitty graphics commands (APC `ESC _ G …`) go
+  to the terminal's image store and leave an anchor cell behind (see
+  [Images](../guides/images.md) and [Architecture](architecture.md#images)),
+  and kitty keyboard mode pushes are counted, so a program pushing thousands of
+  them can't crash the parser.
 - Everything else is untouched.
 
-It keeps no more than an unfinished OSC sequence between reads, so a sequence
-split across two reads still works. Very long sequences (over 4096 bytes, such as
+It keeps no more than an unfinished sequence between reads – an OSC or graphics
+command, or a short CSI sequence that might change the keyboard modes – so a
+sequence split across two reads still works. Very long sequences (over 4096 bytes, such as
 clipboard transfers) pass through without being collected. Throughput is around
 700 MB/s in a release build – far from a bottleneck.
 

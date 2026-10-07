@@ -700,6 +700,7 @@ fn write_shortcut(doc: &mut toml_edit::DocumentMut, name: &str, bindings: Option
 #[cfg(test)]
 mod tests {
     use super::{ClipboardRead, Config, Family, Setting, write_shortcut};
+    use crate::shortcuts::Action;
     use crate::shortcuts::Bindings;
 
     #[test]
@@ -793,6 +794,17 @@ mod tests {
         assert!(!config.clipboard_write);
         assert_eq!(config.clipboard_read(), ClipboardRead::Always);
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);
+    }
+
+    /// The `[shortcuts]` example of the configuration reference reads,
+    /// and every name in it is an action.
+    #[test]
+    fn reads_the_shortcuts_example_in_the_reference() {
+        let guide = include_str!("../docs/guides/configuration.md");
+        let example = guide.split("```toml\n").skip(1).filter_map(|rest| rest.split("```").next()).find(|block| block.contains("[shortcuts]")).unwrap();
+        let config: Config = toml::from_str(example).unwrap();
+        assert_eq!(config.shortcuts.len(), 3);
+        assert!(config.shortcuts.keys().all(|name| Action::ALL.iter().any(|action| action.name() == name.as_str())));
     }
 
     /// Unset or misspelt, reading the clipboard asks.

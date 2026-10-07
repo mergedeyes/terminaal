@@ -223,6 +223,23 @@ pub fn save_keys(keys: &[Key]) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// The ```toml block of the configuration reference that has `marker`.
+    fn reference_example(marker: &str) -> &'static str {
+        let guide = include_str!("../../docs/guides/configuration.md");
+        guide
+            .split("```toml\n")
+            .skip(1)
+            .filter_map(|rest| rest.split("```").next())
+            .find(|block| block.contains(marker))
+            .expect("example")
+    }
+
+    #[test]
+    fn reads_the_keys_example_in_the_reference() {
+        let keys = toml::from_str::<KeysFile>(reference_example("[[key]]")).unwrap().keys;
+        assert_eq!(keys.len(), 2);
+    }
+
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("terminaal-keys-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

@@ -1,8 +1,9 @@
 # Configuration reference
 
-Terminaal keeps everything in `~/.config/terminaal/` (or
-`$XDG_CONFIG_HOME/terminaal/`). All files are optional, and none holds a
-password or passphrase.
+Terminaal keeps everything in `~/.config/terminaal/` – always under your home
+folder, `$XDG_CONFIG_HOME` doesn't move it (only the generated
+`shell-integration/` folder follows `$XDG_CONFIG_HOME`). All files are optional,
+and none holds a password or passphrase.
 
 | File | What's in it | Who writes it |
 | --- | --- | --- |
@@ -149,10 +150,20 @@ macs = "hmac-sha2-256"
 system = "debian"             # Terminaal's own: skip detecting the system
 color = "red"                 # Terminaal's own: red, orange, yellow, green, blue, purple or "#rrggbb"
 theme = "Dracula"             # Terminaal's own: console colors of this host's terminals
+
+# Folders kept in sync over SFTP, any number per host
+[[host.sync]]
+local = "~/www"
+remote = "/srv/www"           # absolute, or relative to the login's home
+direction = "both"            # both, upload, download
+live = true                   # in the background, on every local change
+exclude = ["node_modules", "*.log"]
+# delete_remote = true        # deletions may go to the server (upload/both)
+# delete_local = true         # … or come from it (download/both)
 ```
 
 `proxy_jump` and `proxy_command` exclude each other. Details on every option:
-[SSH hosts](ssh-hosts.md).
+[SSH hosts](ssh-hosts.md); on folder sync: [Files on a server](files-and-sftp.md).
 
 ## keys.toml
 
@@ -173,6 +184,7 @@ agent_key = "ssh-ed25519 AAAAC3Nza... laptop"   # public half of a key kept in t
 [[snippet]]
 name = "Follow logs"
 command = "journalctl -f"
+category = "Logs"             # optional: a heading the button sits under
 system = "arch"               # optional: only on this system (same values as `system` above)
 
 [[snippet]]

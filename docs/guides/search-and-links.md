@@ -115,7 +115,10 @@ taking typing.
 Pasting is safe: when the program supports bracketed paste (bash, zsh, fish, vim
 do), a multi-line paste is inserted as a whole instead of running line by line.
 Escape characters and Ctrl+C in the clipboard are always removed, so pasted text
-can't smuggle in terminal sequences.
+can't smuggle in terminal sequences. Before a paste that would run several lines
+at once, or contains `sudo`, `curl … | sh`, `rm -rf` and the like, Terminaal shows
+it and asks (**Settings → Terminal → Pasting**, see
+[Security](../explanations/security-and-your-files.md#pasting)).
 
 ### Programs and the clipboard (OSC 52)
 

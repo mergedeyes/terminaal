@@ -111,7 +111,7 @@ What each sequence means:
   fish) doesn't get the integration.
 - **Copy output copies nothing?** The output starts where the shell said the
   command started (`C`); a command whose very first output is a hyperlink of its
-  own gets no start mark. Output printed before this version has no mark either.
+  own gets no start mark.
 - **Marks, but no exit codes?** The shell sends `A` but not `C`/`D`. A `D`
   without a preceding `C` is ignored on purpose (it would repeat the last status
   on an empty Enter).

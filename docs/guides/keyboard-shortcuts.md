@@ -19,8 +19,8 @@
 | Swap with the pane on the left / right / above / below | `swap_pane_left`, `swap_pane_right`, `swap_pane_up`, `swap_pane_down` | none |
 | Maximize pane / restore | `zoom_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> |
 | Broadcast on/off for the terminal | `toggle_broadcast` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
-| Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
 | Watch the terminal for silence on/off | `watch_silence` | none |
+| Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
 | Show/hide sidebar | `toggle_sidebar` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Open settings | `open_settings` | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
 | Command palette | `command_palette` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
@@ -39,7 +39,7 @@
 | Font size back | `font_reset` | <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 
 Not configurable: <kbd>Ctrl</kbd>+click opens links, <kbd>Shift</kbd>+wheel always
-scrolls the scrollback, and the keys inside the search bar
+scrolls the scrollback, and the keys inside the search bar, the hints and vi mode
 (see [Search, links and the scrollback](search-and-links.md)).
 
 ## Changing them in the settings
@@ -84,7 +84,7 @@ tab_9 = []
 
 - **One combination, several actions?** The action listed first above wins; the
   settings tab strikes the combination through at the other one.
-- **Clipboard, scrolling, search and prompt jumps** don't fire while a text field
+- **Clipboard, hints, scrolling, search, vi mode and prompt jumps** don't fire while a text field
   in the sidebar or settings has the keyboard – <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
   pastes into the field then. Tab, pane, window and font shortcuts work everywhere.
 - **Full-screen programs** (`less`, `vim`, `htop`) get the scrolling and
