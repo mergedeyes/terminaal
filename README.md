@@ -164,6 +164,7 @@ files tab, over the terminal's own connection. →
   locally and over SSH
 - **Snippets** – your own commands as buttons, optionally only for one system or
   host, or run by themselves with every new shell or after an SSH login
+- Middle-click any command button to run it in a new tab like the active one
 
 ### Keys
 

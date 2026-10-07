@@ -417,6 +417,7 @@ cmd-system-unknown = System not recognized – the package commands stay hidden.
 cmd-no-tab = No terminal tab open – commands need a shell.
 cmd-run-hint = Runs right away: { $line }
 cmd-type-hint = Types into the prompt: { $line }
+cmd-new-tab-hint = Middle-click: in a new tab
 cmd-warn-title = Commands run right away
 cmd-warn-body = A click sends the command straight to the active tab's shell, Enter included. The settings under “Shell” can switch that to typing it out instead.
 cmd-warn-run = Got it, run it

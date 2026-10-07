@@ -417,6 +417,7 @@ cmd-system-unknown = System nicht erkannt – die Paketbefehle bleiben aus. In d
 cmd-no-tab = Kein Terminal-Tab offen – Befehle brauchen eine Shell.
 cmd-run-hint = Führt sofort aus: { $line }
 cmd-type-hint = Schreibt in die Eingabezeile: { $line }
+cmd-new-tab-hint = Mittelklick: in einem neuen Tab
 cmd-warn-title = Befehle laufen sofort los
 cmd-warn-body = Ein Klick schickt den Befehl direkt an die Shell des aktiven Tabs, samt Enter. In den Einstellungen unter „Shell“ lässt sich das auf bloßes Eintippen umstellen.
 cmd-warn-run = Verstanden, ausführen

@@ -4,6 +4,11 @@ The sidebar's **Shells** section ends with command buttons: built-in ones for
 everyday chores, and your own (snippets). A click sends the command to the active
 tab – or to every tab in the broadcast group.
 
+A **middle-click** runs it in a new tab instead, like the active one: the same
+shell in the same folder, or the same SSH host logged into again. The command
+goes in once that tab's shell is ready (after its startup commands), so a long
+update or a `journalctl -f` doesn't take over the tab you're working in.
+
 ## Built-in commands
 
 | Group | Button | Example (Arch) |
@@ -90,7 +95,7 @@ Your own commands, in `~/.config/terminaal/snippets.toml`.
   starts – see [Startup commands](#startup-commands).
 - **Hide the button:** the snippet gets no button among the commands, so many
   startup commands don't crowd the sidebar. It's still listed under **Manage**,
-  where ▶ runs it in the active tab.
+  where ▶ runs it in the active tab (middle-click: in a new one).
 
 Sending works like pasting: several lines arrive together (with bracketed paste,
 if the shell turned that on), and with **Run commands right away** one Enter

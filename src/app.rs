@@ -357,6 +357,10 @@ struct Pane {
     /// The SSH connection whose shell got its startup commands (see
     /// `Opener::connection`); a new one gets them again.
     startup_connection: u64,
+    /// A command line to go in once, after the startup commands: a command
+    /// button middle-clicked into a new tab. Whether it's run with Enter
+    /// (`commands_run` at the time).
+    queued: Option<(String, bool)>,
     /// `--hold`: stay once what the pane runs has ended, showing how it
     /// ended, instead of closing with it.
     hold: bool,
@@ -1016,6 +1020,7 @@ impl AppState {
             command_started: None,
             startup,
             startup_connection: 0,
+            queued: None,
             hold: run.hold,
             exit_code: None,
             broadcast: false,
@@ -2146,18 +2151,25 @@ impl AppState {
         if pane.startup.take().is_none() {
             return;
         }
+        let queued = pane.queued.take();
         let pane = &self.tabs[tab].panes().expect("found above").panes[idx];
         let ssh = matches!(pane.origin, PaneOrigin::Ssh(_));
         let target = self.target_of(&pane.terminal);
-        let lines: Vec<&str> =
-            self.sidebar.snippets().iter().filter(|snippet| snippet.runs_at_start(ssh, &target)).map(|s| s.command.as_str()).collect();
-        if lines.is_empty() {
+        let mut lines: Vec<(&str, bool)> = self
+            .sidebar
+            .snippets()
+            .iter()
+            .filter(|snippet| snippet.runs_at_start(ssh, &target))
+            .map(|s| (s.command.as_str(), true))
+            .collect();
+        if lines.is_empty() && queued.is_none() {
             return;
         }
         log::info!("running {} startup command(s) in {}", lines.len(), pane.default_title);
+        lines.extend(queued.as_ref().map(|(line, run)| (line.as_str(), *run)));
         let mode = *pane.terminal.term.lock().mode();
-        for line in lines {
-            if let Some(bytes) = input::paste_to_bytes(line, mode, true) {
+        for (line, run) in lines {
+            if let Some(bytes) = input::paste_to_bytes(line, mode, run) {
                 pane.terminal.send_input(bytes);
             }
         }
@@ -2168,6 +2180,23 @@ impl AppState {
     fn run_command(&mut self, line: String) {
         let run = self.config.commands_run;
         self.send_to_input_panes(|mode| input::paste_to_bytes(&line, mode, run));
+    }
+
+    /// A command button middle-clicked: the same in a new tab like the
+    /// focused terminal -- its shell in its directory, or its SSH host
+    /// logged into anew -- once that tab's shell is ready, after its own
+    /// startup commands. Without a terminal in view, the default shell.
+    fn run_command_in_new_tab(&mut self, line: String) {
+        let (origin, cwd) = match self.tabs.get(self.active_tab).and_then(Tab::focused) {
+            Some(pane) => (pane.origin.clone(), pane.local_cwd(&self.hostname)),
+            None => (PaneOrigin::Shell(self.default_shell()), None),
+        };
+        let mut pane = match self.spawn_pane(origin, cwd, self.console_rect(), Run::default()) {
+            Ok(pane) => pane,
+            Err(err) => return log::error!("failed to open new tab: {err}"),
+        };
+        pane.queued = Some((line, self.config.commands_run));
+        self.push_tab(TabContent::Terminals(Panes::new(pane)));
     }
 
     fn settings_active(&self) -> bool {
@@ -3653,7 +3682,8 @@ impl AppState {
                 self.apply_theme();
                 self.report(origin, Ok(t!("settings-themes-reloaded", count = self.themes.all().len())));
             }
-            SidebarAction::RunCommand(line) => self.run_command(line),
+            SidebarAction::RunCommand { line, new_tab: false } => self.run_command(line),
+            SidebarAction::RunCommand { line, new_tab: true } => self.run_command_in_new_tab(line),
             SidebarAction::SetForward(index, enabled) => {
                 if let Some(terminal) = self.current_terminal() {
                     terminal.set_forward(index, enabled);

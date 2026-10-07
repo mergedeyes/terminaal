@@ -59,9 +59,10 @@ pub enum SidebarAction {
     /// Tailor the built-in commands to this system -- `None`: detect it
     /// -- and persist that.
     SetSystem(Option<Family>),
-    /// Send this built-in command to the active tab's shell, run or only
-    /// typed out depending on `commands_run`.
-    RunCommand(String),
+    /// Send this built-in command or snippet to the active tab's shell --
+    /// or, `new_tab`, to that of a new tab like it -- run or only typed out
+    /// depending on `commands_run`.
+    RunCommand { line: String, new_tab: bool },
     /// Pause the active tab's port forward at this index, or start it.
     SetForward(usize, bool),
     /// The command files from the server are edited with (persisted);
@@ -191,7 +192,7 @@ impl Sidebar {
     /// is acknowledged. Empty then, and that section shows.
     pub fn activate_command(&mut self, line: &str, config: &Config) -> Vec<SidebarAction> {
         let mut actions = Vec::new();
-        self.commands.activate(line, config, &mut actions);
+        self.commands.activate(line, false, config, &mut actions);
         if actions.is_empty() {
             self.section = Section::Shells;
         }
