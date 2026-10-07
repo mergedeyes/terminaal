@@ -24,6 +24,7 @@ use alacritty_terminal::event::{OnResize, WindowSize};
 use alacritty_terminal::tty::{ChildEvent, EventedPty, EventedReadWrite, Pty};
 use polling::{Event, PollMode, Poller};
 
+use crate::terminal::graphics::SharedGraphics;
 use crate::terminal::integration::{Filter, ShellEvent};
 
 pub struct FilteredPty {
@@ -36,7 +37,7 @@ pub struct FilteredPty {
 
 impl FilteredPty {
     /// Start filtering `pty`; what the shell says goes to `on_event`.
-    pub fn new(pty: Pty, on_event: impl Fn(ShellEvent) + Send + 'static) -> io::Result<Self> {
+    pub fn new(pty: Pty, graphics: SharedGraphics, on_event: impl Fn(ShellEvent) + Send + 'static) -> io::Result<Self> {
         let (output, input) = UnixStream::pair()?;
         output.set_nonblocking(true)?;
         let (shutdown, shutdown_watch) = UnixStream::pair()?;
@@ -45,13 +46,12 @@ impl FilteredPty {
         let master = pty.file().try_clone()?;
         std::thread::Builder::new()
             .name("PTY filter".into())
-            .spawn(move || pump(master, input, shutdown_watch, on_event))?;
+            .spawn(move || pump(master, input, shutdown_watch, Filter::with_graphics(graphics), on_event))?;
         Ok(Self { pty, output, _shutdown: shutdown })
     }
 }
 
-fn pump(mut master: File, mut input: UnixStream, shutdown: UnixStream, on_event: impl Fn(ShellEvent)) {
-    let mut filter = Filter::default();
+fn pump(mut master: File, mut input: UnixStream, shutdown: UnixStream, mut filter: Filter, on_event: impl Fn(ShellEvent)) {
     let mut buf = vec![0; 0x10000];
     let (mut out, mut events) = (Vec::new(), Vec::new());
     loop {

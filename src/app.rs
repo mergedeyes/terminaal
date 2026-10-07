@@ -77,6 +77,8 @@ use crate::session::{self, SavedPane, SavedTab, Session};
 use crate::ssh::{Catalog, SshTarget};
 use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
+use crate::render::image::{ImageDraw, ImageRenderer};
+use crate::terminal::graphics::{self, SharedGraphics};
 use crate::terminal::{links, prompts};
 use crate::terminal::search::Search;
 use crate::terminal::session::TermOptions;
@@ -663,6 +665,12 @@ struct AppState {
     window: AppWindow,
     gpu: GpuState,
     quad_renderer: QuadRenderer,
+    image_renderer: ImageRenderer,
+    /// This frame's images, and per pane on screen where its quads end
+    /// and its images do: images go between a pane's cells and what's
+    /// drawn over them (search bar, scrollbar, borders, tab bar).
+    image_draws: Vec<ImageDraw>,
+    layers: Vec<(usize, usize)>,
     text: TextRendererState,
     /// The grid's shaped rows; shared by all tabs like `text`.
     grid_text: GridText,
@@ -816,6 +824,8 @@ impl AppState {
         );
         let fonts = text.families();
         let quad_renderer = QuadRenderer::new(&gpu.device, gpu.format);
+        let mut image_renderer = ImageRenderer::new(&gpu.device, gpu.format);
+        image_renderer.resize(&gpu.queue, size.width as f32, size.height as f32);
         let ui = UiLayer::new(window.winit().map(|window| &**window), &gpu.device, gpu.format, &theme.ui);
 
         let tab_bar_height = tab_bar_height(&config, text.cell, scale_factor);
@@ -852,6 +862,9 @@ impl AppState {
             window,
             gpu,
             quad_renderer,
+            image_renderer,
+            image_draws: Vec::new(),
+            layers: Vec::new(),
             text,
             grid_text: GridText::default(),
             // Opaque until `apply_transparency` below.
@@ -1659,6 +1672,7 @@ impl AppState {
         let Some(target) = self.window.gpu_target() else { return };
         self.gpu.set_target(target, (width, height));
         self.quad_renderer.resize(&self.gpu.queue, width as f32, height as f32);
+        self.image_renderer.resize(&self.gpu.queue, width as f32, height as f32);
         self.blur = layer_blur(&self.window);
         // Blur and translucency go on the new surface.
         self.blurred = false;
@@ -3278,6 +3292,8 @@ impl AppState {
                     self.window.request_user_attention(Some(UserAttentionType::Informational));
                 }
             }
+            // Same path as the terminal's own answers (`TermEvent::PtyWrite`).
+            ShellEvent::Reply(bytes) => pane.terminal.send_input(bytes),
         }
     }
 
@@ -3715,6 +3731,7 @@ impl AppState {
         }
         self.gpu.resize(width, height);
         self.quad_renderer.resize(&self.gpu.queue, width as f32, height as f32);
+        self.image_renderer.resize(&self.gpu.queue, width as f32, height as f32);
         self.relayout();
         if self.blurred {
             self.update_blur();
@@ -4183,7 +4200,7 @@ impl AppState {
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
             Setting::ScrollbackLines(_) if save => self.apply_term_options(),
-            Setting::SelectPathSegments(_) | Setting::ClipboardWrite(_) => self.apply_term_options(),
+            Setting::SelectPathSegments(_) | Setting::ClipboardWrite(_) | Setting::Images(_) => self.apply_term_options(),
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
@@ -4212,6 +4229,7 @@ impl AppState {
             scrollback: self.config.scrollback_lines,
             path_segments: self.config.select_path_segments,
             clipboard_write: self.config.clipboard_write,
+            images: self.config.images,
         }
     }
 
@@ -4319,6 +4337,9 @@ impl AppState {
             let focus_rows = focus.map(|m| (m.start().line.0 + offset, m.end().line.0 + offset));
             let rows =
                 grid::build_frame(&term, selection_range, highlight, cursor, palette, &mut self.quads, geometry);
+            let clip = [pane.rect.x as u32, pane.rect.y as u32, pane.rect.w as u32, pane.rect.h as u32];
+            self.image_draws.extend(image_draws(&term, &pane.graphics, pane.id, geometry, clip));
+            self.layers.push((self.quads.len(), self.image_draws.len()));
             (rows, focus_rows, prompts)
         };
         let row_lengths: std::collections::HashMap<usize, usize> =
@@ -4430,6 +4451,8 @@ impl AppState {
         }
         let t_ui = Instant::now();
         self.quads.clear();
+        self.image_draws.clear();
+        self.layers.clear();
         self.prompt_labels.clear();
         self.search_bar.hide();
 
@@ -4441,6 +4464,7 @@ impl AppState {
                     .map(|pane| PaneView {
                         id: pane.id,
                         term: pane.terminal.term.clone(),
+                        graphics: pane.terminal.graphics.clone(),
                         rect: pane.rect,
                         size: pane.size,
                         focused: pane.id == panes.focus,
@@ -4505,6 +4529,7 @@ impl AppState {
 
         let t_build = Instant::now();
         self.quad_renderer.upload(&self.gpu.device, &self.gpu.queue, &self.quads);
+        self.image_renderer.prepare(&self.gpu.device, &self.gpu.queue, &self.image_draws);
 
         self.text.viewport.update(
             &self.gpu.queue,
@@ -4590,7 +4615,14 @@ impl AppState {
                 multiview_mask: None,
             });
 
-            self.quad_renderer.render(&mut pass, self.quads.len() as u32);
+            // Each pane's cells, its images, then the rest.
+            let (mut quads_from, mut images_from) = (0, 0);
+            for &(quads_to, images_to) in &self.layers {
+                self.quad_renderer.render_range(&mut pass, quads_from as u32..quads_to as u32);
+                self.image_renderer.render(&mut pass, images_from..images_to);
+                (quads_from, images_from) = (quads_to, images_to);
+            }
+            self.quad_renderer.render_range(&mut pass, quads_from as u32..self.quads.len() as u32);
             self.text.renderer.render(&self.text.atlas, &self.text.viewport, &mut pass).unwrap();
         }
 
@@ -4628,11 +4660,66 @@ impl AppState {
     }
 }
 
+/// The images whose anchor cells (`terminal::graphics`) are on screen --
+/// or above it, close enough for the image to reach into view -- where
+/// they go in pixels. An anchor whose placement was deleted shows nothing.
+fn image_draws(
+    term: &Term<EventProxyListener>,
+    graphics: &SharedGraphics,
+    pane: usize,
+    geometry: grid::GridGeometry,
+    clip: [u32; 4],
+) -> Vec<ImageDraw> {
+    let Ok(graphics) = graphics.lock() else { return Vec::new() };
+    if !graphics.has_placements() {
+        return Vec::new();
+    }
+    let offset = term.grid().display_offset() as i32;
+    let bottom = term.screen_lines() as i32 - 1 - offset;
+    // How far up an anchor may be: as far as the tallest image reaches,
+    // but no more than a few screens -- placements outlive a `clear`.
+    let reach = (graphics.tallest() as i32).min(4 * term.screen_lines() as i32);
+    let top = (-offset - reach).max(term.topmost_line().0);
+    let (cell_width, cell_height) = (geometry.cell.width, geometry.cell.height);
+    let mut draws = Vec::new();
+    for line in top..=bottom {
+        let row = &term.grid()[Line(line)];
+        for column in 0..term.columns() {
+            let Some(link) = row[Column(column)].hyperlink() else { continue };
+            let Some(key) = link.uri().strip_prefix(graphics::IMAGE_SCHEME).and_then(|key| key.parse().ok()) else { continue };
+            let Some(placement) = graphics.placement(key) else { continue };
+            let Some(image) = graphics.image(placement.image) else { continue };
+            let [x, y, width, height] = placement.source.map(|value| value as f32);
+            let cells = (placement.columns as f32 * cell_width, placement.rows as f32 * cell_height);
+            let (shown_width, shown_height) = match placement.size {
+                graphics::Size::Native => (width, height),
+                graphics::Size::Fit => {
+                    let scale = (cells.0 / width).min(cells.1 / height);
+                    (width * scale, height * scale)
+                }
+                graphics::Size::Fill => cells,
+            };
+            let left = geometry.origin_x + column as f32 * cell_width + placement.offset[0] as f32;
+            let top = geometry.origin_y + (line + offset) as f32 * cell_height + placement.offset[1] as f32;
+            let (image_width, image_height) = (image.width as f32, image.height as f32);
+            draws.push(ImageDraw {
+                key: (pane, placement.image, image.serial),
+                pixels: (image.width, image.height, image.rgba.clone()),
+                rect: [left, top, shown_width, shown_height],
+                uv: [x / image_width, y / image_height, width / image_width, height / image_height],
+                clip,
+            });
+        }
+    }
+    draws
+}
+
 /// What a redraw needs of a pane on screen, copied out so the pane isn't
 /// borrowed while the frame is built.
 struct PaneView {
     id: usize,
     term: Arc<FairMutex<Term<EventProxyListener>>>,
+    graphics: SharedGraphics,
     rect: LabelRect,
     size: GridSize,
     focused: bool,
@@ -5297,7 +5384,7 @@ mod tests {
 
         use crate::terminal::session::{TermOptions, term_config};
 
-        let options = TermOptions { scrollback: 100, path_segments: false, clipboard_write: true };
+        let options = TermOptions { scrollback: 100, path_segments: false, clipboard_write: true, images: true };
         let mut term = Term::new(term_config(options), &TermSize::new(40, 3), VoidListener);
         Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\n~/Projekte/Terminal main");
         let select = |term: &mut Term<VoidListener>, kind, column| {
@@ -5360,7 +5447,7 @@ mod tests {
         }
 
         let events = Events::default();
-        let options = TermOptions { scrollback: 10, path_segments: false, clipboard_write: true };
+        let options = TermOptions { scrollback: 10, path_segments: false, clipboard_write: true, images: false };
         let mut term = Term::new(term_config(options), &Size, events.clone());
         let mut parser: Processor = Processor::new();
         // "copied" in base64, then a read of the clipboard.

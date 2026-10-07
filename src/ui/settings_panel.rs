@@ -499,6 +499,13 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
         }
     });
     ui.label(weak(t!("settings-clipboard-read-hint")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-images-title"));
+    if let Some(on) = checkbox(ui, t!("settings-images"), "images", config.images) {
+        actions.push(SidebarAction::ChangeSetting { setting: Setting::Images(on), save: true });
+    }
+    ui.label(weak(t!("settings-images-hint")).size(11.0));
 }
 
 impl SettingsPanel {

@@ -177,14 +177,16 @@ impl QuadRenderer {
         }
     }
 
-    pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, instance_count: u32) {
-        if instance_count == 0 {
+    /// The uploaded rectangles in `range`: images go between some of
+    /// them.
+    pub fn render_range<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, range: std::ops::Range<u32>) {
+        if range.is_empty() {
             return;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-        pass.draw(0..6, 0..instance_count);
+        pass.draw(0..6, range);
     }
 }

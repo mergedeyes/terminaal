@@ -1,4 +1,5 @@
 pub mod grid;
+pub mod image;
 pub mod label;
 pub mod palette;
 pub mod quad;

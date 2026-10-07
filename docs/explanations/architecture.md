@@ -78,6 +78,18 @@ settings and a text field there has focus. This is deliberate: otherwise a
 sidebar, and the next <kbd>Enter</kbd> would press a button. Clicking the
 terminal, hiding the sidebar or switching tabs gives the keyboard back.
 
+## Images
+
+Kitty graphics commands (APC `ESC _ G …`) are picked out of the output by the
+same filter as the shell integration (`terminal/graphics.rs` decodes and keeps
+them). The filter doesn't know the cursor position – the parser runs later – so
+it writes an *anchor* instead: one blank cell with a hyperlink naming the
+placement, then moves the cursor past the image. The anchor scrolls and gets
+erased like any text; each frame the renderer looks for anchors on screen (and
+a few screens above, for images reaching down into view) and draws their
+images as textured quads (`render/image.rs`), between each pane's cell
+backgrounds and what's drawn over the cells.
+
 ## The drop-down window
 
 `terminaal --quake` needs a window along the top edge of the screen, above the

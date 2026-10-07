@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 alacritty_terminal = "0.26.0"
 arboard = { version = "3", features = ["wayland-data-control"] }
+# Image data in the kitty graphics protocol (terminal::graphics); the
+# version alacritty_terminal uses.
+base64 = "0.22"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 egui = "0.36.2"
 egui-wgpu = "0.36.2"
@@ -19,6 +22,8 @@ libc = "0.2.189"
 # ssh2 doesn't expose (ssh::agent_forward).
 libssh2-sys = "0.3.3"
 log = "0.4.34"
+# zlib-compressed images (terminal::graphics); already in the tree via png.
+miniz_oxide = "0.8"
 png = "0.18"
 pollster = "1.0.1"
 # The version alacritty_terminal uses: the PTY wrapper (terminal::filtered_pty)

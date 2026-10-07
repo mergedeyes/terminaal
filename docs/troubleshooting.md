@@ -83,6 +83,13 @@ It should draw about two frames per second for the blinking cursor. Check with
 `RUST_LOG=terminaal=debug`: dozens of frames per second while idle is a bug worth
 reporting.
 
+**A program shows no images, or coloured blocks instead.**
+Programs that ask the terminal (yazi, `kitten icat`) find the kitty graphics
+protocol themselves; others go by the terminal's name – tell them: `chafa -f
+kitty`, `timg -pk`. Check that **Settings → Terminal → Images** is on. Inside
+tmux images don't work (that needs kitty's unicode placeholders, not
+supported).
+
 ## Keyboard
 
 **A shortcut does nothing.**

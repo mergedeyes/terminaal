@@ -3846,6 +3846,7 @@ version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "arboard",
+ "base64 0.22.1",
  "bytemuck",
  "egui",
  "egui-wgpu",
@@ -3858,6 +3859,7 @@ dependencies = [
  "libc",
  "libssh2-sys",
  "log",
+ "miniz_oxide 0.8.9",
  "png",
  "polling",
  "pollster",
