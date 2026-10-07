@@ -1,16 +1,16 @@
-//! Winit key and wheel events -> PTY bytes.
+//! Winit key, wheel and paste events -> PTY bytes.
 //!
-//! Keys are intentionally minimal for the MVP: enough control-sequence
-//! coverage (arrows, Home/End, PageUp/Down, Delete, Ctrl+letter) to use a
-//! shell comfortably, plumbed straight through `KeyEvent::text` for
-//! everything else (regular characters, IME output, etc).
-//!
-//! The mouse wheel goes to the program when it asked for that -- see
-//! [`wheel_to_bytes`].
+//! Keys are encoded in [`keyboard`] -- xterm's way, or the kitty keyboard
+//! protocol for programs that ask for it. The mouse wheel goes to the
+//! program when it asked for that -- see [`wheel_to_bytes`].
+
+mod keyboard;
+
+pub use keyboard::{is_modifier, key_bytes};
 
 use alacritty_terminal::term::TermMode;
 use winit::event::{ElementState, KeyEvent};
-use winit::keyboard::{Key, ModifiersState, NamedKey, SmolStr};
+use winit::keyboard::{Key, KeyLocation, ModifiersState, SmolStr};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 /// A key press or release, from winit or -- for the drop-down window's
@@ -26,6 +26,10 @@ pub struct KeyInput {
     pub key_without_modifiers: Key,
     /// What typing it inserts, if anything.
     pub text: Option<SmolStr>,
+    /// Left or right of a pair, or on the keypad.
+    pub location: KeyLocation,
+    /// Held down and repeating, not the first press.
+    pub repeat: bool,
 }
 
 impl From<&KeyEvent> for KeyInput {
@@ -35,55 +39,10 @@ impl From<&KeyEvent> for KeyInput {
             logical_key: event.logical_key.clone(),
             key_without_modifiers: event.key_without_modifiers(),
             text: event.text.clone(),
+            location: event.location,
+            repeat: event.repeat,
         }
     }
-}
-
-/// Turn a key event into the bytes that should be written to the PTY, or
-/// `None` if this event doesn't produce any input on its own (key
-/// releases, bare modifier presses, unmapped keys, ...).
-pub fn key_event_to_bytes(event: &KeyInput, modifiers: ModifiersState) -> Option<Vec<u8>> {
-    if event.state != ElementState::Pressed {
-        return None;
-    }
-
-    // Ctrl+<letter> takes priority over everything else and produces the
-    // corresponding C0 control code (Ctrl+A -> 0x01, ... Ctrl+Z -> 0x1a).
-    if modifiers.control_key()
-        && !modifiers.alt_key()
-        && let Key::Character(ch) = &event.logical_key
-    {
-        let mut chars = ch.chars();
-        if let (Some(c), None) = (chars.next(), chars.next()) {
-            let upper = c.to_ascii_uppercase();
-            if upper.is_ascii_uppercase() {
-                return Some(vec![(upper as u8) - b'A' + 1]);
-            }
-        }
-    }
-
-    if let Key::Named(named) = &event.logical_key {
-        let bytes: &[u8] = match named {
-            NamedKey::Enter => b"\r",
-            NamedKey::Backspace => b"\x7f",
-            NamedKey::Tab => b"\t",
-            NamedKey::Escape => b"\x1b",
-            NamedKey::ArrowUp => b"\x1b[A",
-            NamedKey::ArrowDown => b"\x1b[B",
-            NamedKey::ArrowRight => b"\x1b[C",
-            NamedKey::ArrowLeft => b"\x1b[D",
-            NamedKey::Home => b"\x1b[H",
-            NamedKey::End => b"\x1b[F",
-            NamedKey::PageUp => b"\x1b[5~",
-            NamedKey::PageDown => b"\x1b[6~",
-            NamedKey::Delete => b"\x1b[3~",
-            NamedKey::Insert => b"\x1b[2~",
-            _ => return event.text.as_ref().map(|text| text.as_bytes().to_vec()),
-        };
-        return Some(bytes.to_vec());
-    }
-
-    event.text.as_ref().map(|text| text.as_bytes().to_vec())
 }
 
 /// What the program in the terminal gets for `lines` of wheel scrolling

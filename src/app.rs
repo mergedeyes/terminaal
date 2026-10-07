@@ -24,7 +24,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::platform::x11::WindowAttributesExtX11;
 use winit::window::{CursorIcon, Icon, UserAttentionType, Window, WindowId};
@@ -738,6 +738,9 @@ struct AppState {
     hostname: String,
     /// The window has the keyboard focus.
     focused: bool,
+    /// Keys held down whose press went to terminals: the key and where it
+    /// is, and the panes that got it (see `release_key`).
+    pressed_keys: Vec<((Key, KeyLocation), Vec<usize>)>,
     /// Exit codes next to the prompts of failed commands.
     prompt_labels: Labels,
     links: links::Finder,
@@ -889,6 +892,7 @@ impl AppState {
             exe: std::env::current_exe().ok(),
             hostname: hostname(),
             focused: true,
+            pressed_keys: Vec::new(),
             prompt_labels: Labels::default(),
             links: links::Finder::default(),
             link: None,
@@ -2834,13 +2838,6 @@ impl AppState {
         self.window.request_redraw();
     }
 
-    /// Input the user typed or pasted. Snaps the view back to the bottom
-    /// if they had scrolled into history, and resets the blink cycle so
-    /// the cursor doesn't look like it vanished mid-keystroke.
-    fn send_typed(&mut self, bytes: Vec<u8>) {
-        self.send_to_input_panes(|_| Some(bytes.clone()));
-    }
-
     /// The terminals typed input goes to, as tab and pane index: the
     /// focused one, or while it takes part in the broadcast, every terminal
     /// that does, in any tab.
@@ -3114,6 +3111,7 @@ impl AppState {
 
     fn handle_keyboard_input(&mut self, event: KeyInput) {
         if event.state != ElementState::Pressed {
+            self.release_key(&event);
             return;
         }
         // The settings page waits for a new shortcut: this key is it.
@@ -3165,8 +3163,57 @@ impl AppState {
             return;
         }
 
-        if let Some(bytes) = input::key_event_to_bytes(&event, self.modifiers) {
-            self.send_typed(bytes);
+        self.send_key(&event);
+    }
+
+    /// A key press (or repeat) to [`AppState::input_panes`], encoded for
+    /// each one's mode -- the kitty keyboard protocol is per program.
+    /// Remembers who got it, for the release.
+    fn send_key(&mut self, event: &KeyInput) {
+        // A modifier alone (only sent when the kitty protocol asks for
+        // every key) neither scrolls down nor counts as typing.
+        let modifier = input::is_modifier(&event.logical_key);
+        if !modifier {
+            self.reset_cursor_blink();
+        }
+        let mut got = Vec::new();
+        for (tab_idx, idx) in self.input_panes() {
+            let Some(pane) = self.tabs[tab_idx].panes().map(|panes| &panes.panes[idx]) else { continue };
+            let bytes = {
+                let mut term = pane.terminal.term.lock();
+                let bytes = input::key_bytes(event, self.modifiers, *term.mode());
+                if bytes.is_some() && !modifier && term.renderable_content().display_offset != 0 {
+                    term.scroll_display(Scroll::Bottom);
+                }
+                bytes
+            };
+            if let Some(bytes) = bytes {
+                pane.terminal.send_input(bytes);
+                got.push(pane.id);
+            }
+        }
+        let key = (event.key_without_modifiers.clone(), event.location);
+        self.pressed_keys.retain(|(held, _)| *held != key);
+        if !got.is_empty() {
+            self.pressed_keys.push((key, got));
+        }
+    }
+
+    /// A key let go: the terminals that got its press hear of it, if
+    /// their program asked for releases (kitty protocol). One whose press
+    /// went to a shortcut or the interface stays unheard of.
+    fn release_key(&mut self, event: &KeyInput) {
+        let key = (event.key_without_modifiers.clone(), event.location);
+        let Some(at) = self.pressed_keys.iter().position(|(held, _)| *held == key) else { return };
+        let (_, panes) = self.pressed_keys.remove(at);
+        for id in panes {
+            let Some(pane) = self.locate(id).and_then(|(tab_idx, idx)| self.tabs[tab_idx].panes().map(|panes| &panes.panes[idx])) else {
+                continue;
+            };
+            let mode = *pane.terminal.term.lock().mode();
+            if let Some(bytes) = input::key_bytes(event, self.modifiers, mode) {
+                pane.terminal.send_input(bytes);
+            }
         }
     }
 
@@ -4183,7 +4230,7 @@ impl AppState {
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
             Setting::ScrollbackLines(_) if save => self.apply_term_options(),
-            Setting::SelectPathSegments(_) | Setting::ClipboardWrite(_) => self.apply_term_options(),
+            Setting::SelectPathSegments(_) | Setting::KittyKeyboard(_) | Setting::ClipboardWrite(_) => self.apply_term_options(),
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
@@ -4211,6 +4258,7 @@ impl AppState {
         TermOptions {
             scrollback: self.config.scrollback_lines,
             path_segments: self.config.select_path_segments,
+            kitty_keyboard: self.config.kitty_keyboard,
             clipboard_write: self.config.clipboard_write,
         }
     }
@@ -5060,7 +5108,14 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::Focused(focused) => state.focused = focused,
+            WindowEvent::Focused(focused) => {
+                state.focused = focused;
+                // Releases of what's held now go to whichever window
+                // gets the keyboard.
+                if !focused {
+                    state.pressed_keys.clear();
+                }
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 state.modifiers = modifiers.state();
                 state.update_link();
@@ -5297,7 +5352,7 @@ mod tests {
 
         use crate::terminal::session::{TermOptions, term_config};
 
-        let options = TermOptions { scrollback: 100, path_segments: false, clipboard_write: true };
+        let options = TermOptions { scrollback: 100, path_segments: false, kitty_keyboard: true, clipboard_write: true };
         let mut term = Term::new(term_config(options), &TermSize::new(40, 3), VoidListener);
         Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\n~/Projekte/Terminal main");
         let select = |term: &mut Term<VoidListener>, kind, column| {
@@ -5360,7 +5415,7 @@ mod tests {
         }
 
         let events = Events::default();
-        let options = TermOptions { scrollback: 10, path_segments: false, clipboard_write: true };
+        let options = TermOptions { scrollback: 10, path_segments: false, kitty_keyboard: false, clipboard_write: true };
         let mut term = Term::new(term_config(options), &Size, events.clone());
         let mut parser: Processor = Processor::new();
         // "copied" in base64, then a read of the clipboard.

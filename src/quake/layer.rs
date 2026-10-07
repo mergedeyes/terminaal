@@ -297,7 +297,7 @@ impl Layer {
             let interval = Duration::from_secs_f64(1.0 / f64::from(rate.max(1)));
             // Catch up without flooding after a stall.
             *at = (*at + interval).max(now);
-            self.wl.events.push(LayerEvent::Key(key.clone()));
+            self.wl.events.push(LayerEvent::Key(KeyInput { repeat: true, ..key.clone() }));
         }
         self.flush();
         std::mem::take(&mut self.wl.events)
