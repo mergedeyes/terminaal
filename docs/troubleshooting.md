@@ -14,7 +14,17 @@ RUST_LOG=terminaal=trace terminaal --connect web1   # plus the SSH worker's time
 
 **The launcher doesn't start Terminaal, or starts an old version.**
 Run `./install.sh` again after updating the source. The desktop entry points at
-`~/.cargo/bin/terminaal` with its full path.
+`~/.cargo/bin/terminaal` (from source) or `~/.local/bin/terminaal` (from a
+release) with its full path.
+
+**The update dialog says Terminaal can't write to its folder.**
+It was installed somewhere only root may change (a package manager, `/usr/bin`).
+Update it the way it was installed, or install from a release, which goes to
+`~/.local/bin`.
+
+**"Checking for updates failed".**
+No connection to `api.github.com`, or GitHub limits how often one address may ask
+(60 times an hour). Terminaal just tries again at the next start.
 
 **The dock shows a generic icon, or can't restore the window after minimizing.**
 The desktop entry is missing. Run `./install.sh` (or `./install.sh --no-binary` if

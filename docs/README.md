@@ -50,6 +50,7 @@ Look something up, or get one thing done.
 - [Files on a server (SFTP)](guides/files-and-sftp.md) – browse, copy, sync
   folders, edit server files locally, sudo for root's files
 - [Appearance](guides/appearance.md) – themes, COSMIC, translucency, fonts
+- [Updates](guides/updates.md) – how Terminaal updates itself, and where it can't
 
 ## Explanations
 

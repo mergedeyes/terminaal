@@ -25,6 +25,8 @@ pollster = "1.0.1"
 # registers with its event loop's poller.
 polling = "3.11"
 serde = { version = "1", features = ["derive"] }
+# GitHub's answer about the latest release (update).
+serde_json = "1"
 # Fingerprints of the keys in known_hosts (ssh::known_hosts).
 sha2 = "0.10"
 ssh-key = { version = "0.6", features = ["ed25519", "encryption", "getrandom", "std"] }
@@ -32,6 +34,9 @@ ssh2 = "0.9.6"
 toml = "0.8"
 toml_edit = "0.22"
 unic-langid = "0.9.6"
+# Updates from the GitHub releases (update): HTTPS through the system's
+# OpenSSL, which libssh2 links anyway.
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
 # Blur behind the see-through window (ext-background-effect, see blur.rs),
 # spoken on winit's own Wayland connection: the versions and features
 # winit already uses.

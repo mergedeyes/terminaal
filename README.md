@@ -191,7 +191,23 @@ files tab, over the terminal's own connection. →
 
 ## Installation
 
-Terminaal is built from source.
+**From a release** (x86_64 Linux): download `terminaal-x86_64-linux.tar.gz` from
+the [latest release](https://github.com/mergedeyes/terminaal/releases/latest),
+unpack it and run the installer:
+
+```sh
+tar xzf terminaal-x86_64-linux.tar.gz
+cd terminaal-x86_64-linux
+./install.sh
+```
+
+This puts Terminaal in `~/.local/bin/terminaal`, plus a desktop entry, icons and
+the man page under `~/.local/share`. It needs a GPU driver with Vulkan or OpenGL,
+and OpenSSL 3, zlib and libxkbcommon, which practically every desktop has. From
+then on Terminaal **updates itself**: it offers new releases at start
+([Updates](docs/guides/updates.md)).
+
+**From source**
 
 **Requirements**
 
@@ -209,7 +225,7 @@ cd terminaal
 ./install.sh
 ```
 
-This installs a release build to `~/.cargo/bin/terminaal`, plus a desktop entry,
+This builds and installs `~/.cargo/bin/terminaal`, plus a desktop entry,
 icons and the man page (`man terminaal`) under `~/.local/share`, so Terminaal
 appears in your app launcher.
 
@@ -220,7 +236,10 @@ appears in your app launcher.
 | `./install.sh --uninstall` | Removes all of the above |
 
 Run `./install.sh` again after updating the source – the launcher always starts
-the installed binary.
+the installed binary. Installed from source, Terminaal still offers new releases;
+turn that off under Settings → General → Updates to stay on your own builds.
+
+Making releases: [RELEASING.md](RELEASING.md).
 
 **Just try it**
 
@@ -354,6 +373,7 @@ sidebar = true                # show the sidebar at start
 sidebar_width = 300.0
 splash = true                 # start-up animation
 restore_session = true        # open last time's tabs again
+update_check = true           # offer new releases at start
 quake_height = 50.0           # drop-down window height, percent of the screen
 quake_hide_on_unfocus = true  # hide it when another window gets the keyboard
 # shell = "/usr/bin/fish"     # default shell for new tabs (default: $SHELL)
@@ -472,6 +492,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] `terminaal -c`, `-s` and `--hold`, and a `terminaal(1)` man page
 - [x] Folder sync over SFTP – two-way or one-way, on opening or live in the background
 - [x] Selecting several files at once in the files tab
+- [x] Updates from the GitHub releases, offered at start and installed on request
 - [x] A scrollbar for the scrollback
 
 </details>
@@ -481,6 +502,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Resize and swap panes with the keyboard
 - [ ] Search: number of matches, optional regex
 - [ ] An integrated title bar: window buttons in the tab bar instead of the desktop's title bar
+- [ ] A scrollbar for the scrollback
 - [ ] Update check at start-up against the GitHub releases, updating on request
 
 **Terminal protocols**

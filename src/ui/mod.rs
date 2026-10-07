@@ -20,6 +20,7 @@ pub mod sidebar;
 pub mod splash;
 pub mod ssh_panel;
 pub mod theme;
+pub mod update_dialog;
 pub mod widgets;
 
 use std::time::{Duration, Instant};

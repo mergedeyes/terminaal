@@ -2,9 +2,21 @@
 
 ## Install
 
-Terminaal is built from source and runs on Linux (Wayland or X11).
+Terminaal runs on Linux (Wayland or X11).
 
-You need:
+**From a release** (x86_64): download `terminaal-x86_64-linux.tar.gz` from the
+[latest release](https://github.com/mergedeyes/terminaal/releases/latest), then
+
+```sh
+tar xzf terminaal-x86_64-linux.tar.gz
+cd terminaal-x86_64-linux
+./install.sh
+```
+
+That's all: Terminaal lands in `~/.local/bin`, shows up in your app launcher, and
+offers new versions itself from then on ([Updates](guides/updates.md)).
+
+**From source** you need:
 
 - Rust 1.88 or newer ([rustup](https://rustup.rs/))
 - A C compiler, `pkg-config`, and the OpenSSL and zlib headers for libssh2.

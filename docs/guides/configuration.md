@@ -48,6 +48,8 @@ and keeps your comments and formatting. A missing file means defaults.
 | `splash` | `true` | Start-up animation |
 | `quake_height` | `50` | Height of the drop-down window in percent of the screen, `20`–`100`. See [The drop-down window](drop-down-window.md) |
 | `quake_hide_on_unfocus` | `true` | Hide the drop-down window when another window gets the keyboard |
+| `update_check` | `true` | Ask GitHub for a newer release at start. See [Updates](updates.md) |
+| `update_skipped` | not set | A version **Skip this version** was clicked for; not offered again |
 | `restore_session` | `true` | Open last time's tabs again. Turning it off deletes the saved session. See [Restoring the last session](sessions.md) |
 | `language` | from the locale | `"en"` or `"de"` |
 

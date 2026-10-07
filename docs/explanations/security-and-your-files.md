@@ -111,6 +111,15 @@ renamed into place at the end, so an interrupted sync leaves no half-written
 files. The record of the last sync (`~/.local/state/terminaal/sync/`) holds paths,
 sizes and times – no contents.
 
+## Updates
+
+The only connection Terminaal makes on its own: at start it asks
+`api.github.com` for the latest release (turn it off under Settings → General →
+Updates). Nothing is installed unless you click **Update now**; then the download
+must match the SHA-256 checksum published with the release, or it's thrown away.
+That catches broken downloads; the trust behind it is GitHub's – whoever controls
+the releases controls the updates, as with most programs that update themselves.
+
 ## Agent forwarding
 
 Off by default, as in OpenSSH. When on, anyone with root on that server can use
