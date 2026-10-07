@@ -141,6 +141,9 @@ pub struct Config {
     /// Programs may show images (kitty graphics protocol: `kitten icat`,
     /// yazi, chafa).
     pub images: bool,
+    /// Programs may switch to the kitty keyboard protocol (fish 4, Neovim,
+    /// Helix): keys like Ctrl+I and Tab, or Esc and Alt+[, become distinct.
+    pub kitty_keyboard: bool,
     /// Programs may put text into the clipboard (OSC 52) -- what lets
     /// vim or tmux on a server copy to this computer.
     pub clipboard_write: bool,
@@ -221,6 +224,7 @@ impl Default for Config {
             commands_collapsed: Vec::new(),
             paste_warning: true,
             images: true,
+            kitty_keyboard: true,
             clipboard_write: true,
             clipboard_read: None,
             system: None,
@@ -480,6 +484,7 @@ impl Config {
             Setting::CommandsWarned(on) => self.commands_warned = on,
             Setting::PasteWarning(on) => self.paste_warning = on,
             Setting::Images(on) => self.images = on,
+            Setting::KittyKeyboard(on) => self.kitty_keyboard = on,
             Setting::ClipboardWrite(on) => self.clipboard_write = on,
             Setting::ClipboardRead(read) => self.clipboard_read = Some(read.key().to_string()),
         }
@@ -555,6 +560,7 @@ pub enum Setting {
     CommandsWarned(bool),
     PasteWarning(bool),
     Images(bool),
+    KittyKeyboard(bool),
     /// Programs may set the clipboard (OSC 52).
     ClipboardWrite(bool),
     ClipboardRead(ClipboardRead),
@@ -601,6 +607,7 @@ impl Setting {
             Self::CommandsWarned(on) => set_value(doc, "commands_warned", on),
             Self::PasteWarning(on) => set_value(doc, "paste_warning", on),
             Self::Images(on) => set_value(doc, "images", on),
+            Self::KittyKeyboard(on) => set_value(doc, "kitty_keyboard", on),
             Self::ClipboardWrite(on) => set_value(doc, "clipboard_write", on),
             Self::ClipboardRead(read) => set_value(doc, "clipboard_read", read.key()),
         }
@@ -744,6 +751,7 @@ mod tests {
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
             Setting::Images(false),
+            Setting::KittyKeyboard(false),
             Setting::ClipboardWrite(false),
             Setting::ClipboardRead(ClipboardRead::Always),
         ] {
@@ -780,6 +788,8 @@ mod tests {
         assert!(!config.quake_hide_on_unfocus);
         assert!(!config.images);
         assert!(Config::default().images);
+        assert!(!config.kitty_keyboard);
+        assert!(Config::default().kitty_keyboard);
         assert!(!config.clipboard_write);
         assert_eq!(config.clipboard_read(), ClipboardRead::Always);
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);

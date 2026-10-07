@@ -81,6 +81,13 @@ menu-files = Dateien (SFTP)
 
 ## Suche im Scrollback (render/search_bar.rs)
 
+hints-prompt = Schnellauswahl:
+hints-none = Nichts zu wählen auf dem Bildschirm
+hints-count = { $count ->
+    [one] 1 Treffer
+   *[other] { $count } Treffer
+}
+hints-keys = Buchstaben kopieren, Umschalt öffnet, Alt fügt ein, Esc beendet
 search-prompt = Suchen:
 search-prompt-regex = Suchen (Regex):
 search-no-match = Keine Treffer
@@ -204,6 +211,9 @@ paste-warn-more-lines = { $lines ->
 settings-paste = Einfügen
 settings-paste-warning = Vor riskantem Einfügen fragen
 settings-paste-warning-hint = Mehrere Zeilen, die sofort laufen würden, sudo, ein Download, der in eine Shell geht, rm -rf und Ähnliches – und mehrere Zeilen, die per Broadcast an mehr als ein Terminal gehen.
+settings-keyboard = Tastatur
+settings-kitty-keyboard = Kitty-Tastaturprotokoll für Programme, die es anfordern
+settings-kitty-keyboard-hint = fish 4, Neovim, Helix und andere unterscheiden damit Tasten, die sonst gleich ankommen – Strg+I und Tab, Esc und Alt+[, Strg+Umschalt+A und Strg+A – und sehen auf Wunsch auch das Loslassen. Ausschalten, falls ein Programm Tasten falsch versteht – das wirkt sofort; eingeschaltet nutzen Programme es ab ihrem nächsten Start.
 settings-clipboard = Zwischenablage für Programme (OSC 52)
 settings-clipboard-write = Programme dürfen in die Zwischenablage schreiben
 settings-clipboard-write-hint = So kopieren vim, Neovim oder tmux – auch auf einem Server über SSH – in die Zwischenablage dieses Rechners.
@@ -330,6 +340,7 @@ palette-theme-current = aktuell
 palette-new-tab = Neuer Tab: { $shell }
 shortcut-copy = Kopieren
 shortcut-copy-last-output = Ausgabe des letzten Befehls kopieren
+shortcut-hints = Schnellauswahl: Links, Pfade, IPs und Hashes per Buchstaben
 shortcut-paste = Einfügen
 shortcut-paste-and-run = Einfügen und ausführen
 shortcut-scroll-page-up = Eine Seite zurück

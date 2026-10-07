@@ -128,6 +128,11 @@ pub struct Highlights<'a> {
     pub focus: Option<&'a Match>,
     /// The link under the mouse while Ctrl is held: underlined.
     pub link: Option<&'a RangeInclusive<Point>>,
+    /// Keyboard hints (`terminal::hints`): their cells underlined, the
+    /// letters of their labels written over their first cells (sorted by
+    /// cell).
+    pub hints: &'a [RangeInclusive<Point>],
+    pub hint_labels: &'a [(Point, char)],
 }
 
 /// How the cursor is drawn.
@@ -220,6 +225,14 @@ pub fn build_frame<T: EventListener>(
             fg = selection_fg.unwrap_or(fg);
         }
 
+        // A hint's label stands out like the search match in focus.
+        let label = search.hint_labels.binary_search_by_key(&point, |(at, _)| *at).ok().map(|at| search.hint_labels[at].1);
+        if label.is_some() {
+            let (label_bg, label_fg) = palette.search(true);
+            bg = label_bg;
+            fg = label_fg.unwrap_or(fg);
+        }
+
         if bg != default_bg {
             quads.push(QuadInstance {
                 offset: [origin_x + col as f32 * cell_w, origin_y + row as f32 * cell_h],
@@ -228,7 +241,9 @@ pub fn build_frame<T: EventListener>(
             });
         }
 
-        if search.link.is_some_and(|link| link.contains(&point)) {
+        if search.link.is_some_and(|link| link.contains(&point))
+            || (label.is_none() && search.hints.iter().any(|hint| hint.contains(&point)))
+        {
             let thickness = (cell_h / 16.0).round().max(1.0);
             quads.push(QuadInstance {
                 offset: [origin_x + col as f32 * cell_w, origin_y + (row + 1) as f32 * cell_h - thickness],
@@ -237,8 +252,12 @@ pub fn build_frame<T: EventListener>(
             });
         }
 
-        let ch = if cell.flags.contains(Flags::HIDDEN) { ' ' } else { cell.c };
-        let bold = cell.flags.intersects(Flags::BOLD);
+        let ch = match label {
+            Some(letter) => letter,
+            None if cell.flags.contains(Flags::HIDDEN) => ' ',
+            None => cell.c,
+        };
+        let bold = label.is_some() || cell.flags.intersects(Flags::BOLD);
         let italic = cell.flags.contains(Flags::ITALIC);
         line.push(ch, style_key(fg, bold, italic));
     }

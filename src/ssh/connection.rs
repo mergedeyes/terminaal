@@ -111,9 +111,10 @@ enum Msg {
 }
 
 /// Terminal escape sequences that undo what a program may have left on
-/// when its connection died: the alternate screen, mouse reporting,
-/// bracketed paste, a hidden cursor, colors.
-const RESET_MODES: &str = "\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?25h\x1b[0m";
+/// when its connection died: kitty keyboard modes (popped on the
+/// alternate screen, then on the normal one), the alternate screen, mouse
+/// reporting, bracketed paste, a hidden cursor, colors.
+const RESET_MODES: &str = "\x1b[?1049h\x1b[<65535u\x1b[?1049l\x1b[<65535u\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?25h\x1b[0m";
 
 /// Before automatic attempt `n` (1-based): 2 s, 4 s, 8 s, ... up to a minute.
 pub fn retry_delay(attempt: u32) -> Duration {
@@ -1530,6 +1531,28 @@ fn poll(fds: &[(RawFd, libc::c_short)], timeout: Duration) -> Vec<libc::c_short>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After a lost connection the new shell gets plain keys again: the
+    /// kitty keyboard modes a program left on either screen are gone.
+    #[test]
+    fn reset_modes_empty_both_keyboard_mode_stacks() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::test::TermSize;
+        use alacritty_terminal::term::{Config, Term, TermMode};
+
+        let config = Config { kitty_keyboard: true, ..Config::default() };
+        for start in ["\x1b[>1u\x1b[>3u\x1b[?1049h\x1b[>5u", "\x1b[?1049h\x1b[>5u\x1b[?1049l\x1b[>1u"] {
+            let mut term = Term::new(config.clone(), &TermSize::new(20, 5), VoidListener);
+            let mut parser: Processor = Processor::new();
+            parser.advance(&mut term, start.as_bytes());
+            assert!(term.mode().intersects(TermMode::KITTY_KEYBOARD_PROTOCOL));
+            parser.advance(&mut term, RESET_MODES.as_bytes());
+            assert!(!term.mode().intersects(TermMode::KITTY_KEYBOARD_PROTOCOL | TermMode::ALT_SCREEN));
+            // Nothing waits on the alternate screen either.
+            parser.advance(&mut term, b"\x1b[?1049h");
+            assert!(!term.mode().intersects(TermMode::KITTY_KEYBOARD_PROTOCOL), "{start:?}");
+        }
+    }
 
     #[test]
     fn appends_known_host_lines_without_touching_existing_ones() {

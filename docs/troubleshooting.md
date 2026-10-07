@@ -100,6 +100,13 @@ supported).
 - Another action may use it: Settings → Shortcuts strikes shadowed combinations
   through.
 
+**A program gets keys wrong, or shows things like `[99;5u` when I press a key.**
+The program asked for the kitty keyboard protocol and doesn't understand all of
+it, or one that crashed left it on. Turn it off under Settings → Terminal →
+Keyboard (`kitty_keyboard = false`): that works at once, and every program gets
+the classic xterm keys. `reset` in the shell clears what a crashed program left
+behind, too.
+
 **The settings refuse my shortcut.**
 It's either taken, or it would swallow typing (no Ctrl/Alt/Super, and not an
 F-key or Shift+navigation key). You can still set it in `config.toml`.

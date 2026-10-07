@@ -89,6 +89,12 @@ disk.
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
 - **Images in the terminal** – the kitty graphics protocol, for yazi's previews,
   `kitten icat`, chafa or timg, over SSH too. → [Images](docs/guides/images.md)
+- **Hints** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>) – links, paths, IP
+  addresses and hashes on screen get a letter or two; type them to copy, open or
+  insert that text. → [Search, links and the scrollback](docs/guides/search-and-links.md#hints)
+- **Keys as programs expect them** – Alt, Ctrl and Shift with arrows, function
+  and editing keys the xterm way, and the kitty keyboard protocol for programs
+  that ask for it (fish 4, Neovim, Helix)
 - **Clipboard from programs (OSC 52)** – vim or tmux, on a server too, copy into
   your clipboard; reading it asks first. Synchronized output (mode 2026) for
   flicker-free full-screen programs
@@ -295,6 +301,7 @@ The ones you'll use most:
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> | Command palette |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> | Copy the last command's output |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Hints: copy, open or insert a link, path, IP or hash by its letters |
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
@@ -373,6 +380,7 @@ cursor_blink_interval_ms = 600
 notifications = true          # desktop notifications at all
 notify_after_secs = 10        # notify when a command ran this long unseen (0: never)
 paste_warning = true          # ask before risky pastes (several lines, sudo, curl | sh, rm -rf)
+kitty_keyboard = true         # programs may switch on the kitty keyboard protocol
 clipboard_write = true        # programs may set the clipboard (OSC 52)
 images = true                 # programs may show images (kitty graphics protocol)
 clipboard_read = "ask"        # programs reading the clipboard: "never", "ask" or "always"
@@ -505,6 +513,8 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] A scrollbar for the scrollback
 - [x] OSC 52: programs (also over SSH) may set the clipboard; reading it asks first
 - [x] Synchronized output (mode 2026)
+- [x] Keyboard hints: copy, open or insert URLs, paths, IPs and hashes on screen by a letter
+- [x] Kitty keyboard protocol, and modifiers on every key the xterm way
 - [x] Images in the terminal (kitty graphics protocol)
 
 </details>
@@ -518,8 +528,6 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Update check at start-up against the GitHub releases, updating on request
 
 **Terminal protocols**
-- [ ] Kitty keyboard protocol
-- [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter
 - [ ] Vi mode for selecting and copying in the scrollback
 
 **SSH**

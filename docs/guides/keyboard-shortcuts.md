@@ -23,6 +23,7 @@
 | Command palette | `command_palette` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Copy | `copy` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> |
 | Copy the last command's output | `copy_last_output` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> |
+| Hints: pick links, paths, IPs and hashes by letters | `hints` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> |
 | Paste | `paste` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
 | Paste and run | `paste_and_run` | none |
 | Scroll a page up / down | `scroll_page_up`, `scroll_page_down` | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> |
@@ -84,5 +85,14 @@ tab_9 = []
   pastes into the field then. Tab, pane, window and font shortcuts work everywhere.
 - **Full-screen programs** (`less`, `vim`, `htop`) get the scrolling and
   prompt-jump keys themselves – they have no scrollback of their own in Terminaal.
+- **Everything else goes to the program** – with the modifiers it was pressed
+  with: <kbd>Alt</kbd>+letter as `ESC` + letter (word movement in shells),
+  <kbd>Ctrl</kbd>+arrows, <kbd>Shift</kbd>+<kbd>Tab</kbd>, <kbd>F1</kbd>–<kbd>F12</kbd>
+  with modifiers, as xterm sends them. Programs that ask for the
+  [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+  (fish 4, Neovim, Helix) get it, so they can tell <kbd>Ctrl</kbd>+<kbd>I</kbd>
+  from <kbd>Tab</kbd> or <kbd>Esc</kbd> from <kbd>Alt</kbd>+<kbd>[</kbd>, and see
+  keys being let go. A key bound to a Terminaal shortcut never reaches the
+  program.
 - **Font zoom** isn't saved: it resets when Terminaal quits, or when you set a new
   size in the settings.

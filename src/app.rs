@@ -24,7 +24,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::platform::x11::WindowAttributesExtX11;
 use winit::window::{CursorIcon, Icon, UserAttentionType, Window, WindowId};
@@ -79,7 +79,7 @@ use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
 use crate::render::image::{ImageDraw, ImageRenderer};
 use crate::terminal::graphics::{self, SharedGraphics};
-use crate::terminal::{links, prompts};
+use crate::terminal::{hints, links, prompts};
 use crate::terminal::search::Search;
 use crate::terminal::session::TermOptions;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
@@ -746,9 +746,16 @@ struct AppState {
     hostname: String,
     /// The window has the keyboard focus.
     focused: bool,
+    /// Keys held down whose press went to terminals: the key and where it
+    /// is, and the panes that got it (see `release_key`).
+    pressed_keys: Vec<((Key, KeyLocation), Vec<usize>)>,
     /// Exit codes next to the prompts of failed commands.
     prompt_labels: Labels,
     links: links::Finder,
+    /// Keyboard hints over the focused pane, while they're up; the keys
+    /// are theirs meanwhile.
+    hints: Option<hints::Hints>,
+    hint_finder: hints::Finder,
     /// The link under the mouse while Ctrl is held, and the pane it's in.
     link: Option<(usize, links::Link)>,
     /// Search in the focused pane's scrollback, while its bar is open.
@@ -902,8 +909,11 @@ impl AppState {
             exe: std::env::current_exe().ok(),
             hostname: hostname(),
             focused: true,
+            pressed_keys: Vec::new(),
             prompt_labels: Labels::default(),
             links: links::Finder::default(),
+            hints: None,
+            hint_finder: hints::Finder::default(),
             link: None,
             search: None,
             search_bar: SearchBar::new(ui_colors),
@@ -1233,6 +1243,7 @@ impl AppState {
     /// one's scrollback.
     fn switched_pane(&mut self) {
         self.search = None;
+        self.hints = None;
         self.link = None;
         self.reset_cursor_blink();
         self.update_window_title();
@@ -1658,6 +1669,7 @@ impl AppState {
         self.close_context_menu();
         self.close_palette();
         self.paste_warning = None;
+        self.hints = None;
         self.answer_clipboard_request(clipboard_request::Choice::Deny);
         self.drag = None;
         self.drag_scroll_at = None;
@@ -2848,13 +2860,6 @@ impl AppState {
         self.window.request_redraw();
     }
 
-    /// Input the user typed or pasted. Snaps the view back to the bottom
-    /// if they had scrolled into history, and resets the blink cycle so
-    /// the cursor doesn't look like it vanished mid-keystroke.
-    fn send_typed(&mut self, bytes: Vec<u8>) {
-        self.send_to_input_panes(|_| Some(bytes.clone()));
-    }
-
     /// The terminals typed input goes to, as tab and pane index: the
     /// focused one, or while it takes part in the broadcast, every terminal
     /// that does, in any tab.
@@ -3128,6 +3133,7 @@ impl AppState {
 
     fn handle_keyboard_input(&mut self, event: KeyInput) {
         if event.state != ElementState::Pressed {
+            self.release_key(&event);
             return;
         }
         // The settings page waits for a new shortcut: this key is it.
@@ -3145,6 +3151,9 @@ impl AppState {
         }
         if self.command_palette.is_some() {
             self.palette_key(&event);
+            return;
+        }
+        if self.hints.is_some() && self.hint_key(&event) {
             return;
         }
         // A key closes the context menu -- modifiers aside, they may be
@@ -3179,8 +3188,57 @@ impl AppState {
             return;
         }
 
-        if let Some(bytes) = input::key_event_to_bytes(&event, self.modifiers) {
-            self.send_typed(bytes);
+        self.send_key(&event);
+    }
+
+    /// A key press (or repeat) to [`AppState::input_panes`], encoded for
+    /// each one's mode -- the kitty keyboard protocol is per program.
+    /// Remembers who got it, for the release.
+    fn send_key(&mut self, event: &KeyInput) {
+        // A modifier alone (only sent when the kitty protocol asks for
+        // every key) neither scrolls down nor counts as typing.
+        let modifier = input::is_modifier(&event.logical_key);
+        if !modifier {
+            self.reset_cursor_blink();
+        }
+        let mut got = Vec::new();
+        for (tab_idx, idx) in self.input_panes() {
+            let Some(pane) = self.tabs[tab_idx].panes().map(|panes| &panes.panes[idx]) else { continue };
+            let bytes = {
+                let mut term = pane.terminal.term.lock();
+                let bytes = input::key_bytes(event, self.modifiers, *term.mode());
+                if bytes.is_some() && !modifier && term.renderable_content().display_offset != 0 {
+                    term.scroll_display(Scroll::Bottom);
+                }
+                bytes
+            };
+            if let Some(bytes) = bytes {
+                pane.terminal.send_input(bytes);
+                got.push(pane.id);
+            }
+        }
+        let key = (event.key_without_modifiers.clone(), event.location);
+        self.pressed_keys.retain(|(held, _)| *held != key);
+        if !got.is_empty() {
+            self.pressed_keys.push((key, got));
+        }
+    }
+
+    /// A key let go: the terminals that got its press hear of it, if
+    /// their program asked for releases (kitty protocol). One whose press
+    /// went to a shortcut or the interface stays unheard of.
+    fn release_key(&mut self, event: &KeyInput) {
+        let key = (event.key_without_modifiers.clone(), event.location);
+        let Some(at) = self.pressed_keys.iter().position(|(held, _)| *held == key) else { return };
+        let (_, panes) = self.pressed_keys.remove(at);
+        for id in panes {
+            let Some(pane) = self.locate(id).and_then(|(tab_idx, idx)| self.tabs[tab_idx].panes().map(|panes| &panes.panes[idx])) else {
+                continue;
+            };
+            let mode = *pane.terminal.term.lock().mode();
+            if let Some(bytes) = input::key_bytes(event, self.modifiers, mode) {
+                pane.terminal.send_input(bytes);
+            }
         }
     }
 
@@ -3219,6 +3277,7 @@ impl AppState {
             Action::ScrollToTop => return self.scroll_by_key(Scroll::Top),
             Action::ScrollToBottom => return self.scroll_by_key(Scroll::Bottom),
             Action::Search => return self.open_search(),
+            Action::Hints => return self.toggle_hints(),
             Action::PreviousPrompt => return self.jump_prompt(true),
             Action::NextPrompt => return self.jump_prompt(false),
             Action::FontBigger => self.zoom(1.0),
@@ -3301,12 +3360,84 @@ impl AppState {
     /// query if it's open. Not on the settings tab.
     fn open_search(&mut self) -> bool {
         let Some(term) = self.current_terminal().map(|terminal| terminal.term.clone()) else { return false };
+        self.hints = None;
         match &mut self.search {
             Some(search) => search.set_editing(true),
             None => self.search = Some(Search::new(&term.lock())),
         }
         self.window.request_redraw();
         true
+    }
+
+    /// Label what's worth picking on the focused pane's screen, or take
+    /// the labels away again. Not on the settings or files tab.
+    fn toggle_hints(&mut self) -> bool {
+        if self.hints.take().is_some() {
+            self.window.request_redraw();
+            return true;
+        }
+        let Some(pane) = self.current_pane() else { return false };
+        let hints = hints::Hints::new(pane.id, pane.terminal.is_local(), pane.local_cwd(&self.hostname));
+        self.search = None;
+        self.close_context_menu();
+        self.hints = Some(hints);
+        self.window.request_redraw();
+        true
+    }
+
+    /// A key while the hints are up. A label's letters pick its hint --
+    /// to copy, with Shift to open, with Alt to type into the terminal;
+    /// Backspace takes a letter back, Escape ends. `false` for any other
+    /// key: it ends the hints and goes on as usual (Ctrl+Shift+H too).
+    fn hint_key(&mut self, event: &KeyInput) -> bool {
+        let mods = self.modifiers;
+        // Its own shortcut ends it rather than opening it anew.
+        if KeyCombo::from_event(event, mods).and_then(|combo| self.keymap.action(&combo)) == Some(Action::Hints) {
+            self.hints = None;
+            self.window.request_redraw();
+            return true;
+        }
+        let Some(hints) = self.hints.as_mut() else { return false };
+        let letter = match &event.key_without_modifiers {
+            Key::Character(key) if !mods.control_key() && !mods.super_key() => {
+                key.chars().next().map(|c| c.to_ascii_lowercase()).filter(|&c| hints::ALPHABET.contains(c))
+            }
+            _ => None,
+        };
+        match (&event.logical_key, letter) {
+            (Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super), _) => return true,
+            (Key::Named(NamedKey::Escape), _) => self.hints = None,
+            (Key::Named(NamedKey::Backspace), _) => hints.pop(),
+            (_, Some(letter)) => {
+                if let Some(hint) = hints.push(letter).cloned() {
+                    let pick = if mods.alt_key() {
+                        hints::Pick::Insert
+                    } else if mods.shift_key() {
+                        hints::Pick::Open
+                    } else {
+                        hints::Pick::Copy
+                    };
+                    self.hints = None;
+                    self.pick_hint(hint, pick);
+                }
+            }
+            _ => {
+                self.hints = None;
+                self.window.request_redraw();
+                return false;
+            }
+        }
+        self.window.request_redraw();
+        true
+    }
+
+    fn pick_hint(&mut self, hint: hints::Hint, pick: hints::Pick) {
+        log::debug!("hint {:?} picked: {pick:?}", hint.text);
+        match (pick, &hint.target) {
+            (hints::Pick::Open, Some(target)) => open_link(target),
+            (hints::Pick::Insert, _) => self.send_to_input_panes(|mode| input::paste_to_bytes(&hint.text, mode, false)),
+            _ => self.set_clipboard(hint.text),
+        }
     }
 
     /// A key while the search bar is open. Typing the query: text,
@@ -3568,6 +3699,10 @@ impl AppState {
                 self.window.request_redraw();
             }
             return;
+        }
+        // A click ends the hints, and goes on as usual.
+        if self.hints.take().is_some() {
+            self.window.request_redraw();
         }
         // Presses on the paste dialog are egui's; one anywhere else cancels.
         if self.paste_warning.is_some() {
@@ -4200,7 +4335,9 @@ impl AppState {
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
             Setting::ScrollbackLines(_) if save => self.apply_term_options(),
-            Setting::SelectPathSegments(_) | Setting::ClipboardWrite(_) | Setting::Images(_) => self.apply_term_options(),
+            Setting::SelectPathSegments(_) | Setting::KittyKeyboard(_) | Setting::ClipboardWrite(_) | Setting::Images(_) => {
+                self.apply_term_options()
+            }
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
@@ -4228,6 +4365,7 @@ impl AppState {
         TermOptions {
             scrollback: self.config.scrollback_lines,
             path_segments: self.config.select_path_segments,
+            kitty_keyboard: self.config.kitty_keyboard,
             clipboard_write: self.config.clipboard_write,
             images: self.config.images,
         }
@@ -4332,7 +4470,25 @@ impl AppState {
             let search = self.search.as_mut().filter(|_| pane.focused);
             let matches = search.map(|search| search.visible_matches(&term)).unwrap_or_default();
             let focus = self.search.as_ref().filter(|_| pane.focused).and_then(Search::focus);
-            let highlight = grid::Highlights { matches: &matches, focus, link };
+            // Hints are found afresh each frame: output or scrolling may
+            // have moved them.
+            let mut hint_cells = Vec::new();
+            let mut hint_labels = Vec::new();
+            if let Some(hints) = self.hints.as_mut().filter(|hints| hints.pane == pane.id) {
+                hints.update(self.hint_finder.find(&term, hints.files, hints.cwd.as_deref()));
+                let typed = hints.typed.len();
+                for hint in hints.shown() {
+                    let mut point = *hint.cells.start();
+                    for letter in hint.label[typed..].chars() {
+                        hint_labels.push((point, letter));
+                        point = point.add(&*term, alacritty_terminal::index::Boundary::Grid, 1);
+                    }
+                    hint_cells.push(hint.cells.clone());
+                }
+                hint_labels.sort_by_key(|(point, _)| *point);
+            }
+            let highlight =
+                grid::Highlights { matches: &matches, focus, link, hints: &hint_cells, hint_labels: &hint_labels };
             let offset = term.grid().display_offset() as i32;
             let focus_rows = focus.map(|m| (m.start().line.0 + offset, m.end().line.0 + offset));
             let rows =
@@ -4377,6 +4533,26 @@ impl AppState {
                 status: &status,
                 no_match: search.no_match() || search.invalid(),
                 focus_rows,
+            };
+            let scale_factor = self.window.scale_factor() as f32;
+            let size = (pane.size.columns, pane.size.screen_lines);
+            self.search_bar.build(geometry, size, &view, scale_factor, &mut self.text, &mut self.quads);
+            cutout = self.search_bar.cutout();
+        }
+        if let Some(hints) = self.hints.as_ref().filter(|hints| hints.pane == pane.id) {
+            let count = hints.shown().count();
+            let status = if count == 0 {
+                t!("hints-none")
+            } else {
+                format!("{}  ·  {}", t!("hints-count", count = count as u32), t!("hints-keys"))
+            };
+            let view = SearchBarView {
+                prompt: &t!("hints-prompt"),
+                query: &hints.typed,
+                editing: true,
+                status: &status,
+                no_match: count == 0,
+                focus_rows: None,
             };
             let scale_factor = self.window.scale_factor() as f32;
             let size = (pane.size.columns, pane.size.screen_lines);
@@ -5147,7 +5323,14 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::Focused(focused) => state.focused = focused,
+            WindowEvent::Focused(focused) => {
+                state.focused = focused;
+                // Releases of what's held now go to whichever window
+                // gets the keyboard.
+                if !focused {
+                    state.pressed_keys.clear();
+                }
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 state.modifiers = modifiers.state();
                 state.update_link();
@@ -5384,7 +5567,7 @@ mod tests {
 
         use crate::terminal::session::{TermOptions, term_config};
 
-        let options = TermOptions { scrollback: 100, path_segments: false, clipboard_write: true, images: true };
+        let options = TermOptions { scrollback: 100, path_segments: false, kitty_keyboard: true, clipboard_write: true, images: true };
         let mut term = Term::new(term_config(options), &TermSize::new(40, 3), VoidListener);
         Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\n~/Projekte/Terminal main");
         let select = |term: &mut Term<VoidListener>, kind, column| {
@@ -5447,7 +5630,8 @@ mod tests {
         }
 
         let events = Events::default();
-        let options = TermOptions { scrollback: 10, path_segments: false, clipboard_write: true, images: false };
+        let options =
+            TermOptions { scrollback: 10, path_segments: false, kitty_keyboard: false, clipboard_write: true, images: false };
         let mut term = Term::new(term_config(options), &Size, events.clone());
         let mut parser: Processor = Processor::new();
         // "copied" in base64, then a read of the clipboard.

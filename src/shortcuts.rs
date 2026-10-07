@@ -57,6 +57,9 @@ pub enum Action {
     Copy,
     /// Copy what the last command printed (prompt marks).
     CopyLastOutput,
+    /// Label the links, paths, addresses and hashes on screen to copy,
+    /// open or insert one by its letters.
+    Hints,
     Paste,
     PasteAndRun,
     ScrollPageUp,
@@ -103,7 +106,7 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 52] = [
+    pub const ALL: [Action; 53] = [
         Action::NewTab,
         Action::CloseTab,
         Action::ReopenTab,
@@ -144,6 +147,7 @@ impl Action {
         Action::CommandPalette,
         Action::Copy,
         Action::CopyLastOutput,
+        Action::Hints,
         Action::Paste,
         Action::PasteAndRun,
         Action::ScrollPageUp,
@@ -193,6 +197,7 @@ impl Action {
             Action::CommandPalette => "command_palette",
             Action::Copy => "copy",
             Action::CopyLastOutput => "copy_last_output",
+            Action::Hints => "hints",
             Action::Paste => "paste",
             Action::PasteAndRun => "paste_and_run",
             Action::ScrollPageUp => "scroll_page_up",
@@ -246,6 +251,7 @@ impl Action {
             Action::CommandPalette => t!("shortcut-command-palette"),
             Action::Copy => t!("shortcut-copy"),
             Action::CopyLastOutput => t!("shortcut-copy-last-output"),
+            Action::Hints => t!("shortcut-hints"),
             Action::Paste => t!("shortcut-paste"),
             Action::PasteAndRun => t!("shortcut-paste-and-run"),
             Action::ScrollPageUp => t!("shortcut-scroll-page-up"),
@@ -282,7 +288,7 @@ impl Action {
             | Action::ToggleBroadcast
             | Action::WatchSilence => Group::Panes,
             Action::ToggleSidebar | Action::OpenSettings | Action::CommandPalette => Group::Window,
-            Action::Copy | Action::CopyLastOutput | Action::Paste | Action::PasteAndRun => Group::Clipboard,
+            Action::Copy | Action::CopyLastOutput | Action::Hints | Action::Paste | Action::PasteAndRun => Group::Clipboard,
             Action::ScrollPageUp
             | Action::ScrollPageDown
             | Action::ScrollToTop
@@ -338,6 +344,7 @@ impl Action {
             Action::CommandPalette => &["Ctrl+Shift+P"],
             Action::Copy => &["Ctrl+Shift+C"],
             Action::CopyLastOutput => &["Ctrl+Shift+Alt+C"],
+            Action::Hints => &["Ctrl+Shift+H"],
             Action::Paste => &["Ctrl+Shift+V"],
             Action::PasteAndRun => &[],
             Action::ScrollPageUp => &["Shift+PageUp"],
