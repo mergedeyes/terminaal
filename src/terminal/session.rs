@@ -210,6 +210,8 @@ pub struct TermOptions {
     /// A double-click in a path marks only the folder or file under the
     /// pointer instead of the whole path.
     pub path_segments: bool,
+    /// Programs may turn on the kitty keyboard protocol.
+    pub kitty_keyboard: bool,
     /// Programs may set the clipboard (OSC 52). Reading always gets
     /// through to `app.rs`, which asks or answers by `clipboard_read`.
     pub clipboard_write: bool,
@@ -224,7 +226,13 @@ pub(crate) fn term_config(options: TermOptions) -> TermConfig {
         separators.push('/');
     }
     let osc52 = if options.clipboard_write { Osc52::CopyPaste } else { Osc52::OnlyPaste };
-    TermConfig { scrolling_history: options.scrollback, semantic_escape_chars: separators, osc52, ..TermConfig::default() }
+    TermConfig {
+        scrolling_history: options.scrollback,
+        semantic_escape_chars: separators,
+        kitty_keyboard: options.kitty_keyboard,
+        osc52,
+        ..TermConfig::default()
+    }
 }
 
 fn new_term(listener: &EventProxyListener, size: GridSize, options: TermOptions) -> Arc<FairMutex<Term<EventProxyListener>>> {

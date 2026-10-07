@@ -90,6 +90,9 @@ disk.
 - **Hints** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>) – links, paths, IP
   addresses and hashes on screen get a letter or two; type them to copy, open or
   insert that text. → [Search, links and the scrollback](docs/guides/search-and-links.md#hints)
+- **Keys as programs expect them** – Alt, Ctrl and Shift with arrows, function
+  and editing keys the xterm way, and the kitty keyboard protocol for programs
+  that ask for it (fish 4, Neovim, Helix)
 - **Clipboard from programs (OSC 52)** – vim or tmux, on a server too, copy into
   your clipboard; reading it asks first. Synchronized output (mode 2026) for
   flicker-free full-screen programs
@@ -375,6 +378,7 @@ cursor_blink_interval_ms = 600
 notifications = true          # desktop notifications at all
 notify_after_secs = 10        # notify when a command ran this long unseen (0: never)
 paste_warning = true          # ask before risky pastes (several lines, sudo, curl | sh, rm -rf)
+kitty_keyboard = true         # programs may switch on the kitty keyboard protocol
 clipboard_write = true        # programs may set the clipboard (OSC 52)
 clipboard_read = "ask"        # programs reading the clipboard: "never", "ask" or "always"
 silence_secs = 15             # a terminal watched for silence is quiet after this long
@@ -507,6 +511,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] OSC 52: programs (also over SSH) may set the clipboard; reading it asks first
 - [x] Synchronized output (mode 2026)
 - [x] Keyboard hints: copy, open or insert URLs, paths, IPs and hashes on screen by a letter
+- [x] Kitty keyboard protocol, and modifiers on every key the xterm way
 
 </details>
 
@@ -520,6 +525,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 
 **Terminal protocols**
 - [ ] Kitty keyboard protocol
+- [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter
 - [ ] Vi mode for selecting and copying in the scrollback
 - [ ] Images in the terminal (Kitty graphics protocol or Sixel)
 
