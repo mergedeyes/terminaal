@@ -78,6 +78,7 @@ use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
 use crate::terminal::{links, prompts};
 use crate::terminal::search::Search;
+use crate::terminal::session::TermOptions;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::sftp::edit::EditAction;
 use crate::sftp::session::{Command as SftpCommand, Remote};
@@ -958,7 +959,7 @@ impl AppState {
         self.next_pane_id += 1;
         let listener = EventProxyListener::new(self.proxy.clone(), id);
         let size = self.grid_size_in(rect);
-        let (cell, scrollback) = (self.text.cell, self.config.scrollback_lines);
+        let (cell, options) = (self.text.cell, self.term_options());
         let (terminal, title) = match &origin {
             PaneOrigin::Shell(shell) => {
                 // `-c`: the shell evaluates that one line instead of
@@ -974,7 +975,7 @@ impl AppState {
                     size,
                     cell.width,
                     cell.height,
-                    scrollback,
+                    options,
                 )?;
                 let title = match run.command {
                     Some(line) => launch::command_title(line),
@@ -984,7 +985,7 @@ impl AppState {
             }
             PaneOrigin::Ssh(target) => {
                 let terminal =
-                    TerminalSession::connect_ssh(listener, (**target).clone(), size, cell.width, cell.height, scrollback)?;
+                    TerminalSession::connect_ssh(listener, (**target).clone(), size, cell.width, cell.height, options)?;
                 if let Some(opener) = terminal.opener() {
                     self.adopt_files_tabs(id, &login_of(target), &opener);
                     self.sync_in_background(id, target, &opener);
@@ -3834,13 +3835,8 @@ impl AppState {
             Setting::UiOpacity(_) => self.apply_theme(),
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
-            Setting::ScrollbackLines(lines) if save => {
-                for panes in self.tabs.iter().filter_map(Tab::panes) {
-                    for pane in &panes.panes {
-                        pane.terminal.set_scrollback(lines);
-                    }
-                }
-            }
+            Setting::ScrollbackLines(_) if save => self.apply_term_options(),
+            Setting::SelectPathSegments(_) => self.apply_term_options(),
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
@@ -3858,6 +3854,21 @@ impl AppState {
             self.settings.report(Err(err));
         }
         self.window.request_redraw();
+    }
+
+    /// What the panes' terminals are built with, from the config.
+    fn term_options(&self) -> TermOptions {
+        TermOptions { scrollback: self.config.scrollback_lines, path_segments: self.config.select_path_segments }
+    }
+
+    /// Hand every terminal the configured [`TermOptions`].
+    fn apply_term_options(&self) {
+        let options = self.term_options();
+        for panes in self.tabs.iter().filter_map(Tab::panes) {
+            for pane in &panes.panes {
+                pane.terminal.set_options(options);
+            }
+        }
     }
 
     /// The font size in use: the configured one plus any zoom.
@@ -4854,12 +4865,15 @@ mod tests {
         use alacritty_terminal::index::{Column, Line, Point, Side};
         use alacritty_terminal::selection::{Selection, SelectionType};
         use alacritty_terminal::term::test::TermSize;
-        use alacritty_terminal::term::{Config, Term};
+        use alacritty_terminal::term::Term;
         use alacritty_terminal::event::VoidListener;
         use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 
-        let mut term = Term::new(Config::default(), &TermSize::new(40, 3), VoidListener);
-        Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\nnext");
+        use crate::terminal::session::{TermOptions, term_config};
+
+        let options = TermOptions { scrollback: 100, path_segments: false };
+        let mut term = Term::new(term_config(options), &TermSize::new(40, 3), VoidListener);
+        Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\n~/Projekte/Terminal main");
         let select = |term: &mut Term<VoidListener>, kind, column| {
             term.selection = Some(Selection::new(kind, Point::new(Line(0), Column(column)), Side::Left));
             term.selection_to_string().unwrap()
@@ -4867,6 +4881,16 @@ mod tests {
         // Inside the address, dots and all, without the colon after it.
         assert_eq!(select(&mut term, SelectionType::Semantic, 10), "192.168.178.20");
         assert_eq!(select(&mut term, SelectionType::Semantic, 1), "ping");
+        let select_below = |term: &mut Term<VoidListener>, column| {
+            term.selection = Some(Selection::new(SelectionType::Semantic, Point::new(Line(1), Column(column)), Side::Left));
+            term.selection_to_string().unwrap()
+        };
+        // A path is one word, unless the option says otherwise: then only
+        // the folder or file under the pointer.
+        assert_eq!(select_below(&mut term, 14), "~/Projekte/Terminal");
+        term.set_options(term_config(TermOptions { path_segments: true, ..options }));
+        assert_eq!(select_below(&mut term, 14), "Terminal");
+        assert_eq!(select_below(&mut term, 4), "Projekte");
         assert_eq!(select(&mut term, SelectionType::Lines, 10), "ping 192.168.178.20: ok\n");
     }
 

@@ -418,6 +418,11 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     change(actions, moved, Setting::ScrollSelectFactor(factor));
     ui.label(weak(t!("settings-scroll-select-hint")).size(11.0));
     ui.add_space(4.0);
+    if let Some(on) = checkbox(ui, t!("settings-select-path-segments"), "select_path_segments", config.select_path_segments) {
+        change(actions, Some(true), Setting::SelectPathSegments(on));
+    }
+    ui.label(weak(t!("settings-select-path-segments-hint")).size(11.0));
+    ui.add_space(4.0);
     let mut scrollback = config.scrollback_lines;
     let moved = slider(ui, &t!("settings-scrollback"), "scrollback_lines", &mut scrollback, 0..=100_000, 1000.0, |lines| {
         t!("settings-scrollback-lines", lines = lines)

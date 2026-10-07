@@ -53,6 +53,9 @@ pub struct Config {
     /// dragged. 1 keeps it at [`Config::scroll_lines`]. Read through
     /// [`Config::scroll_select_factor`].
     pub scroll_select_factor: f32,
+    /// A double-click in a path marks only the folder or file under the
+    /// pointer; off, the whole path.
+    pub select_path_segments: bool,
     /// Default window size (logical pixels).
     pub default_width: f64,
     pub default_height: f64,
@@ -172,6 +175,7 @@ impl Default for Config {
             // Marking up a screenful at a time is what the wheel is for
             // here; dragging to the edge covers the slow case.
             scroll_select_factor: 3.0,
+            select_path_segments: false,
             default_width: 1000.0,
             default_height: 650.0,
             cursor_blink: true,
@@ -409,6 +413,7 @@ impl Config {
             Setting::ScrollbackLines(lines) => self.scrollback_lines = lines,
             Setting::ScrollLines(lines) => self.scroll_lines = lines,
             Setting::ScrollSelectFactor(factor) => self.scroll_select_factor = factor,
+            Setting::SelectPathSegments(on) => self.select_path_segments = on,
             Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
@@ -470,6 +475,7 @@ pub enum Setting {
     ScrollLines(f32),
     /// How much faster the wheel scrolls while marking text.
     ScrollSelectFactor(f32),
+    SelectPathSegments(bool),
     /// Window size at start; both keys at once.
     WindowSize { width: f64, height: f64 },
     CursorBlink(bool),
@@ -511,6 +517,7 @@ impl Setting {
             Self::ScrollbackLines(lines) => set_value(doc, "scrollback_lines", int(lines as u64)),
             Self::ScrollLines(lines) => set_value(doc, "scroll_lines", float(lines.into())),
             Self::ScrollSelectFactor(factor) => set_value(doc, "scroll_select_factor", float(factor.into())),
+            Self::SelectPathSegments(on) => set_value(doc, "select_path_segments", on),
             Self::WindowSize { width, height } => {
                 set_value(doc, "default_width", float(width.round()));
                 set_value(doc, "default_height", float(height.round()));
@@ -624,6 +631,7 @@ mod tests {
             Setting::SilenceAfter(45),
             Setting::Opacity(0.85),
             Setting::UiOpacity(Some(0.9)),
+            Setting::SelectPathSegments(true),
             Setting::Blur(false),
             Setting::CommandsRun(false),
             Setting::CommandsAssumeYes(true),
@@ -652,6 +660,7 @@ mod tests {
         assert_eq!(config.silence_secs, 45);
         assert_eq!(config.opacity(), 0.85);
         assert_eq!(config.ui_opacity(), Some(0.9));
+        assert!(config.select_path_segments);
         assert!(!config.blur);
         assert!(!config.commands_run);
         assert!(config.commands_assume_yes);

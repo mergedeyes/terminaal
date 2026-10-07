@@ -339,6 +339,7 @@ padding = 8.0                 # around the terminal grid
 scrollback_lines = 10000
 scroll_lines = 3.0            # lines per mouse-wheel notch
 scroll_select_factor = 3.0    # wheel multiplier while marking text (1 = off)
+select_path_segments = false  # double-click marks one folder of a path, not all of it
 default_width = 1000.0        # window size at start
 default_height = 650.0
 cursor_blink = true

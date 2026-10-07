@@ -61,8 +61,9 @@ Good to know:
 ## Selection and clipboard
 
 - Drag with the left mouse button to select.
-- Double-click selects a word (an IP address, a path up to a `:`), triple-click
-  the whole line. Keep the button down and drag to extend by words or lines.
+- Double-click selects a word – an IP address, a file name or a whole path.
+  With **Double-click marks one part of a path** (Settings → Terminal) only the
+  folder or file you clicked. Triple-click selects the whole line. Keep the button down and drag to extend by words or lines.
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or right-click → **Copy**.
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> or right-click → **Paste**.
 - Right-click → **Paste and run**: pastes, removes trailing line breaks and
