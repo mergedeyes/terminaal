@@ -51,10 +51,10 @@ The order follows **PreferredAuthentications** when set.
 | --- | --- | --- |
 | Connect timeout | `ConnectTimeout` | seconds |
 | Keepalive interval | `ServerAliveInterval` | default **30** (OpenSSH: off); `0` turns it off |
-| Keepalives before giving up | `ServerAliveCountMax` | default 3 |
+| Unanswered keepalives | `ServerAliveCountMax` | default 3 |
 | Compression | `Compression` | |
 | Address family | `AddressFamily` | any, IPv4, IPv6 |
-| Proxy command | `ProxyCommand` | run with `sh -c`; `%h %p %r %n` are replaced; its error output shows in the error message |
+| Proxy command instead of TCP | `ProxyCommand` | run with `sh -c`; `%h %p %r %n` are replaced; its error output shows in the error message |
 
 ### Authentication
 
@@ -63,8 +63,8 @@ The order follows **PreferredAuthentications** when set.
 | Key files | `IdentityFile` (several) |
 | Offer only configured keys | `IdentitiesOnly` |
 | Agent socket | `IdentityAgent` – a path, `SSH_AUTH_SOCK` or `none` |
-| Forward the agent | `ForwardAgent` – yes, a socket path, or `$VARIABLE` |
-| Methods | `PreferredAuthentications` |
+| Forward the agent to the server | `ForwardAgent` – yes, a socket path, or `$VARIABLE` |
+| Methods in this order | `PreferredAuthentications` |
 
 ### Host key
 
@@ -80,8 +80,8 @@ A *changed* host key always aborts the connection. See [Host keys](host-keys.md)
 | Option | Keyword | Notes |
 | --- | --- | --- |
 | Command instead of login shell | `RemoteCommand` | e.g. `tmux new -A -s main`; the tab closes when it ends |
-| Environment | `SetEnv` | `NAME=value` per line; `TERM=…` sets the terminal type (default `xterm-256color`) |
-| Pass on variables | `SendEnv` | names, `*` and `?` allowed; the server must accept them (`AcceptEnv`) |
+| Environment variables | `SetEnv` | `NAME=value` per line; `TERM=…` sets the terminal type (default `xterm-256color`) |
+| Pass on local variables | `SendEnv` | names, `*` and `?` allowed; the server must accept them (`AcceptEnv`) |
 | System (for the commands) | – | Terminaal's own; skips detecting the system after login |
 
 ### Look

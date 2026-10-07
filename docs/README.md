@@ -41,7 +41,8 @@ Look something up, or get one thing done.
 - [Shell integration](guides/shell-integration.md) – what it gives you, other
   shells, remote servers
 - [Built-in commands and snippets](guides/commands-and-snippets.md)
-- [Search, links and the scrollback](guides/search-and-links.md)
+- [Search, links and the scrollback](guides/search-and-links.md) – scrolling,
+  search, vi mode, selection and the clipboard, links and hints
 - [Split panes](guides/split-panes.md) – several terminals in one tab
 - [Restoring the last session](guides/sessions.md) – what comes back at start,
   when it's saved, several windows

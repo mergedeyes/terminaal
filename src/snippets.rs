@@ -141,6 +141,26 @@ mod tests {
     use super::*;
     use crate::commands::System;
 
+    /// The ```toml block of the configuration reference that has `marker`.
+    fn reference_example(marker: &str) -> &'static str {
+        let guide = include_str!("../docs/guides/configuration.md");
+        guide
+            .split("```toml\n")
+            .skip(1)
+            .filter_map(|rest| rest.split("```").next())
+            .find(|block| block.contains(marker))
+            .expect("example")
+    }
+
+    #[test]
+    fn reads_the_snippets_example_in_the_reference() {
+        let snippets = parse(reference_example("[[snippet]]")).unwrap();
+        assert_eq!(snippets.len(), 2);
+        assert_eq!(snippets[0].category.as_deref(), Some("Logs"));
+        assert_eq!(snippets[1].autorun, Some(Autorun::Login));
+        assert!(snippets[1].hidden);
+    }
+
     fn target(family: Family, host: Option<&str>) -> Target {
         Target { system: Some(System { family, root: false, ..System::default() }), host_name: host.map(str::to_string), ..Target::default() }
     }

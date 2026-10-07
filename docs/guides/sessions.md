@@ -43,6 +43,11 @@ happens when you type `exit` in the last shell. The next start opens one tab
 with your default shell. To keep your tabs for next time, close the window
 instead.
 
+A terminal tab closed by mistake while Terminaal keeps running comes back with
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> – the same shells
+in the same split and folders, SSH terminals connecting anew, no scrollback.
+The last ten closed tabs are remembered, until Terminaal quits.
+
 ## Several windows
 
 Only the first Terminaal that's running restores and saves the session. A
@@ -51,7 +56,8 @@ tab and doesn't touch the saved session. Without that, the second window would
 open all your SSH connections again, and the two windows would overwrite each
 other's tabs.
 
-`terminaal --connect HOST` never restores the session and never saves it.
+Started for one thing – `terminaal --connect HOST`, `-s SHELL` or `-c LINE` –
+Terminaal never restores the session and never saves it.
 
 ## Turning it off
 

@@ -36,7 +36,7 @@ packages (see [Getting started](getting-started.md#install)).
 
 **My tabs didn't come back.**
 Tabs are only restored by the first Terminaal that runs: a second window starts
-with one tab, and so does `terminaal --connect`. Closing the last tab (or `exit`
+with one tab, and so does a start with `--connect`, `-s` or `-c`. Closing the last tab (or `exit`
 in the last shell) also leaves nothing to restore. Hosts that were deleted or
 renamed are left out; `RUST_LOG=terminaal=info` names them. See
 [Restoring the last session](guides/sessions.md).
@@ -179,7 +179,7 @@ key without passphrase for that host.
 
 **`unknown terminal type` or broken colors on a server.**
 Set `TERM=xterm-256color` (the default) or `TERM=xterm` under **Advanced →
-Session → Environment**.
+Session → Environment variables**.
 
 **`SetEnv`/`SendEnv` variables don't arrive.**
 The server only accepts variables listed in its `AcceptEnv`.

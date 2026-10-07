@@ -30,6 +30,13 @@
   capital only finds that exact case.
 - **Scroll `less` output in Terminaal's scrollback:** hold <kbd>Shift</kbd> while
   using the wheel.
+- **Copy a commit hash or an IP without the mouse:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>,
+  then the letters on it. With <kbd>Alt</kbd> on the last letter it's typed into
+  the prompt instead – `git show ` plus a hint is two keystrokes
+  ([Hints](guides/search-and-links.md#hints)).
+- **Mark a block of output with the keyboard:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>,
+  `k` up to it, `V` for whole lines, `j` down, `y` – copied
+  ([Vi mode](guides/search-and-links.md#vi-mode)).
 - **Long-running jobs:** start the build, switch to another tab or app – you get
   a notification when it's done (after 10 s by default, adjustable).
 
@@ -93,7 +100,7 @@
 - **A port forward failed** because the port was taken? Free it and click **Try
   again** in the SSH section – no reconnect.
 - **Terminal type problems** on a server (`unknown terminal type`)? Add
-  `TERM=xterm-256color` under **Advanced → Session → Environment**.
+  `TERM=xterm-256color` under **Advanced → Session → Environment variables**.
 
 ## Commands and broadcast
 
@@ -115,6 +122,10 @@
   own **Interface opacity**, so the tab bar and sidebar stay readable.
 - **On COSMIC**, pick the **COSMIC** theme and change your desktop's accent color –
   Terminaal follows immediately.
+
+- **Image previews in yazi** work out of the box, locally and over SSH; tools
+  that don't ask the terminal need a flag: `chafa -f kitty`, `timg -pk`
+  ([Images](guides/images.md)).
 
 ## Config
 

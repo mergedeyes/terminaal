@@ -47,7 +47,8 @@ the file to list your hosts – would run commands from it.
 
 ## What a click can do
 
-- **Links:** <kbd>Ctrl</kbd>+click opens URLs only for a fixed set of schemes
+- **Links:** <kbd>Ctrl</kbd>+click – and opening a [hint](../guides/search-and-links.md#hints)
+  with <kbd>Shift</kbd> – opens URLs only for a fixed set of schemes
   (`https`, `http`, `mailto`, `file`, `ftp`, `git`, `gemini`, `gopher`, `news`,
   `magnet`, `ipfs`, `ipns`). A program printing an OSC 8 hyperlink can't make a
   click launch an arbitrary URL handler.

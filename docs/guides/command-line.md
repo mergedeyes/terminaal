@@ -14,6 +14,7 @@ terminaal -s bash -c "make" --hold     # ...in bash, and keep the tab afterwards
 terminaal --connect web -c "htop"      # run it on the server
 terminaal --quake                      # show or hide the drop-down window
 terminaal --help                       # the summary; `man terminaal` has it all
+terminaal --version                    # the version (also -V)
 ```
 
 Anything else is refused with a usage line and exit status 2 — including a
@@ -121,8 +122,9 @@ Icon=terminaal
 Terminal=false
 ```
 
-Use the absolute path to the binary: launchers don't necessarily have
-`~/.cargo/bin` in their `PATH`.
+Use the absolute path to the binary – `~/.local/bin/terminaal` when installed
+from a release, `~/.cargo/bin/terminaal` when built from source: launchers don't
+necessarily have either in their `PATH`.
 
 Terminaal is a window, not a filter: it does not pass the command's output to
 standard output, and its exit status says whether the window started, not how

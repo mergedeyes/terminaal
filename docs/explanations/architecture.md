@@ -55,7 +55,9 @@ contribute, or just wonder why it behaves the way it does.
    glyphs – but rows are cached by their content, so a row that didn't change,
    or only scrolled, is never shaped again. Shaping is by far the most expensive
    step; caching it is what keeps scrolling fast.
-4. **Draw:** quads, text, then egui on top, in one render pass plus egui's.
+4. **Draw:** per pane its cell backgrounds, then its images, then what lies over
+   the cells (search bar, scrollbar, borders, tab bar); then all text, and egui
+   on top – one render pass plus egui's.
 
 The font size in physical pixels is rounded to whole pixels, so every glyph
 lands exactly on its cell even at fractional scale factors (125 %, 150 %).
@@ -168,11 +170,14 @@ data buffered.
 | `src/panes.rs` | Split-pane layout: tree, rectangles, dividers, neighbours |
 | `src/window.rs`, `src/quake/` | winit window or layer surface; the drop-down window: toggle socket, Wayland layer surface, xkb keyboard |
 | `src/session.rs` | Saving and restoring the open tabs |
-| `src/render/` | Grid, tab bar, search bar, labels, quads, palette |
-| `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links |
-| `src/sftp/` | SFTP client over the terminal's connection, its session thread (listing, pipelined transfers), editing files locally with sudo |
+| `src/input.rs`, `src/input/keyboard.rs` | Keys, wheel and paste into bytes: the xterm encoding and the kitty keyboard protocol |
+| `src/render/` | Grid, tab bar, search bar, scrollbar, labels, quads, images, palette |
+| `src/gpu.rs`, `src/blur.rs` | wgpu device and surface; blur behind a see-through window |
+| `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links, hints, vi mode, images (kitty graphics) |
+| `src/sftp/` | SFTP client over the terminal's connection, its session thread (listing, pipelined transfers), editing files locally with sudo, folder sync |
 | `src/ssh/` | Host catalog, `~/.ssh/config` parser, connection worker, forwards, SOCKS, agent forwarding, keys, `known_hosts` |
-| `src/ui/` | egui sidebar, settings, SSH/keys/commands panels, context menu, splash |
+| `src/ui/` | egui sidebar, settings, SSH/keys/commands panels, files tab, context menu, command palette, the paste, clipboard and update dialogs, splash |
+| `src/update.rs` | Checking the GitHub releases, downloading and replacing the program |
 | `src/shells/` | Shell detection, managed aliases, generated startup files |
 | `src/commands.rs`, `src/snippets.rs` | Built-in commands, your own commands |
 | `src/theme.rs`, `src/theme/cosmic.rs` | Themes, COSMIC theme and its file watcher |

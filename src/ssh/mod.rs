@@ -782,6 +782,34 @@ mod tests {
     use super::*;
     use crate::sftp::sync::SyncDirection;
 
+    /// The ```toml block of the configuration reference that has `marker`.
+    fn reference_example(marker: &str) -> &'static str {
+        let guide = include_str!("../../docs/guides/configuration.md");
+        guide
+            .split("```toml\n")
+            .skip(1)
+            .filter_map(|rest| rest.split("```").next())
+            .find(|block| block.contains(marker))
+            .expect("example")
+    }
+
+    /// The hosts.toml example of the configuration reference reads, and
+    /// every host's options check out.
+    #[test]
+    fn reads_the_hosts_example_in_the_reference() {
+        let hosts = toml::from_str::<HostsFile>(reference_example("[[host]]")).unwrap().hosts;
+        assert_eq!(hosts.iter().map(|host| host.name.as_str()).collect::<Vec<_>>(), ["web1", "db1"]);
+        assert_eq!(hosts[0].logins.len(), 1);
+        let db = &hosts[1];
+        assert_eq!(db.proxy_jump.as_deref(), Some("web1"));
+        assert_eq!(db.syncs.len(), 1);
+        assert!(db.syncs[0].check().is_ok());
+        assert_eq!(db.options.color.as_deref(), Some("red"));
+        for host in &hosts {
+            host.options.settings(&|text| text.to_string()).unwrap();
+        }
+    }
+
     #[test]
     fn reads_the_sync_example_in_the_guide() {
         let guide = include_str!("../../docs/guides/files-and-sftp.md");

@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | New tab | `new_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
 | Close tab with all its panes | `close_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd> |
+| Reopen the tab closed last | `reopen_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> |
 | Next tab | `next_tab` | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> |
 | Previous tab | `previous_tab` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | Go to tab 1…9 | `tab_1` … `tab_9` | <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> |
@@ -14,10 +15,12 @@
 | Split down | `split_down` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> |
 | Close pane (the tab with its last one) | `close_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
 | Focus pane on the left / right / above / below | `focus_pane_left`, `focus_pane_right`, `focus_pane_up`, `focus_pane_down` | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd> |
+| Move the divider left / right / up / down | `resize_pane_left`, `resize_pane_right`, `resize_pane_up`, `resize_pane_down` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd> |
+| Swap with the pane on the left / right / above / below | `swap_pane_left`, `swap_pane_right`, `swap_pane_up`, `swap_pane_down` | none |
 | Maximize pane / restore | `zoom_pane` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> |
 | Broadcast on/off for the terminal | `toggle_broadcast` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
-| Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
 | Watch the terminal for silence on/off | `watch_silence` | none |
+| Files of the SSH connection (SFTP) | `open_files` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> |
 | Show/hide sidebar | `toggle_sidebar` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Open settings | `open_settings` | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
 | Command palette | `command_palette` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
@@ -36,7 +39,7 @@
 | Font size back | `font_reset` | <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 
 Not configurable: <kbd>Ctrl</kbd>+click opens links, <kbd>Shift</kbd>+wheel always
-scrolls the scrollback, and the keys inside the search bar
+scrolls the scrollback, and the keys inside the search bar, the hints and vi mode
 (see [Search, links and the scrollback](search-and-links.md)).
 
 ## Changing them in the settings
@@ -81,7 +84,7 @@ tab_9 = []
 
 - **One combination, several actions?** The action listed first above wins; the
   settings tab strikes the combination through at the other one.
-- **Clipboard, scrolling, search and prompt jumps** don't fire while a text field
+- **Clipboard, hints, scrolling, search, vi mode and prompt jumps** don't fire while a text field
   in the sidebar or settings has the keyboard – <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
   pastes into the field then. Tab, pane, window and font shortcuts work everywhere.
 - **Full-screen programs** (`less`, `vim`, `htop`) get the scrolling and
