@@ -62,6 +62,36 @@ Good to know:
 - All matches on screen are highlighted, the current one brighter. Themes can set
   both colors (`[colors.search]`).
 
+## Vi mode
+
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> gives the terminal a second
+cursor that moves through the scrollback with vi's keys – to select and copy
+without the mouse. It starts where the terminal's cursor is; the bar at the
+bottom says on which line of how many you are. Nothing you type reaches the
+program meanwhile; the program keeps running and printing.
+
+| Key | Does |
+| --- | --- |
+| <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd>, arrows | left, down, up, right |
+| <kbd>w</kbd> <kbd>b</kbd> <kbd>e</kbd> | next word, word back, end of word (words as for a double-click) |
+| <kbd>W</kbd> <kbd>B</kbd> <kbd>E</kbd> | the same for words between spaces |
+| <kbd>0</kbd> <kbd>^</kbd> <kbd>$</kbd>, <kbd>Home</kbd> <kbd>End</kbd> | start of line, first character, end of line |
+| <kbd>H</kbd> <kbd>M</kbd> <kbd>L</kbd> | top, middle, bottom of the screen |
+| <kbd>g</kbd> / <kbd>G</kbd> | top of the scrollback / the bottom |
+| <kbd>{</kbd> <kbd>}</kbd>, <kbd>%</kbd> | paragraph up / down, matching bracket |
+| <kbd>Ctrl</kbd>+<kbd>U</kbd> / <kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>B</kbd> / <kbd>F</kbd>, <kbd>PageUp</kbd> / <kbd>PageDown</kbd> | half a page, a page up / down |
+| <kbd>Ctrl</kbd>+<kbd>Y</kbd> / <kbd>E</kbd> | scroll a line, the cursor along |
+| <kbd>v</kbd>, <kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Alt</kbd>+<kbd>V</kbd> | select characters, lines, a block, words – from the cursor on; the same key again ends the selection, another changes its kind |
+| <kbd>y</kbd> | copy the selection and leave vi mode |
+| <kbd>/</kbd> or <kbd>?</kbd> | search; the cursor goes to each match, to select from there |
+| <kbd>Enter</kbd> | open the link under the cursor |
+| <kbd>Esc</kbd> | drop the selection; without one, leave vi mode |
+| <kbd>i</kbd>, <kbd>q</kbd>, <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> | leave vi mode |
+
+A click moves the vi cursor there, and a selection made with the mouse goes on
+with the keys. Vi mode belongs to one terminal: in a split tab, the others keep
+taking typing.
+
 ## Selection and clipboard
 
 - Drag with the left mouse button to select.

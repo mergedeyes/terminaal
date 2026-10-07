@@ -79,7 +79,7 @@ use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
 use crate::render::image::{ImageDraw, ImageRenderer};
 use crate::terminal::graphics::{self, SharedGraphics};
-use crate::terminal::{hints, links, prompts};
+use crate::terminal::{hints, links, prompts, vi};
 use crate::terminal::search::Search;
 use crate::terminal::session::TermOptions;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
@@ -3187,6 +3187,9 @@ impl AppState {
         if self.search.is_some() && self.search_key(&event) {
             return;
         }
+        if self.vi_key(&event) {
+            return;
+        }
 
         self.send_key(&event);
     }
@@ -3277,6 +3280,7 @@ impl AppState {
             Action::ScrollToTop => return self.scroll_by_key(Scroll::Top),
             Action::ScrollToBottom => return self.scroll_by_key(Scroll::Bottom),
             Action::Search => return self.open_search(),
+            Action::ViMode => return self.toggle_vi_mode(),
             Action::Hints => return self.toggle_hints(),
             Action::PreviousPrompt => return self.jump_prompt(true),
             Action::NextPrompt => return self.jump_prompt(false),
@@ -3440,6 +3444,58 @@ impl AppState {
         }
     }
 
+    /// Vi mode on or off in the focused terminal. Not on the settings or
+    /// files tab.
+    fn toggle_vi_mode(&mut self) -> bool {
+        let Some(terminal) = self.current_terminal() else { return false };
+        vi::toggle(&mut terminal.term.lock());
+        self.reset_cursor_blink();
+        self.window.request_redraw();
+        true
+    }
+
+    /// A key while the focused terminal is in vi mode: all keys are vi
+    /// mode's (`terminal::vi`), none goes to the program. `false` when it
+    /// isn't in vi mode.
+    fn vi_key(&mut self, event: &KeyInput) -> bool {
+        let Some(pane) = self.current_pane() else { return false };
+        let (files, cwd) = (pane.terminal.is_local(), pane.local_cwd(&self.hostname));
+        let term = pane.terminal.term.clone();
+        let mut term = term.lock();
+        if !term.mode().contains(TermMode::VI) {
+            return false;
+        }
+        let Some(action) = vi::action(event, self.modifiers) else { return true };
+        if !vi::apply(&mut term, action) {
+            match action {
+                vi::Action::Copy => {
+                    let text = term.selection_to_string();
+                    vi::toggle(&mut term);
+                    drop(term);
+                    if let Some(text) = text {
+                        self.set_clipboard(text);
+                    }
+                }
+                vi::Action::Escape | vi::Action::Exit => vi::toggle(&mut term),
+                vi::Action::Search => {
+                    drop(term);
+                    self.open_search();
+                }
+                vi::Action::Open => {
+                    let point = term.vi_mode_cursor.point;
+                    let link = self.links.at(&term, point, files, cwd.as_deref());
+                    drop(term);
+                    if let Some(link) = link {
+                        open_link(&link.target);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.window.request_redraw();
+        true
+    }
+
     /// A key while the search bar is open. Typing the query: text,
     /// Backspace, Enter/Shift+Enter jump up/down and stop typing. After
     /// that n/N jump, / or Backspace types again. Escape closes the bar
@@ -3482,6 +3538,13 @@ impl AppState {
                 self.window.request_redraw();
                 return false;
             }
+        }
+        // In vi mode the cursor goes to the match, to select from there.
+        if let Some(focus) = self.search.as_ref().and_then(Search::focus)
+            && term.mode().contains(TermMode::VI)
+        {
+            let start = *focus.start();
+            term.vi_goto_point(start);
         }
         self.window.request_redraw();
         true
@@ -3565,6 +3628,10 @@ impl AppState {
         let point = Point::new(Line(row as i32 - display_offset), Column(col));
         if let Some(sel) = term.selection.as_mut() {
             sel.update(point, side);
+        }
+        // Scrolling would pull the selection to the vi cursor otherwise.
+        if term.mode().contains(TermMode::VI) {
+            term.vi_mode_cursor.point = point;
         }
         // Dragging off the pressed cell is a selection after all.
         if self.prompt_press.is_some_and(|(_, pressed)| pressed != point) {
@@ -3805,6 +3872,9 @@ impl AppState {
                     _ => SelectionType::Lines,
                 };
                 term.selection = Some(Selection::new(kind, point, side));
+                if term.mode().contains(TermMode::VI) {
+                    term.vi_mode_cursor.point = point;
+                }
                 let on_prompt = !term.mode().contains(TermMode::ALT_SCREEN) && prompts::is_prompt_cell(&term, point);
                 drop(term);
                 self.last_click = Some(click);
@@ -4463,8 +4533,19 @@ impl AppState {
         // The lock only covers copying the grid out; shaping happens after
         // it's released, so the PTY thread isn't blocked from parsing new
         // output meanwhile.
-        let (rows, focus_rows, prompts) = {
+        let (rows, focus_rows, prompts, vi_place) = {
             let term = pane.term.lock();
+            // The vi cursor doesn't blink: it's where the keys act.
+            let vi = term.mode().contains(TermMode::VI);
+            let cursor = if vi && pane.focused { CursorStyle::Block } else { cursor };
+            // Its line counted from the top of the scrollback, of all,
+            // and its row on screen.
+            let vi_place = vi.then(|| {
+                let line = term.vi_mode_cursor.point.line;
+                let total = term.history_size() + term.screen_lines();
+                let row = line.0 + term.grid().display_offset() as i32;
+                ((line - term.topmost_line()).0 as usize + 1, total, row)
+            });
             let prompts = if term.mode().contains(TermMode::ALT_SCREEN) { Vec::new() } else { prompts::visible(&term) };
             let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&term));
             let search = self.search.as_mut().filter(|_| pane.focused);
@@ -4496,7 +4577,7 @@ impl AppState {
             let clip = [pane.rect.x as u32, pane.rect.y as u32, pane.rect.w as u32, pane.rect.h as u32];
             self.image_draws.extend(image_draws(&term, &pane.graphics, pane.id, geometry, clip));
             self.layers.push((self.quads.len(), self.image_draws.len()));
-            (rows, focus_rows, prompts)
+            (rows, focus_rows, prompts, vi_place)
         };
         let row_lengths: std::collections::HashMap<usize, usize> =
             rows.iter().map(|(row, text)| (*row, text.len())).collect();
@@ -4553,6 +4634,22 @@ impl AppState {
                 status: &status,
                 no_match: count == 0,
                 focus_rows: None,
+            };
+            let scale_factor = self.window.scale_factor() as f32;
+            let size = (pane.size.columns, pane.size.screen_lines);
+            self.search_bar.build(geometry, size, &view, scale_factor, &mut self.text, &mut self.quads);
+            cutout = self.search_bar.cutout();
+        }
+        // Vi mode's bar, unless the search or the hints have it.
+        if let Some((line, total, row)) = vi_place.filter(|_| pane.focused && self.search.is_none() && self.hints.is_none()) {
+            let status = format!("{}  ·  {}", t!("vi-line", line = line as u32, total = total as u32), t!("vi-keys"));
+            let view = SearchBarView {
+                prompt: &t!("vi-prompt"),
+                query: "",
+                editing: false,
+                status: &status,
+                no_match: false,
+                focus_rows: Some((row, row)),
             };
             let scale_factor = self.window.scale_factor() as f32;
             let size = (pane.size.columns, pane.size.screen_lines);

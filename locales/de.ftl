@@ -81,6 +81,9 @@ menu-files = Dateien (SFTP)
 
 ## Suche im Scrollback (render/search_bar.rs)
 
+vi-prompt = Vi-Modus
+vi-line = Zeile { $line } von { $total }
+vi-keys = v markieren, y kopieren, / suchen, Esc beendet
 hints-prompt = Schnellauswahl:
 hints-none = Nichts zu wählen auf dem Bildschirm
 hints-count = { $count ->
@@ -348,6 +351,7 @@ shortcut-scroll-page-down = Eine Seite vor
 shortcut-scroll-to-top = Zum Anfang des Scrollbacks
 shortcut-scroll-to-bottom = Zum Ende
 shortcut-search = Im Scrollback suchen
+shortcut-vi-mode = Vi-Modus: mit Vi-Tasten durch den Scrollback
 shortcut-previous-prompt = Zum vorigen Prompt
 shortcut-next-prompt = Zum nächsten Prompt
 shortcut-font-bigger = Größer

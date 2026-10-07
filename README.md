@@ -95,6 +95,9 @@ disk.
 - **Keys as programs expect them** – Alt, Ctrl and Shift with arrows, function
   and editing keys the xterm way, and the kitty keyboard protocol for programs
   that ask for it (fish 4, Neovim, Helix)
+- **Vi mode** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>) – move through
+  the scrollback with vi's keys, select with `v`/`V`/Ctrl+V, copy with `y`.
+  → [Search, links and the scrollback](docs/guides/search-and-links.md#vi-mode)
 - **Clipboard from programs (OSC 52)** – vim or tmux, on a server too, copy into
   your clipboard; reading it asks first. Synchronized output (mode 2026) for
   flicker-free full-screen programs
@@ -305,6 +308,7 @@ The ones you'll use most:
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> | Vi mode: select and copy in the scrollback with vi keys |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Previous / next prompt |
 | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
 
@@ -515,6 +519,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Synchronized output (mode 2026)
 - [x] Keyboard hints: copy, open or insert URLs, paths, IPs and hashes on screen by a letter
 - [x] Kitty keyboard protocol, and modifiers on every key the xterm way
+- [x] Vi mode for selecting and copying in the scrollback
 - [x] Images in the terminal (kitty graphics protocol)
 
 </details>
@@ -526,9 +531,6 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] An integrated title bar: window buttons in the tab bar instead of the desktop's title bar
 - [ ] A scrollbar for the scrollback
 - [ ] Update check at start-up against the GitHub releases, updating on request
-
-**Terminal protocols**
-- [ ] Vi mode for selecting and copying in the scrollback
 
 **SSH**
 - [ ] Folders and tags for hosts, search in the sidebar
