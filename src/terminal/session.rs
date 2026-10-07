@@ -78,18 +78,18 @@ impl TerminalSession {
         size: GridSize,
         cell_width: f32,
         cell_height: f32,
-        scrollback: usize,
+        options: TermOptions,
     ) -> std::io::Result<Self> {
         tty::setup_env();
 
-        let term = new_term(&listener, size, scrollback);
-        let options = tty::Options {
+        let term = new_term(&listener, size, options);
+        let pty_options = tty::Options {
             shell: Some(tty::Shell::new(launch.program.clone(), launch.args.clone())),
             env: launch.env.clone(),
             working_directory,
             ..tty::Options::default()
         };
-        let pty = tty::new(&options, window_size(size, cell_width, cell_height), 0)?;
+        let pty = tty::new(&pty_options, window_size(size, cell_width, cell_height), 0)?;
         let master = pty.file().try_clone()?.into();
         let shell_pid = pty.child().id();
         let shell_events = listener.clone();
@@ -112,9 +112,9 @@ impl TerminalSession {
         size: GridSize,
         cell_width: f32,
         cell_height: f32,
-        scrollback: usize,
+        options: TermOptions,
     ) -> std::io::Result<Self> {
-        let term = new_term(&listener, size, scrollback);
+        let term = new_term(&listener, size, options);
         let handle = connection::spawn(target, term.clone(), listener, window_size(size, cell_width, cell_height))?;
         Ok(Self { term, backend: Backend::Ssh(handle) })
     }
@@ -195,19 +195,36 @@ impl TerminalSession {
         }
     }
 
-    /// Keep this many lines of scrollback from now on; fewer than before
-    /// drops the oldest.
-    pub fn set_scrollback(&self, lines: usize) {
-        self.term.lock().set_options(term_config(lines));
+    /// Take over changed `options`; less scrollback than before drops the
+    /// oldest lines.
+    pub fn set_options(&self, options: TermOptions) {
+        self.term.lock().set_options(term_config(options));
     }
 }
 
-fn term_config(scrollback: usize) -> TermConfig {
-    TermConfig { scrolling_history: scrollback, ..TermConfig::default() }
+/// The settings a pane's `Term` is built with (`config.toml`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TermOptions {
+    /// Lines of scrollback.
+    pub scrollback: usize,
+    /// A double-click in a path marks only the folder or file under the
+    /// pointer instead of the whole path.
+    pub path_segments: bool,
 }
 
-fn new_term(listener: &EventProxyListener, size: GridSize, scrollback: usize) -> Arc<FairMutex<Term<EventProxyListener>>> {
-    Arc::new(FairMutex::new(Term::new(term_config(scrollback), &size, listener.clone())))
+pub(crate) fn term_config(options: TermOptions) -> TermConfig {
+    // What ends a word for a double-click: Alacritty's separators, so a
+    // path, an IP address or a file name is one word; with
+    // `path_segments`, `/` too.
+    let mut separators = alacritty_terminal::term::SEMANTIC_ESCAPE_CHARS.to_string();
+    if options.path_segments {
+        separators.push('/');
+    }
+    TermConfig { scrolling_history: options.scrollback, semantic_escape_chars: separators, ..TermConfig::default() }
+}
+
+fn new_term(listener: &EventProxyListener, size: GridSize, options: TermOptions) -> Arc<FairMutex<Term<EventProxyListener>>> {
+    Arc::new(FairMutex::new(Term::new(term_config(options), &size, listener.clone())))
 }
 
 fn window_size(size: GridSize, cell_width: f32, cell_height: f32) -> WindowSize {

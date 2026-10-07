@@ -16,8 +16,8 @@ use crate::theme::UiColors;
 #[derive(Clone, Copy, Debug)]
 pub struct Colors {
     pub bg: Color32,
-    /// `bg` as see-through as the window: for the sidebar and the settings
-    /// page, which fill a whole side of it.
+    /// `bg` as see-through as the panels: for the sidebar and the
+    /// settings page, which fill a whole side of the window.
     pub panel: Color32,
     pub row: Color32,
     pub hover: Color32,
@@ -35,6 +35,7 @@ pub struct Colors {
 
 impl Colors {
     fn new(ui: &UiColors, opacity: f32) -> Self {
+        let ui = &ui.see_through(opacity);
         let c = |Rgb { r, g, b }: Rgb| Color32::from_rgb(r, g, b);
         let Rgb { r, g, b } = ui.background;
         Self {
@@ -67,7 +68,8 @@ pub fn colors() -> Colors {
 }
 
 /// Switch the chrome to `ui`'s colors: egui's own widgets as well as
-/// [`colors`]. `opacity` is the window's (1: opaque).
+/// [`colors`]. `opacity` is the panels' (1: opaque); the text gets
+/// stronger the lower it is (`UiColors::see_through`).
 pub fn apply(ctx: &egui::Context, ui: &UiColors, opacity: f32) {
     let c = Colors::new(ui, opacity);
     *COLORS.write().unwrap_or_else(PoisonError::into_inner) = c;

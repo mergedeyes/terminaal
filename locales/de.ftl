@@ -152,6 +152,8 @@ settings-scroll-select = Beim Markieren
 settings-scroll-select-times = { $factor }× so schnell
 settings-scroll-select-off = wie sonst
 settings-scroll-select-hint = Solange mit gedrückter Maustaste markiert wird, scrollt das Rad um diesen Faktor weiter – so reicht die Auswahl schnell über mehrere Bildschirme, ohne an den Rand ziehen zu müssen. Standard 3, 1× schaltet es ab.
+settings-select-path-segments = Doppelklick markiert einen Pfadteil
+settings-select-path-segments-hint = An: in ~/Projekte/Terminal markiert ein Doppelklick auf „Terminal“ nur diesen Ordner. Aus: den ganzen Pfad. IP-Adressen und Dateinamen bleiben immer ganz; Dreifachklick markiert die Zeile.
 settings-scrollback = Scrollback
 settings-scrollback-lines = { $lines ->
     [one] { $lines } Zeile
@@ -227,6 +229,8 @@ settings-theme-cosmic = Folgt dem COSMIC-Theme des Desktops, auch beim Wechsel z
 settings-transparency = Transparenz
 settings-opacity = Deckkraft
 settings-percent = { $value } %
+settings-ui-opacity = Deckkraft der Oberfläche
+settings-ui-opacity-reset = Vorgabe des Themes ({ $value } %)
 settings-blur = Dahinter unscharf („milchig“)
 settings-blur-unsupported = Unschärfe braucht einen Compositor mit ext-background-effect (etwa COSMIC); unter KDE wirkt sie auch so.
 settings-transparency-unsupported = Grafiktreiber oder Compositor bieten keine durchscheinenden Fenster an.
@@ -246,6 +250,7 @@ settings-font-note = Die Tab-Leiste nutzt die Konsolenschrift.
 
 theme-missing-color = Die Farbe { $key } fehlt.
 theme-bad-color = { $key }: „{ $value }“ ist keine Farbe (#rrggbb).
+theme-bad-opacity = { $key }: die Deckkraft muss zwischen 0 und 1 liegen.
 
 ## Einstellungen: Tastenkürzel
 
@@ -412,6 +417,7 @@ cmd-system-unknown = System nicht erkannt – die Paketbefehle bleiben aus. In d
 cmd-no-tab = Kein Terminal-Tab offen – Befehle brauchen eine Shell.
 cmd-run-hint = Führt sofort aus: { $line }
 cmd-type-hint = Schreibt in die Eingabezeile: { $line }
+cmd-new-tab-hint = Mittelklick: in einem neuen Tab
 cmd-warn-title = Befehle laufen sofort los
 cmd-warn-body = Ein Klick schickt den Befehl direkt an die Shell des aktiven Tabs, samt Enter. In den Einstellungen unter „Shell“ lässt sich das auf bloßes Eintippen umstellen.
 cmd-warn-run = Verstanden, ausführen
@@ -453,6 +459,7 @@ managed-function = Funktion
 managed-block = Zeilen
 managed-unsupported = diese Shell wird nicht unterstützt
 managed-invalid-name = Erlaubt sind Buchstaben, Ziffern und _ . : + - (nicht am Anfang: -).
+managed-invalid-label = Der Name muss in eine Zeile passen.
 managed-marker-line = Eine Zeile darf nicht mit „# terminaal:“ beginnen – das sind die Markierungen der Datei.
 managed-header =
     # Aliase, Funktionen und eigene Zeilen für Terminaal.

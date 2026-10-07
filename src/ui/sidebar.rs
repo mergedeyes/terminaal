@@ -59,9 +59,10 @@ pub enum SidebarAction {
     /// Tailor the built-in commands to this system -- `None`: detect it
     /// -- and persist that.
     SetSystem(Option<Family>),
-    /// Send this built-in command to the active tab's shell, run or only
-    /// typed out depending on `commands_run`.
-    RunCommand(String),
+    /// Send this built-in command or snippet to the active tab's shell --
+    /// or, `new_tab`, to that of a new tab like it -- run or only typed out
+    /// depending on `commands_run`.
+    RunCommand { line: String, new_tab: bool },
     /// Pause the active tab's port forward at this index, or start it.
     SetForward(usize, bool),
     /// The command files from the server are edited with (persisted);
@@ -191,7 +192,7 @@ impl Sidebar {
     /// is acknowledged. Empty then, and that section shows.
     pub fn activate_command(&mut self, line: &str, config: &Config) -> Vec<SidebarAction> {
         let mut actions = Vec::new();
-        self.commands.activate(line, config, &mut actions);
+        self.commands.activate(line, false, config, &mut actions);
         if actions.is_empty() {
             self.section = Section::Shells;
         }
@@ -585,7 +586,7 @@ impl Sidebar {
             EntryKind::Function | EntryKind::Block => editor.value.trim_end().to_string(),
         };
 
-        managed::validate_name(&name)?;
+        managed::validate_name(kind, &name)?;
         if value.trim().is_empty() {
             return Err(match kind {
                 EntryKind::Alias => t!("shells-command-missing"),
@@ -599,8 +600,9 @@ impl Sidebar {
         let is_original = |e: &Entry| e.kind == kind && original.as_deref() == Some(e.name.as_str());
         // One namespace for both: a same-named alias would shadow the
         // function (bash/zsh) or replace it (fish, where aliases are
-        // functions).
-        if let Some(clash) = entries.iter().find(|e| e.name == name && !is_original(e)) {
+        // functions). A block's name is only a label, among the blocks.
+        let same_namespace = |e: &Entry| (e.kind == EntryKind::Block) == (kind == EntryKind::Block);
+        if let Some(clash) = entries.iter().find(|e| e.name == name && same_namespace(e) && !is_original(e)) {
             return Err(t!("shells-name-taken", name = &name, kind = clash.kind.label()));
         }
         let entry = Entry { kind, name: name.clone(), value };

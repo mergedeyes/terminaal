@@ -4,8 +4,9 @@
 //! (`crate::snippets`): those for this tab's system and host as buttons,
 //! all of them to add, edit and delete under "Manage".
 //!
-//! A click hands the line back as [`SidebarAction::RunCommand`]; whether
-//! it is run or only typed into the prompt is `commands_run`. Before the
+//! A click hands the line back as [`SidebarAction::RunCommand`], a
+//! middle-click for a new tab like the active one; whether it is run or
+//! only typed into the prompt is `commands_run`. Before the
 //! first one is run, the warning below says so -- once per installation
 //! (`commands_warned`).
 
@@ -21,8 +22,9 @@ use crate::ui::widgets::{Status, section_title, weak};
 
 #[derive(Default)]
 pub struct CommandsPanel {
-    /// The command line waiting for the warning to be acknowledged.
-    pending: Option<String>,
+    /// The command line waiting for the warning to be acknowledged, and
+    /// whether it goes to a new tab.
+    pending: Option<(String, bool)>,
     snippets: Vec<Snippet>,
     /// snippets.toml couldn't be read: nothing is saved over it.
     load_error: Option<String>,
@@ -210,13 +212,8 @@ impl CommandsPanel {
                 for command in of_group {
                     let label = RichText::new(command.builtin.label());
                     let label = if command.changes { label.color(theme::colors().accent) } else { label };
-                    let hint = if config.commands_run {
-                        t!("cmd-run-hint", line = &command.line)
-                    } else {
-                        t!("cmd-type-hint", line = &command.line)
-                    };
-                    if ui.button(label).on_hover_text(hint).clicked() {
-                        self.activate(&command.line, config, actions);
+                    if let Some(new_tab) = pressed(&ui.button(label).on_hover_text(button_hint(config, &command.line))) {
+                        self.activate(&command.line, new_tab, config, actions);
                     }
                 }
             });
@@ -271,18 +268,13 @@ impl CommandsPanel {
             let mut run = None;
             ui.horizontal_wrapped(|ui| {
                 for snippet in applicable.iter().filter(|snippet| snippet.category.as_deref() == category) {
-                    let hint = if config.commands_run {
-                        t!("cmd-run-hint", line = &snippet.command)
-                    } else {
-                        t!("cmd-type-hint", line = &snippet.command)
-                    };
-                    if ui.button(&snippet.name).on_hover_text(hint).clicked() {
-                        run = Some(snippet.command.clone());
+                    if let Some(new_tab) = pressed(&ui.button(&snippet.name).on_hover_text(button_hint(config, &snippet.command))) {
+                        run = Some((snippet.command.clone(), new_tab));
                     }
                 }
             });
-            if let Some(command) = run {
-                panel.activate(&command, config, actions);
+            if let Some((command, new_tab)) = run {
+                panel.activate(&command, new_tab, config, actions);
             }
         };
         buttons(self, ui, None, actions);
@@ -324,8 +316,10 @@ impl CommandsPanel {
                                     edit = Some(i);
                                 }
                                 // Hidden ones run from here; any that fits this tab.
-                                if snippet.applies(target) && ui.small_button("▶").on_hover_text(t!("snip-run")).clicked() {
-                                    run = Some(i);
+                                if snippet.applies(target)
+                                    && let Some(new_tab) = pressed(&ui.small_button("▶").on_hover_text(format!("{}\n{}", t!("snip-run"), t!("cmd-new-tab-hint"))))
+                                {
+                                    run = Some((i, new_tab));
                                 }
                             }
                         });
@@ -342,9 +336,9 @@ impl CommandsPanel {
             );
             ui.add_space(2.0);
         }
-        if let Some(i) = run {
+        if let Some((i, new_tab)) = run {
             let command = self.snippets[i].command.clone();
-            self.activate(&command, config, actions);
+            self.activate(&command, new_tab, config, actions);
         }
         if let Some(i) = edit {
             self.editor = Some(SnippetEditor::new(Some(i), &self.snippets[i]));
@@ -518,11 +512,11 @@ impl CommandsPanel {
     /// A button was clicked: off it goes, unless the warning still has to
     /// be acknowledged. That warning is about running things unasked, so
     /// it only applies while that's what a click does.
-    pub fn activate(&mut self, line: &str, config: &Config, actions: &mut Vec<SidebarAction>) {
+    pub fn activate(&mut self, line: &str, new_tab: bool, config: &Config, actions: &mut Vec<SidebarAction>) {
         if config.commands_run && !config.commands_warned {
-            self.pending = Some(line.to_string());
+            self.pending = Some((line.to_string(), new_tab));
         } else {
-            actions.push(SidebarAction::RunCommand(line.to_string()));
+            actions.push(SidebarAction::RunCommand { line: line.to_string(), new_tab });
         }
     }
 
@@ -538,7 +532,7 @@ impl CommandsPanel {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new(t!("cmd-warn-title")).strong().color(theme::colors().accent));
                 ui.label(t!("cmd-warn-body"));
-                if let Some(line) = &self.pending {
+                if let Some((line, _)) = &self.pending {
                     ui.add_space(4.0);
                     ui.label(RichText::new(line).monospace().size(12.0).color(theme::colors().text_weak));
                 }
@@ -549,14 +543,33 @@ impl CommandsPanel {
                 });
             },
         );
-        if confirmed && let Some(line) = self.pending.take() {
+        if confirmed && let Some((line, new_tab)) = self.pending.take() {
             actions.push(SidebarAction::ChangeSetting { setting: Setting::CommandsWarned(true), save: true });
-            actions.push(SidebarAction::RunCommand(line));
+            actions.push(SidebarAction::RunCommand { line, new_tab });
         }
         if cancelled {
             self.pending = None;
         }
     }
+}
+
+/// How a command button was pressed: `Some(false)` clicked, `Some(true)`
+/// middle-clicked -- into a new tab.
+fn pressed(response: &egui::Response) -> Option<bool> {
+    if response.clicked() {
+        Some(false)
+    } else if response.middle_clicked() {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// A command button's tooltip: what a click does with `line`, and that a
+/// middle-click opens a new tab for it.
+fn button_hint(config: &Config, line: &str) -> String {
+    let click = if config.commands_run { t!("cmd-run-hint", line = line) } else { t!("cmd-type-hint", line = line) };
+    format!("{click}\n{}", t!("cmd-new-tab-hint"))
 }
 
 /// Where a snippet shows: everywhere, or which system and host.
@@ -649,7 +662,7 @@ mod tests {
                 assert!(actions.is_empty(), "nothing was clicked");
             }
         }
-        panel.pending = Some(commands::catalog(System { family: Family::Debian, root: false, ..System::default() }, false).remove(0).line);
+        panel.pending = Some((commands::catalog(System { family: Family::Debian, root: false, ..System::default() }, false).remove(0).line, false));
         let mut actions = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| panel.show(ui, &config, Some(&target(Family::Debian)), &hosts, &mut actions))
             .drop_without_applying_deltas();
@@ -667,9 +680,9 @@ mod tests {
         assert!(config.commands_run && !config.commands_warned, "as it is out of the box");
 
         let mut actions = Vec::new();
-        panel.activate(&command.line, &config, &mut actions);
+        panel.activate(&command.line, true, &config, &mut actions);
         assert!(actions.is_empty(), "nothing runs before the warning is acknowledged");
-        assert_eq!(panel.pending.as_ref(), Some(&command.line));
+        assert_eq!(panel.pending, Some((command.line.clone(), true)));
 
         // Acknowledging it runs the command and remembers the answer.
         let mut ui_actions = Vec::new();
@@ -683,24 +696,24 @@ mod tests {
                 ui_actions.as_slice(),
                 [
                     SidebarAction::ChangeSetting { setting: Setting::CommandsWarned(true), save: true },
-                    SidebarAction::RunCommand(line),
+                    SidebarAction::RunCommand { line, new_tab: true },
                 ] if *line == command.line
             ),
-            "acknowledging should save that and run the command"
+            "acknowledging should save that and run the command, in the new tab it was meant for"
         );
         assert!(panel.pending.is_none());
 
         config.commands_warned = true;
         let mut actions = Vec::new();
-        panel.activate(&command.line, &config, &mut actions);
-        assert!(matches!(actions.as_slice(), [SidebarAction::RunCommand(_)]));
+        panel.activate(&command.line, false, &config, &mut actions);
+        assert!(matches!(actions.as_slice(), [SidebarAction::RunCommand { new_tab: false, .. }]));
 
         // Typing it out is harmless, so it never asks.
         config.commands_warned = false;
         config.commands_run = false;
         let mut actions = Vec::new();
-        panel.activate(&command.line, &config, &mut actions);
-        assert!(matches!(actions.as_slice(), [SidebarAction::RunCommand(_)]));
+        panel.activate(&command.line, false, &config, &mut actions);
+        assert!(matches!(actions.as_slice(), [SidebarAction::RunCommand { .. }]));
     }
 
     #[test]
@@ -740,6 +753,33 @@ mod tests {
 
     /// A click on the warning's first button ("run it"), where the second
     /// pass lays it out again in the same place.
+    #[test]
+    fn a_middle_click_asks_for_a_new_tab() {
+        let ctx = egui::Context::default();
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(egui::RawInput::default(), |ui| rect = ui.button("update").rect).drop_without_applying_deltas();
+        for (button, expected) in [(egui::PointerButton::Primary, Some(false)), (egui::PointerButton::Middle, Some(true))] {
+            let mut got = None;
+            for _ in 0..2 {
+                ctx.run_ui(press_input(rect.center(), button), |ui| got = pressed(&ui.button("update")))
+                    .drop_without_applying_deltas();
+                if got.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(got, expected, "{button:?}");
+        }
+        let mut got = None;
+        ctx.run_ui(press_input(rect.center(), egui::PointerButton::Secondary), |ui| got = pressed(&ui.button("update")))
+            .drop_without_applying_deltas();
+        assert_eq!(got, None, "a right-click does nothing");
+    }
+
+    fn press_input(pos: egui::Pos2, button: egui::PointerButton) -> egui::RawInput {
+        let event = |pressed| egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::default() };
+        egui::RawInput { events: vec![egui::Event::PointerMoved(pos), event(true), event(false)], ..egui::RawInput::default() }
+    }
+
     fn click_input() -> egui::RawInput {
         let pos = egui::pos2(20.0, 80.0);
         egui::RawInput {

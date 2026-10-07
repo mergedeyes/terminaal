@@ -78,6 +78,7 @@ use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
 use crate::terminal::{links, prompts};
 use crate::terminal::search::Search;
+use crate::terminal::session::TermOptions;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
 use crate::sftp::edit::EditAction;
 use crate::sftp::session::{Command as SftpCommand, Remote};
@@ -356,6 +357,10 @@ struct Pane {
     /// The SSH connection whose shell got its startup commands (see
     /// `Opener::connection`); a new one gets them again.
     startup_connection: u64,
+    /// A command line to go in once, after the startup commands: a command
+    /// button middle-clicked into a new tab. Whether it's run with Enter
+    /// (`commands_run` at the time).
+    queued: Option<(String, bool)>,
     /// `--hold`: stay once what the pane runs has ended, showing how it
     /// ended, instead of closing with it.
     hold: bool,
@@ -446,6 +451,10 @@ const PROGRAM_POLL: Duration = Duration::from_millis(250);
 
 /// How often a selection dragged past the edge of its pane scrolls on.
 const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(40);
+
+/// How soon a press on the same cell counts as the next of a double or
+/// triple click (GTK's default).
+const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 
 /// What a terminal is called in the tab bar, out of everything it says
 /// about itself: the title a running program set for itself, else the
@@ -680,6 +689,8 @@ struct AppState {
     /// A left press on a prompt that hasn't turned into a drag: letting go
     /// selects that command's block. Pane id and the pressed cell.
     prompt_press: Option<(usize, Point)>,
+    /// The last left press into a grid, to count double and triple clicks.
+    last_click: Option<Click>,
     /// A paste waiting for the go-ahead; the dialog has the keyboard.
     paste_warning: Option<PasteWarning>,
     /// The open command palette; it has the keyboard while open.
@@ -798,7 +809,7 @@ impl AppState {
             text,
             grid_text: GridText::default(),
             // Opaque until `apply_transparency` below.
-            tab_bar: TabBar::new(palette.named(NamedColor::Background), theme.ui, 1.0),
+            tab_bar: TabBar::new(palette.named(NamedColor::Background), theme.ui, 1.0, 1.0),
             tab_bar_height,
             hovered: None,
             divider_hovered: None,
@@ -822,6 +833,7 @@ impl AppState {
             context_menu: None,
             context_output: None,
             prompt_press: None,
+            last_click: None,
             command_palette: None,
             sync_jobs: Vec::new(),
             hosts_seen: 0,
@@ -951,7 +963,7 @@ impl AppState {
         self.next_pane_id += 1;
         let listener = EventProxyListener::new(self.proxy.clone(), id);
         let size = self.grid_size_in(rect);
-        let (cell, scrollback) = (self.text.cell, self.config.scrollback_lines);
+        let (cell, options) = (self.text.cell, self.term_options());
         let (terminal, title) = match &origin {
             PaneOrigin::Shell(shell) => {
                 // `-c`: the shell evaluates that one line instead of
@@ -967,7 +979,7 @@ impl AppState {
                     size,
                     cell.width,
                     cell.height,
-                    scrollback,
+                    options,
                 )?;
                 let title = match run.command {
                     Some(line) => launch::command_title(line),
@@ -977,7 +989,7 @@ impl AppState {
             }
             PaneOrigin::Ssh(target) => {
                 let terminal =
-                    TerminalSession::connect_ssh(listener, (**target).clone(), size, cell.width, cell.height, scrollback)?;
+                    TerminalSession::connect_ssh(listener, (**target).clone(), size, cell.width, cell.height, options)?;
                 if let Some(opener) = terminal.opener() {
                     self.adopt_files_tabs(id, &login_of(target), &opener);
                     self.sync_in_background(id, target, &opener);
@@ -1008,6 +1020,7 @@ impl AppState {
             command_started: None,
             startup,
             startup_connection: 0,
+            queued: None,
             hold: run.hold,
             exit_code: None,
             broadcast: false,
@@ -2138,18 +2151,25 @@ impl AppState {
         if pane.startup.take().is_none() {
             return;
         }
+        let queued = pane.queued.take();
         let pane = &self.tabs[tab].panes().expect("found above").panes[idx];
         let ssh = matches!(pane.origin, PaneOrigin::Ssh(_));
         let target = self.target_of(&pane.terminal);
-        let lines: Vec<&str> =
-            self.sidebar.snippets().iter().filter(|snippet| snippet.runs_at_start(ssh, &target)).map(|s| s.command.as_str()).collect();
-        if lines.is_empty() {
+        let mut lines: Vec<(&str, bool)> = self
+            .sidebar
+            .snippets()
+            .iter()
+            .filter(|snippet| snippet.runs_at_start(ssh, &target))
+            .map(|s| (s.command.as_str(), true))
+            .collect();
+        if lines.is_empty() && queued.is_none() {
             return;
         }
         log::info!("running {} startup command(s) in {}", lines.len(), pane.default_title);
+        lines.extend(queued.as_ref().map(|(line, run)| (line.as_str(), *run)));
         let mode = *pane.terminal.term.lock().mode();
-        for line in lines {
-            if let Some(bytes) = input::paste_to_bytes(line, mode, true) {
+        for (line, run) in lines {
+            if let Some(bytes) = input::paste_to_bytes(line, mode, run) {
                 pane.terminal.send_input(bytes);
             }
         }
@@ -2160,6 +2180,23 @@ impl AppState {
     fn run_command(&mut self, line: String) {
         let run = self.config.commands_run;
         self.send_to_input_panes(|mode| input::paste_to_bytes(&line, mode, run));
+    }
+
+    /// A command button middle-clicked: the same in a new tab like the
+    /// focused terminal -- its shell in its directory, or its SSH host
+    /// logged into anew -- once that tab's shell is ready, after its own
+    /// startup commands. Without a terminal in view, the default shell.
+    fn run_command_in_new_tab(&mut self, line: String) {
+        let (origin, cwd) = match self.tabs.get(self.active_tab).and_then(Tab::focused) {
+            Some(pane) => (pane.origin.clone(), pane.local_cwd(&self.hostname)),
+            None => (PaneOrigin::Shell(self.default_shell()), None),
+        };
+        let mut pane = match self.spawn_pane(origin, cwd, self.console_rect(), Run::default()) {
+            Ok(pane) => pane,
+            Err(err) => return log::error!("failed to open new tab: {err}"),
+        };
+        pane.queued = Some((line, self.config.commands_run));
+        self.push_tab(TabContent::Terminals(Panes::new(pane)));
     }
 
     fn settings_active(&self) -> bool {
@@ -3315,10 +3352,21 @@ impl AppState {
                 let mut term = pane.terminal.term.lock();
                 let display_offset = term.renderable_content().display_offset as i32;
                 let point = Point::new(Line(row as i32 - display_offset), Column(col));
-                term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                let click = Click::next(self.last_click, Instant::now(), id, point);
+                // Once a word, twice a line; dragging on extends by words
+                // or lines.
+                let kind = match click.count {
+                    1 => SelectionType::Simple,
+                    2 => SelectionType::Semantic,
+                    _ => SelectionType::Lines,
+                };
+                term.selection = Some(Selection::new(kind, point, side));
                 let on_prompt = !term.mode().contains(TermMode::ALT_SCREEN) && prompts::is_prompt_cell(&term, point);
                 drop(term);
-                self.prompt_press = on_prompt.then_some((id, point));
+                self.last_click = Some(click);
+                // Only a single click on a prompt selects its command;
+                // the second would replace the word just marked.
+                self.prompt_press = (on_prompt && click.count == 1).then_some((id, point));
                 self.window.request_redraw();
             }
             _ => {}
@@ -3634,7 +3682,8 @@ impl AppState {
                 self.apply_theme();
                 self.report(origin, Ok(t!("settings-themes-reloaded", count = self.themes.all().len())));
             }
-            SidebarAction::RunCommand(line) => self.run_command(line),
+            SidebarAction::RunCommand { line, new_tab: false } => self.run_command(line),
+            SidebarAction::RunCommand { line, new_tab: true } => self.run_command_in_new_tab(line),
             SidebarAction::SetForward(index, enabled) => {
                 if let Some(terminal) = self.current_terminal() {
                     terminal.set_forward(index, enabled);
@@ -3672,9 +3721,9 @@ impl AppState {
     fn apply_theme(&mut self) {
         self.theme = self.themes.get(self.config.theme.as_deref()).clone();
         self.palette = Palette::new(&self.theme.terminal);
-        self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity());
+        self.tab_bar = self.new_tab_bar();
         self.search_bar = SearchBar::new(self.theme.ui);
-        crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.opacity());
+        crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.ui_opacity());
         self.sidebar.set_theme_names(self.themes.all().iter().map(|theme| theme.name.clone()).collect());
         // A host's theme may have changed with the others.
         let looks: Vec<Vec<PaneLook>> = self
@@ -3703,6 +3752,18 @@ impl AppState {
     /// opacity, as long as the surface can be see-through at all.
     fn opacity(&self) -> f32 {
         if self.gpu.translucent() { self.config.opacity() } else { 1.0 }
+    }
+
+    /// How opaque the panels are drawn: tab bar, sidebar, settings page.
+    /// The configured value or the theme's, never more see-through than
+    /// the console.
+    fn ui_opacity(&self) -> f32 {
+        let wanted = self.config.ui_opacity().or(self.theme.ui.opacity).unwrap_or(crate::config::DEFAULT_UI_OPACITY);
+        wanted.max(self.opacity())
+    }
+
+    fn new_tab_bar(&self) -> TabBar {
+        TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity(), self.ui_opacity())
     }
 
     /// Make the window as see-through as `opacity` says, blurred behind
@@ -3801,15 +3862,11 @@ impl AppState {
                 _ => self.session_changed(),
             },
             Setting::Opacity(_) | Setting::Blur(_) => self.apply_transparency(),
+            Setting::UiOpacity(_) => self.apply_theme(),
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
-            Setting::ScrollbackLines(lines) if save => {
-                for panes in self.tabs.iter().filter_map(Tab::panes) {
-                    for pane in &panes.panes {
-                        pane.terminal.set_scrollback(lines);
-                    }
-                }
-            }
+            Setting::ScrollbackLines(_) if save => self.apply_term_options(),
+            Setting::SelectPathSegments(_) => self.apply_term_options(),
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
@@ -3829,6 +3886,21 @@ impl AppState {
         self.window.request_redraw();
     }
 
+    /// What the panes' terminals are built with, from the config.
+    fn term_options(&self) -> TermOptions {
+        TermOptions { scrollback: self.config.scrollback_lines, path_segments: self.config.select_path_segments }
+    }
+
+    /// Hand every terminal the configured [`TermOptions`].
+    fn apply_term_options(&self) {
+        let options = self.term_options();
+        for panes in self.tabs.iter().filter_map(Tab::panes) {
+            for pane in &panes.panes {
+                pane.terminal.set_options(options);
+            }
+        }
+    }
+
     /// The font size in use: the configured one plus any zoom.
     fn font_size(&self) -> f32 {
         self.config.font_size + self.font_zoom
@@ -3840,7 +3912,7 @@ impl AppState {
         let scale_factor = self.window.scale_factor() as f32;
         self.text.set_font(self.font_size() * scale_factor, self.config.line_height_factor);
         self.grid_text = GridText::default();
-        self.tab_bar = TabBar::new(self.palette.named(NamedColor::Background), self.theme.ui, self.opacity());
+        self.tab_bar = self.new_tab_bar();
         self.tab_bar_height = tab_bar_height(&self.config, self.text.cell, scale_factor);
         // The shells learn the new cell size even if the grid keeps its
         // columns and rows.
@@ -4404,6 +4476,33 @@ fn pixel_to_cell(x: f64, y: f64, geometry: grid::GridGeometry, size: GridSize) -
     (col, row, side)
 }
 
+/// A left press into a grid: which of a run of clicks it is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Click {
+    at: Instant,
+    pane: usize,
+    point: Point,
+    /// 1 single, 2 double, 3 triple.
+    count: u8,
+}
+
+impl Click {
+    /// The press at `point` in `pane` after `last`: the next of the run if
+    /// it's on the same cell within [`MULTI_CLICK_INTERVAL`] of the one
+    /// before, else a single click. A fourth starts over, as in Alacritty.
+    fn next(last: Option<Click>, at: Instant, pane: usize, point: Point) -> Self {
+        let count = match last {
+            Some(last)
+                if last.pane == pane && last.point == point && at.saturating_duration_since(last.at) <= MULTI_CLICK_INTERVAL =>
+            {
+                last.count % 3 + 1
+            }
+            _ => 1,
+        };
+        Self { at, pane, point, count }
+    }
+}
+
 /// Lines one tick scrolls while a selection is dragged past the edge of
 /// its grid: none inside `top..bottom`, otherwise one per cell of
 /// overshoot (positive into the scrollback, so above the grid), capped so
@@ -4767,6 +4866,64 @@ impl ApplicationHandler<UserEvent> for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clicks_on_the_same_cell_in_quick_succession_count_up() {
+        use super::{Click, MULTI_CLICK_INTERVAL};
+        use alacritty_terminal::index::{Column, Line, Point};
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let cell = Point::new(Line(2), Column(5));
+        let first = Click::next(None, at(0), 1, cell);
+        assert_eq!(first.count, 1);
+        let second = Click::next(Some(first), at(150), 1, cell);
+        assert_eq!(second.count, 2);
+        let third = Click::next(Some(second), at(300), 1, cell);
+        assert_eq!(third.count, 3);
+        // A fourth starts over.
+        assert_eq!(Click::next(Some(third), at(450), 1, cell).count, 1);
+        // Too late, another cell, another pane: a single click again.
+        let late = at(150) + MULTI_CLICK_INTERVAL + Duration::from_millis(1);
+        assert_eq!(Click::next(Some(second), late, 1, cell).count, 1);
+        assert_eq!(Click::next(Some(first), at(150), 1, Point::new(Line(2), Column(6))).count, 1);
+        assert_eq!(Click::next(Some(first), at(150), 2, cell).count, 1);
+    }
+
+    #[test]
+    fn double_click_marks_a_word_triple_click_a_line() {
+        use alacritty_terminal::index::{Column, Line, Point, Side};
+        use alacritty_terminal::selection::{Selection, SelectionType};
+        use alacritty_terminal::term::test::TermSize;
+        use alacritty_terminal::term::Term;
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+
+        use crate::terminal::session::{TermOptions, term_config};
+
+        let options = TermOptions { scrollback: 100, path_segments: false };
+        let mut term = Term::new(term_config(options), &TermSize::new(40, 3), VoidListener);
+        Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\n~/Projekte/Terminal main");
+        let select = |term: &mut Term<VoidListener>, kind, column| {
+            term.selection = Some(Selection::new(kind, Point::new(Line(0), Column(column)), Side::Left));
+            term.selection_to_string().unwrap()
+        };
+        // Inside the address, dots and all, without the colon after it.
+        assert_eq!(select(&mut term, SelectionType::Semantic, 10), "192.168.178.20");
+        assert_eq!(select(&mut term, SelectionType::Semantic, 1), "ping");
+        let select_below = |term: &mut Term<VoidListener>, column| {
+            term.selection = Some(Selection::new(SelectionType::Semantic, Point::new(Line(1), Column(column)), Side::Left));
+            term.selection_to_string().unwrap()
+        };
+        // A path is one word, unless the option says otherwise: then only
+        // the folder or file under the pointer.
+        assert_eq!(select_below(&mut term, 14), "~/Projekte/Terminal");
+        term.set_options(term_config(TermOptions { path_segments: true, ..options }));
+        assert_eq!(select_below(&mut term, 14), "Terminal");
+        assert_eq!(select_below(&mut term, 4), "Projekte");
+        assert_eq!(select(&mut term, SelectionType::Lines, 10), "ping 192.168.178.20: ok\n");
+    }
+
     #[test]
     fn title_names_the_running_program_unless_it_titles_itself() {
         use std::path::PathBuf;

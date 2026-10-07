@@ -84,7 +84,7 @@ fn build(roots: &Roots, component: &str) -> Result<Theme, String> {
 
     let bg = color(&background, "background", "base")?;
     let fg = color(&background, "background", "on")?;
-    let panel = color(&primary, "primary", "base")?;
+    let (panel, panel_alpha) = primary.rgba("base").ok_or("primary → base")?;
     let panel_text = color(&primary, "primary", "on")?;
     let (divider, divider_alpha) = primary.rgba("divider").ok_or("primary → divider")?;
     let accent = color(&accent, "accent", "base")?;
@@ -143,6 +143,9 @@ fn build(roots: &Roots, component: &str) -> Result<Theme, String> {
         success: optional("success").unwrap_or(bright[2]),
         input: bg,
         text_selection: mix(panel, accent, 0.4),
+        // Below 1 with frosted glass on: how see-through COSMIC's own
+        // panels are.
+        opacity: Some(panel_alpha.clamp(0.0, 1.0)),
     };
     Ok(Theme { name: NAME.to_string(), source: Source::Cosmic, terminal, ui })
 }
@@ -500,10 +503,17 @@ mod tests {
         let [black, .., white] = theme.terminal.normal;
         assert!(luminance(black) < luminance(white), "{black:?} vs {white:?}");
 
+        assert_eq!(theme.ui.opacity, Some(1.0));
+
         write(&user, MODE, "is_dark", "true\n");
         let theme = load(&roots).unwrap().unwrap();
         assert!(theme.ui.is_dark());
         assert_eq!(theme.ui.accent, Rgb { r: 128, g: 128, b: 128 });
+
+        // Frosted glass: the panels keep COSMIC's alpha.
+        let frosted = container(0.15, 0.8).replacen("alpha: 1.0", "alpha: 0.85", 1);
+        write(&user, DARK, "primary", &frosted);
+        assert_eq!(load(&roots).unwrap().unwrap().ui.opacity, Some(0.85));
 
         // Unreadable in the user's folder: the system's value counts.
         write(&user, DARK, "palette", "(broken");

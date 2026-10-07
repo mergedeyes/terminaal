@@ -212,14 +212,16 @@ pub struct TabBar {
     /// it so it visually merges into the terminal content below.
     terminal_bg: Rgb,
     colors: UiColors,
-    /// The window's opacity, for the bar's and tabs' backgrounds.
+    /// The console's opacity, for the active tab that opens into it.
     opacity: f32,
+    /// The panels' opacity, for the bar and the other tabs.
+    ui_opacity: f32,
     labels: Labels,
 }
 
 impl TabBar {
-    pub fn new(terminal_bg: Rgb, colors: UiColors, opacity: f32) -> Self {
-        Self { terminal_bg, colors, opacity, labels: Labels::default() }
+    pub fn new(terminal_bg: Rgb, colors: UiColors, opacity: f32, ui_opacity: f32) -> Self {
+        Self { terminal_bg, colors, opacity, ui_opacity, labels: Labels::default() }
     }
 
     /// Append the bar's rectangles to `quads` and re-fill the label
@@ -236,16 +238,21 @@ impl TabBar {
         self.labels.clear();
         let (h, px) = (layout.height, layout.px);
         let cell = text.cell;
-        let (c, op) = (self.colors, self.opacity);
-        // Backgrounds are as see-through as the window; lines, icons and
-        // text stay solid.
-        let fill = |rect: Rect, color: Rgb| QuadInstance {
-            offset: [rect.x, rect.y],
-            size: [rect.w, rect.h],
-            color: to_linear(color, op),
+        // Text strong enough for what shines through the backgrounds
+        // (`UiColors::see_through`).
+        let c = self.colors.see_through(self.ui_opacity);
+        // Backgrounds are as see-through as the panels, the active tab as
+        // the console; lines, icons and text stay solid.
+        let fill_at = |opacity: f32| {
+            move |rect: Rect, color: Rgb| QuadInstance {
+                offset: [rect.x, rect.y],
+                size: [rect.w, rect.h],
+                color: to_linear(color, opacity),
+            }
         };
+        let (fill, fill_active) = (fill_at(self.ui_opacity), fill_at(self.opacity));
         let text_color = |Rgb { r, g, b }: Rgb| TextColor::rgb(r, g, b);
-        let text_active = text_color(c.text);
+        let text_active = text_color(self.colors.see_through(self.opacity.min(self.ui_opacity)).text);
         let text_hover = text_color(mix(c.text_weak, c.text, 0.7));
         let text_inactive = text_color(c.text_weak);
 
@@ -318,7 +325,7 @@ impl TabBar {
                 // tinted in its color on top of that; in the background,
                 // its line alone marks it.
                 let background = background.unwrap_or(self.terminal_bg);
-                quads.push(fill(r, accent.map_or(background, |accent| mix(background, accent, 0.22))));
+                quads.push(fill_active(r, accent.map_or(background, |accent| mix(background, accent, 0.22))));
             } else if is_hovered {
                 quads.push(fill(Rect { h: h - px, ..r }, c.hover));
             }

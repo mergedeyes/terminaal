@@ -152,6 +152,8 @@ settings-scroll-select = While marking
 settings-scroll-select-times = { $factor }× as fast
 settings-scroll-select-off = as usual
 settings-scroll-select-hint = While you hold the button to mark text, the wheel scrolls this much further – a selection reaches over several screens without dragging to the edge. Default 3, 1× turns it off.
+settings-select-path-segments = Double-click marks one part of a path
+settings-select-path-segments-hint = On: in ~/Projects/Terminal, a double-click on “Terminal” marks only that folder. Off: the whole path. IP addresses and file names always stay whole; a triple-click marks the line.
 settings-scrollback = Scrollback
 settings-scrollback-lines = { $lines ->
     [one] { $lines } line
@@ -227,6 +229,8 @@ settings-theme-cosmic = Follows the desktop's COSMIC theme, switching between li
 settings-transparency = Translucency
 settings-opacity = Opacity
 settings-percent = { $value } %
+settings-ui-opacity = Interface opacity
+settings-ui-opacity-reset = Theme default ({ $value } %)
 settings-blur = Blur what's behind (frosted)
 settings-blur-unsupported = Blur needs a compositor with ext-background-effect (such as COSMIC); on KDE it works anyway.
 settings-transparency-unsupported = The graphics driver or compositor offers no see-through windows.
@@ -246,6 +250,7 @@ settings-font-note = The tab bar uses the console font.
 
 theme-missing-color = The color { $key } is missing.
 theme-bad-color = { $key }: “{ $value }” is not a color (#rrggbb).
+theme-bad-opacity = { $key }: the opacity must be between 0 and 1.
 
 ## Settings: keyboard shortcuts
 
@@ -412,6 +417,7 @@ cmd-system-unknown = System not recognized – the package commands stay hidden.
 cmd-no-tab = No terminal tab open – commands need a shell.
 cmd-run-hint = Runs right away: { $line }
 cmd-type-hint = Types into the prompt: { $line }
+cmd-new-tab-hint = Middle-click: in a new tab
 cmd-warn-title = Commands run right away
 cmd-warn-body = A click sends the command straight to the active tab's shell, Enter included. The settings under “Shell” can switch that to typing it out instead.
 cmd-warn-run = Got it, run it
@@ -453,6 +459,7 @@ managed-function = function
 managed-block = lines
 managed-unsupported = this shell is not supported
 managed-invalid-name = Only letters, digits and _ . : + - are allowed (and no - at the start).
+managed-invalid-label = The name must fit on one line.
 managed-marker-line = A line must not start with “# terminaal:” – those are the file’s markers.
 managed-header =
     # Aliases, functions and lines of your own for Terminaal.

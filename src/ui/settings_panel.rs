@@ -418,6 +418,11 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     change(actions, moved, Setting::ScrollSelectFactor(factor));
     ui.label(weak(t!("settings-scroll-select-hint")).size(11.0));
     ui.add_space(4.0);
+    if let Some(on) = checkbox(ui, t!("settings-select-path-segments"), "select_path_segments", config.select_path_segments) {
+        change(actions, Some(true), Setting::SelectPathSegments(on));
+    }
+    ui.label(weak(t!("settings-select-path-segments-hint")).size(11.0));
+    ui.add_space(4.0);
     let mut scrollback = config.scrollback_lines;
     let moved = slider(ui, &t!("settings-scrollback"), "scrollback_lines", &mut scrollback, 0..=100_000, 1000.0, |lines| {
         t!("settings-scrollback-lines", lines = lines)
@@ -594,6 +599,28 @@ fn transparency(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarActio
         })
         .inner;
     change(actions, moved, Setting::Opacity(opacity));
+    ui.add_space(4.0);
+    // The panels: never more see-through than the console, so the slider
+    // starts where that one stands.
+    let see_through = support.supported && config.opacity() < 1.0;
+    let theme_value = view.theme.ui.opacity.unwrap_or(config::DEFAULT_UI_OPACITY);
+    let mut ui_opacity = config.ui_opacity().unwrap_or(theme_value).max(config.opacity());
+    let moved = ui
+        .add_enabled_ui(see_through, |ui| {
+            slider(ui, &t!("settings-ui-opacity"), "ui_opacity", &mut ui_opacity, config.opacity()..=1.0, 0.05, |opacity| {
+                t!("settings-percent", value = f64::from((opacity * 100.0).round()))
+            })
+        })
+        .inner;
+    change(actions, moved, Setting::UiOpacity(Some(ui_opacity)));
+    if config.ui_opacity().is_some() {
+        let reset = ui.add_enabled_ui(see_through, |ui| {
+            ui.small_button(t!("settings-ui-opacity-reset", value = f64::from((theme_value * 100.0).round())))
+        });
+        if reset.inner.clicked() {
+            change(actions, Some(true), Setting::UiOpacity(None));
+        }
+    }
     ui.add_space(4.0);
     let moved = ui
         .add_enabled_ui(support.supported && config.opacity() < 1.0, |ui| {
