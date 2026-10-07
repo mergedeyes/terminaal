@@ -63,6 +63,10 @@ pub struct Config {
     pub cursor_blink: bool,
     /// Blink half-period in milliseconds (time visible == time hidden).
     pub cursor_blink_interval_ms: u64,
+    /// Desktop notifications (and the window highlighted in the dock) when
+    /// a long command finishes or a watched terminal goes quiet out of
+    /// view. Off: neither, whatever `notify_after_secs` says.
+    pub notifications: bool,
     /// Notify when a command that ran at least this many seconds finishes
     /// while its tab isn't in view (needs shell integration); 0: never.
     pub notify_after_secs: u64,
@@ -180,6 +184,7 @@ impl Default for Config {
             default_height: 650.0,
             cursor_blink: true,
             cursor_blink_interval_ms: 600,
+            notifications: true,
             notify_after_secs: 10,
             silence_secs: 15,
             tab_bar: true,
@@ -417,6 +422,7 @@ impl Config {
             Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
+            Setting::Notifications(on) => self.notifications = on,
             Setting::NotifyAfter(secs) => self.notify_after_secs = secs,
             Setting::SilenceAfter(secs) => self.silence_secs = secs.max(1),
             Setting::TabBar(on) => self.tab_bar = on,
@@ -481,6 +487,7 @@ pub enum Setting {
     CursorBlink(bool),
     CursorBlinkInterval(u64),
     /// Seconds a command has to run to be notified about; 0: never.
+    Notifications(bool),
     NotifyAfter(u64),
     /// Seconds without output a watched terminal counts as quiet after.
     SilenceAfter(u64),
@@ -524,6 +531,7 @@ impl Setting {
             }
             Self::CursorBlink(on) => set_value(doc, "cursor_blink", on),
             Self::CursorBlinkInterval(ms) => set_value(doc, "cursor_blink_interval_ms", int(ms)),
+            Self::Notifications(on) => set_value(doc, "notifications", on),
             Self::NotifyAfter(secs) => set_value(doc, "notify_after_secs", int(secs)),
             Self::SilenceAfter(secs) => set_value(doc, "silence_secs", int(secs)),
             Self::TabBar(on) => set_value(doc, "tab_bar", on),
@@ -627,6 +635,7 @@ mod tests {
             Setting::WindowSize { width: 1200.4, height: 700.0 },
             Setting::TabBar(false),
             Setting::CursorBlinkInterval(450),
+            Setting::Notifications(false),
             Setting::NotifyAfter(30),
             Setting::SilenceAfter(45),
             Setting::Opacity(0.85),
@@ -656,6 +665,7 @@ mod tests {
         assert_eq!((config.default_width, config.default_height), (1200.0, 700.0));
         assert!(!config.tab_bar);
         assert_eq!(config.cursor_blink_interval_ms, 450);
+        assert!(!config.notifications);
         assert_eq!(config.notify_after_secs, 30);
         assert_eq!(config.silence_secs, 45);
         assert_eq!(config.opacity(), 0.85);

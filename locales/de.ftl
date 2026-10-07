@@ -160,6 +160,9 @@ settings-scrollback-lines = { $lines ->
    *[other] { $lines } Zeilen
 }
 settings-scrollback-note = Gilt nach dem Loslassen für alle Tabs; kleiner gestellt, verwirft er die ältesten Zeilen.
+settings-notifications-title = Benachrichtigungen
+settings-notifications = Benachrichtigungen am Desktop
+settings-notifications-hint = Wenn ein langer Befehl fertig wird oder ein beobachtetes Terminal still wird, während du woanders bist: eine Benachrichtigung, und das Fenster wird im Dock hervorgehoben. Die Punkte in der Tab-Leiste kommen so oder so.
 settings-integration = Shell-Integration
 settings-notify-after = Benachrichtigen nach
 settings-notify-never = nie
@@ -167,7 +170,7 @@ settings-seconds = { $secs } s
 settings-integration-note = Benachrichtigt, wenn ein Befehl so lange lief und sein Tab gerade nicht zu sehen ist. fish, bash und zsh melden Prompts und Verzeichnis in Terminaal von selbst, andere Shells mit OSC 133 und OSC 7.
 settings-activity = Tabs im Hintergrund
 settings-silence-after = Still nach
-settings-activity-note = Ein Tab im Hintergrund bekommt einen Punkt vor dem Titel: in der Akzentfarbe bei neuer Ausgabe, rot bei der Glocke, grün, wenn ein Terminal, auf dessen Stille geachtet wird (Rechtsklick → Auf Stille achten), so lange nichts ausgegeben hat – dann auch mit Benachrichtigung.
+settings-activity-note = Ein Tab im Hintergrund bekommt einen Punkt vor dem Titel: in der Akzentfarbe bei neuer Ausgabe, rot bei der Glocke, grün, wenn ein Terminal, auf dessen Stille geachtet wird (Rechtsklick → Auf Stille achten), so lange nichts ausgegeben hat – dann auch mit Benachrichtigung, sofern eingeschaltet.
 paste-warn-title = ⚠ Wirklich einfügen?
 paste-warn-broadcast = Geht an { $terminals } Terminals (Broadcast).
 paste-warn-runs-lines = { $lines ->

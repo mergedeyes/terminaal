@@ -92,7 +92,9 @@ What each sequence means:
 - **Notifications**: **Settings → Terminal → Shell integration → Notify after**
   (default 10 seconds, 0 turns it off). You're notified only when the window
   isn't focused or the command's tab isn't the active one. Needs `notify-send`;
-  the taskbar entry is also marked as needing attention.
+  the taskbar entry is also marked as needing attention. **Settings → Terminal →
+  Notifications → Desktop notifications** turns all of Terminaal's notifications
+  off at once (`notifications = false`).
 - **Tab titles**: while a program runs in a local tab, the tab is named after
   it (`btop`, `less`) – or after the title the program sets for itself if it
   sets one (`notes.md (~) - VIM`). At the prompt, a title set by the shell

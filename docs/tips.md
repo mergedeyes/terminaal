@@ -49,6 +49,8 @@
   shell integration, a long command finishing notifies you anyway – watching
   helps where there's no prompt: a log you tail, a program that runs on, SSH to
   a server without OSC 133.
+- **Rather not be notified at all?** Settings → Terminal → Notifications → turn
+  off **Desktop notifications**. The dots in the tab bar stay.
 - **Dots before tab titles**: blue-ish (the theme's accent) for new output, red
   for the bell, green for gone quiet, a hollow ○ while a terminal is watched.
   They go away when you switch to the tab.
