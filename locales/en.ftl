@@ -174,6 +174,16 @@ settings-integration-note = Notifies when a command ran this long and its tab is
 settings-activity = Background tabs
 settings-silence-after = Quiet after
 settings-activity-note = A tab in the background gets a dot before its title: blue for new output, red for the bell, green when a terminal watched for silence (right-click → Watch for silence) has had no output this long – then there's also a notification, if they're on.
+clipboard-request-title = Read the clipboard?
+clipboard-request-body = A program in “{ $title }” wants to read the clipboard ({ $chars ->
+    [one] 1 character
+   *[other] { $chars } characters
+}).
+clipboard-request-allow = Allow
+clipboard-request-allow-terminal = Always for this terminal
+clipboard-request-deny = Deny
+clipboard-request-hint = Unanswered, the request lapses after 20 seconds. Whether to ask is up to the Terminal page of the settings.
+
 paste-warn-title = ⚠ Paste this?
 paste-warn-broadcast = Goes to { $terminals } terminals (broadcast).
 paste-warn-runs-lines = { $lines ->
@@ -197,6 +207,14 @@ settings-paste-warning-hint = Several lines that would run right away, sudo, a d
 settings-keyboard = Keyboard
 settings-kitty-keyboard = Kitty keyboard protocol for programs that ask for it
 settings-kitty-keyboard-hint = fish 4, Neovim, Helix and others tell keys apart with it that otherwise arrive the same – Ctrl+I and Tab, Esc and Alt+[, Ctrl+Shift+A and Ctrl+A – and can see keys being let go. Turn it off if a program gets keys wrong – that takes effect at once; switched on, programs use it from their next start.
+settings-clipboard = Clipboard for programs (OSC 52)
+settings-clipboard-write = Programs may write to the clipboard
+settings-clipboard-write-hint = How vim, Neovim or tmux – on a server over SSH too – copy into this computer's clipboard.
+settings-clipboard-read = Programs may read the clipboard
+settings-clipboard-read-never = Never
+settings-clipboard-read-ask = Ask every time
+settings-clipboard-read-always = Always
+settings-clipboard-read-hint = Reading is the risky part: the program would get whatever was copied last – a password too, on a server too. With “Never” it gets an empty clipboard.
 settings-shell = Default shell
 settings-startup = At start
 settings-startup-sidebar = Show sidebar

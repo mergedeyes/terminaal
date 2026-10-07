@@ -174,6 +174,16 @@ settings-integration-note = Benachrichtigt, wenn ein Befehl so lange lief und se
 settings-activity = Tabs im Hintergrund
 settings-silence-after = Still nach
 settings-activity-note = Ein Tab im Hintergrund bekommt einen Punkt vor dem Titel: in der Akzentfarbe bei neuer Ausgabe, rot bei der Glocke, grün, wenn ein Terminal, auf dessen Stille geachtet wird (Rechtsklick → Auf Stille achten), so lange nichts ausgegeben hat – dann auch mit Benachrichtigung, sofern eingeschaltet.
+clipboard-request-title = Zwischenablage lesen?
+clipboard-request-body = Ein Programm in „{ $title }“ möchte die Zwischenablage lesen ({ $chars ->
+    [one] 1 Zeichen
+   *[other] { $chars } Zeichen
+}).
+clipboard-request-allow = Erlauben
+clipboard-request-allow-terminal = Für dieses Terminal immer
+clipboard-request-deny = Ablehnen
+clipboard-request-hint = Ohne Antwort verfällt die Anfrage nach 20 Sekunden. Ob gefragt wird, steht in den Einstellungen unter Terminal.
+
 paste-warn-title = ⚠ Wirklich einfügen?
 paste-warn-broadcast = Geht an { $terminals } Terminals (Broadcast).
 paste-warn-runs-lines = { $lines ->
@@ -197,6 +207,14 @@ settings-paste-warning-hint = Mehrere Zeilen, die sofort laufen würden, sudo, e
 settings-keyboard = Tastatur
 settings-kitty-keyboard = Kitty-Tastaturprotokoll für Programme, die es anfordern
 settings-kitty-keyboard-hint = fish 4, Neovim, Helix und andere unterscheiden damit Tasten, die sonst gleich ankommen – Strg+I und Tab, Esc und Alt+[, Strg+Umschalt+A und Strg+A – und sehen auf Wunsch auch das Loslassen. Ausschalten, falls ein Programm Tasten falsch versteht – das wirkt sofort; eingeschaltet nutzen Programme es ab ihrem nächsten Start.
+settings-clipboard = Zwischenablage für Programme (OSC 52)
+settings-clipboard-write = Programme dürfen in die Zwischenablage schreiben
+settings-clipboard-write-hint = So kopieren vim, Neovim oder tmux – auch auf einem Server über SSH – in die Zwischenablage dieses Rechners.
+settings-clipboard-read = Programme dürfen die Zwischenablage lesen
+settings-clipboard-read-never = Nie
+settings-clipboard-read-ask = Jedes Mal fragen
+settings-clipboard-read-always = Immer
+settings-clipboard-read-hint = Lesen ist der riskante Teil: das Programm bekäme, was zuletzt kopiert wurde – auch ein Passwort, auch auf einem Server. Bei „Nie“ bekommt es eine leere Zwischenablage.
 settings-shell = Standard-Shell
 settings-startup = Beim Start
 settings-startup-sidebar = Seitenleiste anzeigen

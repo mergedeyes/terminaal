@@ -141,6 +141,12 @@ pub struct Config {
     /// Programs may switch to the kitty keyboard protocol (fish 4, Neovim,
     /// Helix): keys like Ctrl+I and Tab, or Esc and Alt+[, become distinct.
     pub kitty_keyboard: bool,
+    /// Programs may put text into the clipboard (OSC 52) -- what lets
+    /// vim or tmux on a server copy to this computer.
+    pub clipboard_write: bool,
+    /// Whether programs may read the clipboard (OSC 52): `never`, `ask`
+    /// or `always`. Read through [`Config::clipboard_read`].
+    pub clipboard_read: Option<String>,
     /// The system the built-in commands are tailored to, e.g. `debian`
     /// (`commands::Family::key`). Unset (or `auto`): from `/etc/os-release`.
     pub system: Option<String>,
@@ -215,6 +221,8 @@ impl Default for Config {
             commands_collapsed: Vec::new(),
             paste_warning: true,
             kitty_keyboard: true,
+            clipboard_write: true,
+            clipboard_read: None,
             system: None,
             editor: None,
             shortcuts: BTreeMap::new(),
@@ -430,6 +438,15 @@ impl Config {
         self.ui_opacity.filter(|opacity| opacity.is_finite()).map(|opacity| opacity.clamp(*OPACITIES.start(), *OPACITIES.end()))
     }
 
+    /// Whether programs may read the clipboard; unset or unknown: ask.
+    pub fn clipboard_read(&self) -> ClipboardRead {
+        let Some(value) = self.clipboard_read.as_deref() else { return ClipboardRead::default() };
+        ClipboardRead::parse(value).unwrap_or_else(|| {
+            log::warn!("unknown clipboard_read {value:?} in config, expected \"never\", \"ask\" or \"always\"");
+            ClipboardRead::default()
+        })
+    }
+
     /// Take over `setting` in memory only.
     pub fn set(&mut self, setting: Setting) {
         match setting {
@@ -463,6 +480,8 @@ impl Config {
             Setting::CommandsWarned(on) => self.commands_warned = on,
             Setting::PasteWarning(on) => self.paste_warning = on,
             Setting::KittyKeyboard(on) => self.kitty_keyboard = on,
+            Setting::ClipboardWrite(on) => self.clipboard_write = on,
+            Setting::ClipboardRead(read) => self.clipboard_read = Some(read.key().to_string()),
         }
     }
 
@@ -536,6 +555,9 @@ pub enum Setting {
     CommandsWarned(bool),
     PasteWarning(bool),
     KittyKeyboard(bool),
+    /// Programs may set the clipboard (OSC 52).
+    ClipboardWrite(bool),
+    ClipboardRead(ClipboardRead),
 }
 
 impl Setting {
@@ -579,6 +601,46 @@ impl Setting {
             Self::CommandsWarned(on) => set_value(doc, "commands_warned", on),
             Self::PasteWarning(on) => set_value(doc, "paste_warning", on),
             Self::KittyKeyboard(on) => set_value(doc, "kitty_keyboard", on),
+            Self::ClipboardWrite(on) => set_value(doc, "clipboard_write", on),
+            Self::ClipboardRead(read) => set_value(doc, "clipboard_read", read.key()),
+        }
+    }
+}
+
+/// Whether a program may read the clipboard (OSC 52). Reading is the
+/// risky half: whatever was copied last -- a password too -- would go to
+/// the program, on a server as well.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClipboardRead {
+    /// The program gets an empty clipboard.
+    Never,
+    /// A dialog asks each time (`ui::clipboard_request`).
+    #[default]
+    Ask,
+    Always,
+}
+
+impl ClipboardRead {
+    pub const ALL: [Self; 3] = [Self::Never, Self::Ask, Self::Always];
+
+    /// The value in `config.toml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Ask => "ask",
+            Self::Always => "always",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|read| read.key() == value)
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Self::Never => t!("settings-clipboard-read-never"),
+            Self::Ask => t!("settings-clipboard-read-ask"),
+            Self::Always => t!("settings-clipboard-read-always"),
         }
     }
 }
@@ -630,7 +692,7 @@ fn write_shortcut(doc: &mut toml_edit::DocumentMut, name: &str, bindings: Option
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, Family, Setting, write_shortcut};
+    use super::{ClipboardRead, Config, Family, Setting, write_shortcut};
     use crate::shortcuts::Bindings;
 
     #[test]
@@ -682,6 +744,8 @@ mod tests {
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
             Setting::KittyKeyboard(false),
+            Setting::ClipboardWrite(false),
+            Setting::ClipboardRead(ClipboardRead::Always),
         ] {
             setting.write(&mut doc);
         }
@@ -716,7 +780,20 @@ mod tests {
         assert!(!config.quake_hide_on_unfocus);
         assert!(!config.kitty_keyboard);
         assert!(Config::default().kitty_keyboard);
+        assert!(!config.clipboard_write);
+        assert_eq!(config.clipboard_read(), ClipboardRead::Always);
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);
+    }
+
+    /// Unset or misspelt, reading the clipboard asks.
+    #[test]
+    fn clipboard_read_defaults_to_asking() {
+        assert_eq!(Config::default().clipboard_read(), ClipboardRead::Ask);
+        assert!(Config::default().clipboard_write);
+        for (text, read) in [("never", ClipboardRead::Never), ("ask", ClipboardRead::Ask), ("always", ClipboardRead::Always), ("yes", ClipboardRead::Ask)] {
+            let config: Config = toml::from_str(&format!("clipboard_read = \"{text}\"")).unwrap();
+            assert_eq!(config.clipboard_read(), read, "{text}");
+        }
     }
 
     /// The sidebar folding a group of command buttons away, as it lands
