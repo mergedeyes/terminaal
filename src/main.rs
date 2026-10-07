@@ -247,6 +247,72 @@ fn connect_target(name: &str, command: Option<&str>) -> Result<ssh::SshTarget, S
 mod tests {
     use super::*;
 
+    /// Every relative link in the README and the docs leads to a file
+    /// that exists, and every `#anchor` to a heading in it -- pages get
+    /// renamed and headings reworded, links don't follow by themselves.
+    #[test]
+    fn documentation_links_resolve() {
+        use std::path::{Path, PathBuf};
+
+        fn pages(dir: &Path, out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pages(&path, out);
+                } else if path.extension().is_some_and(|ext| ext == "md") {
+                    out.push(path);
+                }
+            }
+        }
+        /// GitHub's anchors: headings outside code blocks, lowercase,
+        /// spaces to `-`, punctuation other than `-` and `_` dropped.
+        fn anchors(page: &str) -> Vec<String> {
+            let mut code = false;
+            let mut out = Vec::new();
+            for line in page.lines() {
+                if line.starts_with("```") {
+                    code = !code;
+                } else if !code && line.starts_with('#') {
+                    let title = line.trim_start_matches('#').trim().to_lowercase();
+                    let anchor: String = title
+                        .chars()
+                        .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | ' '))
+                        .map(|c| if c == ' ' { '-' } else { c })
+                        .collect();
+                    out.push(anchor);
+                }
+            }
+            out
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = vec![root.join("README.md")];
+        pages(&root.join("docs"), &mut files);
+        let mut broken = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).unwrap();
+            for (at, _) in text.match_indices("](") {
+                let rest = &text[at + 2..];
+                let Some(end) = rest.find(')') else { continue };
+                let link = &rest[..end];
+                if link.contains("://") || link.starts_with("mailto:") || link.contains(' ') {
+                    continue;
+                }
+                let (target, anchor) = link.split_once('#').unwrap_or((link, ""));
+                let path = if target.is_empty() { file.clone() } else { file.parent().unwrap().join(target) };
+                if !path.exists() {
+                    broken.push(format!("{}: {link} (no such file)", file.display()));
+                } else if !anchor.is_empty()
+                    && path.extension().is_some_and(|ext| ext == "md")
+                    && !anchors(&std::fs::read_to_string(&path).unwrap()).iter().any(|known| known == anchor)
+                {
+                    broken.push(format!("{}: {link} (no such heading)", file.display()));
+                }
+            }
+        }
+        assert!(broken.is_empty(), "broken links:\n{}", broken.join("\n"));
+    }
+
     fn flags(args: &[&str]) -> Result<Flags, String> {
         parse_flags(args.iter().map(|arg| arg.to_string()))
     }
