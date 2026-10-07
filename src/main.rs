@@ -17,6 +17,7 @@ mod ssh;
 mod terminal;
 mod theme;
 mod ui;
+mod update;
 mod window;
 
 use winit::event_loop::{ControlFlow, EventLoop};

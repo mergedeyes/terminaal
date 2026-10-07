@@ -382,6 +382,17 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
         }
     });
     ui.label(weak(t!("settings-quake-note")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-updates"));
+    ui.label(t!("settings-update-version", version = crate::update::current().to_string()));
+    let moved = checkbox(ui, t!("settings-update-check"), "update_check", config.update_check);
+    change(actions, moved.map(|_| true), Setting::UpdateCheck(moved.unwrap_or(config.update_check)));
+    ui.label(weak(t!("settings-update-check-hint")).size(11.0));
+    ui.add_space(4.0);
+    if ui.button(t!("settings-update-now")).clicked() {
+        actions.push(SidebarAction::CheckForUpdates);
+    }
 }
 
 /// `terminaal --quake` with this program's full path: shortcut settings

@@ -1,0 +1,70 @@
+# Builds a release when a version tag is pushed (`git tag v0.2.0 && git push
+# terminaal v0.2.0`, see RELEASING.md) and publishes it on GitHub with:
+#
+#   terminaal-x86_64-linux                the binary Terminaal updates itself
+#   terminaal-x86_64-linux.sha256         from (src/update.rs), and its checksum
+#   terminaal-x86_64-linux.tar.gz         binary, install.sh, desktop entry,
+#   terminaal-x86_64-linux.tar.gz.sha256  icons and man page for a first install
+#
+# Built on the oldest supported Ubuntu, so the binary runs wherever that
+# glibc or a newer one is (practically every current distribution). It needs
+# OpenSSL 3, zlib and libxkbcommon from the system.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    env:
+      NAME: terminaal-x86_64-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the version in Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
+            exit 1
+          fi
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev zlib1g-dev libxkbcommon-dev libwayland-dev imagemagick
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          mkdir -p dist "$NAME/assets" "$NAME/icons"
+          cp target/release/terminaal "dist/$NAME"
+          cp target/release/terminaal install.sh README.md LICENSE "$NAME/"
+          cp assets/terminaal.desktop assets/terminaal.1 "$NAME/assets/"
+          for size in 16 24 32 48 64 128 256 512; do
+            convert assets/terminaal_logo.png -resize "${size}x${size}" "PNG32:$NAME/icons/$size.png"
+          done
+          tar czf "dist/$NAME.tar.gz" "$NAME"
+          cd dist
+          sha256sum "$NAME" > "$NAME.sha256"
+          sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Terminaal ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            --verify-tag

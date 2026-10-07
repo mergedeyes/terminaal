@@ -9,6 +9,7 @@
 
 common-save = Save
 common-cancel = Cancel
+common-close = Close
 common-delete = Delete
 common-edit = Edit
 common-remove = Remove
@@ -955,3 +956,29 @@ sync-restored-remote =
     }
 sync-side-local = here
 sync-side-remote = on the server
+
+update-title = Terminaal { $version } is available
+update-current = You have { $version }.
+update-install = Update now
+update-later = Later
+update-skip = Skip this version
+update-notes = What's new?
+update-open-page = Open the release page
+update-no-binary = This release has no ready-made program for this machine – the release page says how to install it.
+update-installing = Downloading and checking Terminaal { $version } …
+update-installed = Terminaal { $version } is installed
+update-installed-hint = It runs from the next start.
+update-restart = Restart now
+update-restart-hint = Restarting ends the programs in your tabs; with “Restore last session” the tabs themselves come back.
+update-not-writable = Terminaal can't write to { $dir } – most likely the package manager installed it, and then it updates it too.
+update-failed = Update failed
+update-retry = Try again
+update-up-to-date = Terminaal { $version } is up to date.
+update-check-failed = Checking for updates failed: { $err }
+update-checking = Checking for updates …
+update-restart-failed = Restart failed: { $err }
+settings-updates = Updates
+settings-update-check = Check for updates at start
+settings-update-check-hint = Asks GitHub for the latest release; nothing is installed until you confirm. The check doesn't hold up the start.
+settings-update-now = Check now
+settings-update-version = Installed version: { $version }

@@ -87,6 +87,8 @@ use crate::ssh::connection::Opener;
 use crate::ui::command_palette::{self, CommandPalette};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
 use crate::ui::paste_warning::{self, PasteWarning};
+use crate::ui::update_dialog::{self, UpdateDialog};
+use crate::update;
 use crate::ui::files_panel::{FilesAction, FilesPanel, FilesView};
 use crate::ui::settings_panel::{SettingsPanel, SettingsView, Transparency};
 use crate::ui::sidebar::{Sidebar, SidebarAction, TabForwards};
@@ -128,6 +130,11 @@ pub enum UserEvent {
     Sync,
     /// `terminaal --quake` ran again: show or hide the drop-down window.
     QuakeToggle,
+    /// What GitHub said about releases (`crate::update::check`); `manual`
+    /// when asked for in the settings rather than at start.
+    UpdateChecked { result: Result<Option<update::Release>, String>, manual: bool },
+    /// Downloading and putting a new binary in place is done.
+    UpdateInstalled(Result<(), update::InstallError>),
 }
 
 pub struct App {
@@ -693,6 +700,11 @@ struct AppState {
     last_click: Option<Click>,
     /// A paste waiting for the go-ahead; the dialog has the keyboard.
     paste_warning: Option<PasteWarning>,
+    /// A newer release on offer, or being installed.
+    update: Option<UpdateDialog>,
+    /// The running binary, as it was at start: an update replaces the
+    /// file, after which `/proc/self/exe` names it "(deleted)".
+    exe: Option<PathBuf>,
     /// The open command palette; it has the keyboard while open.
     command_palette: Option<CommandPalette>,
     /// Background sessions of hosts with live synced folders.
@@ -800,6 +812,13 @@ impl AppState {
         let palette = Palette::new(&theme.terminal);
         let default_shell = shells::default_shell(config.shell.as_deref());
         let splash = if config.splash && !quake { spawn_splash_decoder(proxy.clone(), scale_factor) } else { None };
+        // Not from a development build -- its version means nothing --
+        // unless a test server stands in for GitHub, and not twice: the
+        // drop-down window leaves it to the main one.
+        let testing = std::env::var_os(update::URL_OVERRIDE).is_some();
+        if config.update_check && (!cfg!(debug_assertions) || testing) && !quake {
+            spawn_update_check(proxy.clone(), false);
+        }
 
         let ui_colors = theme.ui;
         let mut state = Self {
@@ -838,6 +857,8 @@ impl AppState {
             sync_jobs: Vec::new(),
             hosts_seen: 0,
             paste_warning: None,
+            update: None,
+            exe: std::env::current_exe().ok(),
             hostname: hostname(),
             focused: true,
             prompt_labels: Labels::default(),
@@ -2237,6 +2258,7 @@ impl AppState {
     fn over_popup(&self, pos: (f64, f64)) -> bool {
         self.command_palette.as_ref().is_some_and(|palette| palette.contains(self.to_points(pos)))
             || self.paste_warning.as_ref().is_some_and(|warning| warning.contains(self.to_points(pos)))
+            || self.update.as_ref().is_some_and(|dialog| dialog.contains(self.to_points(pos)))
     }
 
     /// The settings page is at `pos`: everything below the tab bar right
@@ -2552,6 +2574,88 @@ impl AppState {
     }
 
     /// The paste dialog was answered.
+    /// GitHub answered: offer a newer release -- unless it was skipped and
+    /// nobody asked -- and tell the settings page how a check it asked
+    /// for went.
+    fn update_checked(&mut self, result: Result<Option<update::Release>, String>, manual: bool) {
+        let current = update::current();
+        match result {
+            Ok(Some(release)) => {
+                let skipped = self.config.update_skipped.as_deref() == Some(release.version.to_string().as_str());
+                if skipped && !manual {
+                    log::info!("update {} skipped", release.version);
+                    return;
+                }
+                if manual {
+                    self.settings.report(Ok(t!("update-title", version = release.version.to_string())));
+                }
+                log::info!("update {} available", release.version);
+                self.update = Some(UpdateDialog::new(release, current));
+            }
+            Ok(None) if manual => self.settings.report(Ok(t!("update-up-to-date", version = current.to_string()))),
+            Ok(None) => log::info!("Terminaal {current} is up to date"),
+            Err(err) if manual => self.settings.report(Err(t!("update-check-failed", err = &err))),
+            Err(err) => log::info!("update check failed: {err}"),
+        }
+        self.window.request_redraw();
+    }
+
+    fn update_installed(&mut self, result: Result<(), update::InstallError>) {
+        let Some(dialog) = &mut self.update else { return };
+        dialog.stage = match result {
+            Ok(()) => {
+                log::info!("updated to {}", dialog.release.version);
+                update_dialog::Stage::Installed
+            }
+            Err(update::InstallError::NotWritable(dir)) => update_dialog::Stage::NotWritable(dir),
+            Err(update::InstallError::Failed(err)) => {
+                log::warn!("update failed: {err}");
+                update_dialog::Stage::Failed(err)
+            }
+        };
+        self.window.request_redraw();
+    }
+
+    fn answer_update(&mut self, choice: update_dialog::Choice) {
+        let Some(dialog) = &mut self.update else { return };
+        match choice {
+            update_dialog::Choice::Install => {
+                let (Some(binary), Some(exe)) = (dialog.release.binary.clone(), self.exe.clone()) else { return };
+                dialog.stage = update_dialog::Stage::Installing;
+                let proxy = self.proxy.clone();
+                let spawned = std::thread::Builder::new().name("update".into()).spawn(move || {
+                    let result = update::install(&update::Http::new(), &binary, &exe);
+                    let _ = proxy.send_event(UserEvent::UpdateInstalled(result));
+                });
+                if let Err(err) = spawned {
+                    dialog.stage = update_dialog::Stage::Failed(err.to_string());
+                }
+            }
+            update_dialog::Choice::Later => self.update = None,
+            update_dialog::Choice::Skip => {
+                let version = dialog.release.version.to_string();
+                self.update = None;
+                if let Err(err) = self.config.skip_version(&version) {
+                    log::warn!("failed to remember skipping {version}: {err}");
+                }
+            }
+            update_dialog::Choice::OpenPage => open_link(&links::Target::Uri(dialog.release.page.clone())),
+            // The new binary takes over once this one is gone, session
+            // and all.
+            update_dialog::Choice::Restart => {
+                let Some(exe) = self.exe.clone() else { return };
+                match update::restart(&exe) {
+                    Ok(()) => {
+                        self.save_session();
+                        self.exiting = true;
+                    }
+                    Err(err) => dialog.stage = update_dialog::Stage::Failed(t!("update-restart-failed", err = err.to_string())),
+                }
+            }
+        }
+        self.window.request_redraw();
+    }
+
     fn answer_paste_warning(&mut self, choice: paste_warning::Choice) {
         let Some(warning) = self.paste_warning.take() else { return };
         if choice == paste_warning::Choice::Paste {
@@ -3283,6 +3387,10 @@ impl AppState {
             }
             return;
         }
+        // Presses on the update dialog are egui's; it stays open otherwise.
+        if self.update.as_ref().is_some_and(|dialog| dialog.contains(self.to_points(self.last_cursor_pos))) {
+            return;
+        }
         // Presses on the palette are egui's; one anywhere else closes it.
         if self.command_palette.is_some() {
             if !self.over_popup(self.last_cursor_pos) {
@@ -3506,6 +3614,8 @@ impl AppState {
         let mut palette_pick = None;
         let paste = &mut self.paste_warning;
         let mut paste_choice = None;
+        let update_dialog = &mut self.update;
+        let mut update_choice = None;
         let mut files_tab = match self.tabs.get_mut(active_tab).map(|tab| &mut tab.content) {
             Some(TabContent::Files(files)) => Some(files),
             _ => None,
@@ -3569,6 +3679,9 @@ impl AppState {
             if let Some(warning) = paste.as_mut() {
                 paste_choice = warning.show(ui.ctx(), console).or(paste_choice);
             }
+            if let Some(dialog) = update_dialog.as_mut() {
+                update_choice = dialog.show(ui.ctx(), console).or(update_choice);
+            }
             // Painted last, on egui's foreground layer: over the sidebar
             // as well as the grid and tab bar drawn before egui.
             if let Some(splash) = splash {
@@ -3616,6 +3729,9 @@ impl AppState {
         }
         if let Some(choice) = paste_choice {
             self.answer_paste_warning(choice);
+        }
+        if let Some(choice) = update_choice {
+            self.answer_update(choice);
         }
 
         // egui just set the cursor for its own widgets; the tab bar isn't
@@ -3670,6 +3786,10 @@ impl AppState {
                 self.window.request_redraw();
             }
             SidebarAction::OpenSettings => self.open_settings(),
+            SidebarAction::CheckForUpdates => {
+                self.settings.report(Ok(t!("update-checking")));
+                spawn_update_check(self.proxy.clone(), true);
+            }
             SidebarAction::SetShortcut(action, combos) => self.set_shortcut(action, combos, origin),
             SidebarAction::SetTheme(name) => {
                 if let Err(err) = self.config.save_theme(&name) {
@@ -3878,6 +3998,7 @@ impl AppState {
             | Setting::CommandsAssumeYes(_)
             | Setting::CommandsWarned(_)
             | Setting::PasteWarning(_)
+            | Setting::UpdateCheck(_)
             | Setting::SilenceAfter(_) => {}
         }
         if save && let Err(err) = self.config.save(setting) {
@@ -4427,6 +4548,18 @@ fn duration_text(elapsed: Duration) -> String {
     }
 }
 
+/// Ask GitHub for a newer release on a thread of its own; the answer
+/// comes as `UserEvent::UpdateChecked`.
+fn spawn_update_check(proxy: EventLoopProxy<UserEvent>, manual: bool) {
+    let spawned = std::thread::Builder::new().name("update-check".into()).spawn(move || {
+        let result = update::check(&update::Http::new(), update::current());
+        let _ = proxy.send_event(UserEvent::UpdateChecked { result, manual });
+    });
+    if let Err(err) = spawned {
+        log::warn!("failed to start the update check: {err}");
+    }
+}
+
 /// Decode the splash on its own thread -- the first tab starts meanwhile;
 /// the frames arrive as `UserEvent::SplashReady`.
 fn spawn_splash_decoder(proxy: EventLoopProxy<UserEvent>, scale_factor: f32) -> Option<Splash> {
@@ -4750,6 +4883,14 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::QuakeToggle => {
                 state.toggle_quake();
+                return;
+            }
+            UserEvent::UpdateChecked { result, manual } => {
+                state.update_checked(result, manual);
+                return;
+            }
+            UserEvent::UpdateInstalled(result) => {
+                state.update_installed(result);
                 return;
             }
         };

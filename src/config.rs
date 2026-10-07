@@ -82,6 +82,10 @@ pub struct Config {
     /// Open the tabs of the last session again at startup
     /// (`crate::session`).
     pub restore_session: bool,
+    /// Ask GitHub for a newer release at start (`crate::update`).
+    pub update_check: bool,
+    /// A release version not to offer again ("Skip this version").
+    pub update_skipped: Option<String>,
     /// Height of the drop-down window (`--quake`), in percent of the
     /// screen's. Read through [`Config::quake_height`].
     pub quake_height: f32,
@@ -188,6 +192,8 @@ impl Default for Config {
             sidebar_width: 300.0,
             splash: true,
             restore_session: true,
+            update_check: true,
+            update_skipped: None,
             quake_height: 50.0,
             quake_hide_on_unfocus: true,
             language: None,
@@ -357,6 +363,13 @@ impl Config {
         Ok(())
     }
 
+    /// Don't offer release `version` again; persisted.
+    pub fn skip_version(&mut self, version: &str) -> Result<(), String> {
+        Self::edit(|doc| write_text(doc, "update_skipped", Some(version)))?;
+        self.update_skipped = Some(version.to_string());
+        Ok(())
+    }
+
     /// Whether `group` is folded away in the sidebar.
     pub fn collapsed(&self, group: &str) -> bool {
         self.commands_collapsed.iter().any(|other| other == group)
@@ -424,6 +437,7 @@ impl Config {
             Setting::SidebarWidth(width) => self.sidebar_width = width,
             Setting::Splash(on) => self.splash = on,
             Setting::RestoreSession(on) => self.restore_session = on,
+            Setting::UpdateCheck(on) => self.update_check = on,
             Setting::QuakeHeight(percent) => self.quake_height = percent,
             Setting::QuakeHideOnUnfocus(on) => self.quake_hide_on_unfocus = on,
             Setting::Opacity(opacity) => self.opacity = opacity,
@@ -490,6 +504,7 @@ pub enum Setting {
     SidebarWidth(f32),
     Splash(bool),
     RestoreSession(bool),
+    UpdateCheck(bool),
     /// Drop-down window height in percent.
     QuakeHeight(f32),
     QuakeHideOnUnfocus(bool),
@@ -531,6 +546,7 @@ impl Setting {
             Self::SidebarWidth(width) => set_value(doc, "sidebar_width", float(width.into())),
             Self::Splash(on) => set_value(doc, "splash", on),
             Self::RestoreSession(on) => set_value(doc, "restore_session", on),
+            Self::UpdateCheck(on) => set_value(doc, "update_check", on),
             Self::QuakeHeight(percent) => set_value(doc, "quake_height", float(percent.round().into())),
             Self::QuakeHideOnUnfocus(on) => set_value(doc, "quake_hide_on_unfocus", on),
             Self::Opacity(opacity) => set_value(doc, "opacity", float(opacity.into())),
@@ -638,6 +654,7 @@ mod tests {
             Setting::CommandsWarned(true),
             Setting::PasteWarning(false),
             Setting::RestoreSession(false),
+            Setting::UpdateCheck(false),
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
         ] {
@@ -667,6 +684,7 @@ mod tests {
         assert!(!config.paste_warning);
         assert!(config.commands_warned);
         assert!(!config.restore_session);
+        assert!(!config.update_check);
         assert_eq!(config.quake_height(), 40.0);
         assert!(!config.quake_hide_on_unfocus);
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);

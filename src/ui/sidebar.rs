@@ -48,6 +48,8 @@ pub enum SidebarAction {
     CollapseGroup { key: String, collapsed: bool },
     /// Switch to the settings tab, opening it if needed.
     OpenSettings,
+    /// Ask GitHub for a newer release now (settings → Updates).
+    CheckForUpdates,
     /// Bind a shortcut action to these combinations (persisted).
     SetShortcut(Action, Vec<KeyCombo>),
     /// Switch to the theme of this name and persist that.

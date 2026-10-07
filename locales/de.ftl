@@ -9,6 +9,7 @@
 
 common-save = Speichern
 common-cancel = Abbrechen
+common-close = Schließen
 common-delete = Löschen
 common-edit = Bearbeiten
 common-remove = Entfernen
@@ -960,3 +961,29 @@ sync-restored-remote =
     }
 sync-side-local = hier
 sync-side-remote = auf dem Server
+
+update-title = Terminaal { $version } ist da
+update-current = Installiert ist { $version }.
+update-install = Jetzt aktualisieren
+update-later = Später
+update-skip = Diese Version überspringen
+update-notes = Was ist neu?
+update-open-page = Release-Seite öffnen
+update-no-binary = Für diesen Rechner gibt es in diesem Release kein fertiges Programm – auf der Release-Seite steht, wie es sich installieren lässt.
+update-installing = Lade Terminaal { $version } herunter und prüfe es …
+update-installed = Terminaal { $version } ist installiert
+update-installed-hint = Es läuft ab dem nächsten Start.
+update-restart = Jetzt neu starten
+update-restart-hint = Beim Neustart enden die Programme in den Tabs; mit „Letzte Sitzung wiederherstellen“ kommen die Tabs selbst wieder.
+update-not-writable = Terminaal darf in { $dir } nicht schreiben – vermutlich hat es die Paketverwaltung installiert, dann aktualisiert sie es auch.
+update-failed = Aktualisieren fehlgeschlagen
+update-retry = Erneut versuchen
+update-up-to-date = Terminaal { $version } ist aktuell.
+update-check-failed = Nach Updates suchen fehlgeschlagen: { $err }
+update-checking = Suche nach Updates …
+update-restart-failed = Neustart fehlgeschlagen: { $err }
+settings-updates = Updates
+settings-update-check = Beim Start nach Updates suchen
+settings-update-check-hint = Fragt GitHub nach dem neuesten Release; installiert wird nur, wenn du es bestätigst. Die Suche hält den Start nicht auf.
+settings-update-now = Jetzt suchen
+settings-update-version = Installierte Version: { $version }
