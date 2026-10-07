@@ -210,6 +210,8 @@ pub struct TermOptions {
     /// A double-click in a path marks only the folder or file under the
     /// pointer instead of the whole path.
     pub path_segments: bool,
+    /// Programs may turn on the kitty keyboard protocol.
+    pub kitty_keyboard: bool,
 }
 
 pub(crate) fn term_config(options: TermOptions) -> TermConfig {
@@ -220,7 +222,12 @@ pub(crate) fn term_config(options: TermOptions) -> TermConfig {
     if options.path_segments {
         separators.push('/');
     }
-    TermConfig { scrolling_history: options.scrollback, semantic_escape_chars: separators, ..TermConfig::default() }
+    TermConfig {
+        scrolling_history: options.scrollback,
+        semantic_escape_chars: separators,
+        kitty_keyboard: options.kitty_keyboard,
+        ..TermConfig::default()
+    }
 }
 
 fn new_term(listener: &EventProxyListener, size: GridSize, options: TermOptions) -> Arc<FairMutex<Term<EventProxyListener>>> {

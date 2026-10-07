@@ -67,6 +67,7 @@ and keeps your comments and formatting. A missing file means defaults.
 | `notify_after_secs` | `10` | Notify when a command that ran this long finishes unseen; `0` = never |
 | `silence_secs` | `15` | A terminal watched for silence counts as quiet after this many seconds without output (3–300) |
 | `paste_warning` | `true` | Ask before pasting several lines that would run at once, `sudo`, a download piped into a shell, `rm -rf` and the like |
+| `kitty_keyboard` | `true` | Programs may switch on the kitty keyboard protocol (fish 4, Neovim, Helix). `false` keeps every program on the classic xterm keys |
 
 ### Built-in commands
 

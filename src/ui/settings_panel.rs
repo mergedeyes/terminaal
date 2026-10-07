@@ -481,6 +481,13 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
         actions.push(SidebarAction::ChangeSetting { setting: Setting::PasteWarning(on), save: true });
     }
     ui.label(weak(t!("settings-paste-warning-hint")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-keyboard"));
+    if let Some(on) = checkbox(ui, t!("settings-kitty-keyboard"), "kitty_keyboard", config.kitty_keyboard) {
+        actions.push(SidebarAction::ChangeSetting { setting: Setting::KittyKeyboard(on), save: true });
+    }
+    ui.label(weak(t!("settings-kitty-keyboard-hint")).size(11.0));
 }
 
 impl SettingsPanel {

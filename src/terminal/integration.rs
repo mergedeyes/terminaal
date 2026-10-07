@@ -25,9 +25,19 @@
 //! none; one that sets a hyperlink of its own before printing anything
 //! neither (closing ours would close its link).
 //!
+//! It also guards `alacritty_terminal` against a program pushing kitty
+//! keyboard modes without end (`CSI > flags u`): past 4096 entries its
+//! stack trims the *title* stack instead of its own, which panics while
+//! that one is empty -- the terminal's thread would die. The filter
+//! counts the pushes and pops per screen (the alternate screen has a
+//! stack of its own, swapped in by `CSI ?1049h`, all of it reset by RIS)
+//! and drops pushes beyond [`MAX_KEYBOARD_MODES`]; no real program gets
+//! anywhere near that.
+//!
 //! Everything else goes through byte for byte. The filter keeps no more
-//! than an unfinished OSC sequence between calls; `feed` never holds on
-//! to anything that isn't part of one.
+//! than an unfinished OSC sequence, or a short CSI sequence that might be
+//! one of the above, between calls; `feed` never holds on to anything
+//! that isn't part of one.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +48,10 @@ pub const OUTPUT_SCHEME: &str = "terminaal-output:";
 
 /// Longest OSC sequence looked at; longer ones pass through unexamined.
 const MAX_OSC: usize = 4096;
+/// Longest CSI sequence held back to look at.
+const MAX_CSI: usize = 32;
+/// Kitty keyboard modes a screen's stack may hold; pushes beyond go.
+pub const MAX_KEYBOARD_MODES: u16 = 64;
 
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
@@ -87,6 +101,11 @@ enum State {
     Ground,
     /// After ESC, not yet known what follows. The ESC is held back.
     Escape,
+    /// Right after ESC [, which is held back.
+    CsiStart,
+    /// A CSI sequence that might change the keyboard mode stacks or the
+    /// screen, collected into `csi`.
+    CsiHeld,
     /// ESC [ ... up to the final byte.
     Csi,
     /// Collecting an OSC sequence into `osc`.
@@ -117,6 +136,13 @@ pub struct Filter {
     /// Continuation bytes still to come of the UTF-8 character being printed
     /// while the output mark is open.
     utf8_rest: u8,
+    /// The CSI sequence held back, from its ESC [.
+    csi: Vec<u8>,
+    /// Kitty keyboard modes pushed and not popped: normal and alternate
+    /// screen.
+    keyboard_modes: [u16; 2],
+    /// The alternate screen is showing.
+    alt_screen: bool,
 }
 
 impl Default for Filter {
@@ -131,6 +157,9 @@ impl Default for Filter {
             last_duration: None,
             output_open: false,
             utf8_rest: 0,
+            csi: Vec::new(),
+            keyboard_modes: [0; 2],
+            alt_screen: false,
         }
     }
 }
@@ -165,10 +194,54 @@ impl Filter {
                         self.state = State::Osc;
                     }
                     ESC => out.push(ESC),
+                    b'[' => self.state = State::CsiStart,
                     _ => {
+                        // RIS resets everything, both stacks too.
+                        if byte == b'c' {
+                            self.keyboard_modes = [0; 2];
+                            self.alt_screen = false;
+                        }
                         out.extend_from_slice(&[ESC, byte]);
-                        self.state = if byte == b'[' { State::Csi } else { State::Ground };
+                        self.state = State::Ground;
                     }
+                },
+                State::CsiStart => {
+                    if matches!(byte, b'>' | b'<' | b'?') {
+                        self.csi.clear();
+                        self.csi.extend_from_slice(&[ESC, b'[', byte]);
+                        self.state = State::CsiHeld;
+                    } else {
+                        out.extend_from_slice(&[ESC, b'[']);
+                        self.state = State::Csi;
+                        self.feed(&[byte], out, events);
+                    }
+                }
+                State::CsiHeld => match byte {
+                    0x40..=0x7e => {
+                        self.csi.push(byte);
+                        self.state = State::Ground;
+                        if self.pass_csi() {
+                            out.append(&mut self.csi);
+                        } else {
+                            self.csi.clear();
+                        }
+                    }
+                    CAN | SUB => {
+                        out.append(&mut self.csi);
+                        out.push(byte);
+                        self.state = State::Ground;
+                    }
+                    // Aborts the sequence and starts the next, as in vte.
+                    ESC => {
+                        out.append(&mut self.csi);
+                        self.state = State::Escape;
+                    }
+                    _ if self.csi.len() >= MAX_CSI => {
+                        out.append(&mut self.csi);
+                        self.state = State::Csi;
+                        self.feed(&[byte], out, events);
+                    }
+                    _ => self.csi.push(byte),
                 },
                 State::Csi => {
                     out.push(byte);
@@ -224,6 +297,33 @@ impl Filter {
                 }
             }
         }
+    }
+
+    /// A complete CSI sequence that starts with `>`, `<` or `?` is in
+    /// `csi`: keep count of the keyboard mode stacks and which screen
+    /// shows. `false` drops it -- a push onto a full stack.
+    fn pass_csi(&mut self) -> bool {
+        let (prefix, last) = (self.csi[2], self.csi[self.csi.len() - 1]);
+        let params = &self.csi[3..self.csi.len() - 1];
+        let numbers = || params.split(|&b| b == b';').map(|param| std::str::from_utf8(param).ok().and_then(|text| text.parse::<u16>().ok()));
+        let screen = usize::from(self.alt_screen);
+        match (prefix, last) {
+            (b'>', b'u') => {
+                if self.keyboard_modes[screen] >= MAX_KEYBOARD_MODES {
+                    log::debug!("dropped a kitty keyboard mode push beyond {MAX_KEYBOARD_MODES}");
+                    return false;
+                }
+                self.keyboard_modes[screen] += 1;
+            }
+            (b'<', b'u') => {
+                // An empty or 0 count pops one, as in vte.
+                let count = numbers().next().flatten().filter(|&count| count != 0).unwrap_or(1);
+                self.keyboard_modes[screen] = self.keyboard_modes[screen].saturating_sub(count);
+            }
+            (b'?', b'h' | b'l') if numbers().any(|number| number == Some(1049)) => self.alt_screen = last == b'h',
+            _ => {}
+        }
+        true
     }
 
     /// A complete OSC sequence is in `osc` (from `skip` on its body). Handle
@@ -420,6 +520,71 @@ mod tests {
 
     fn text(bytes: &[u8]) -> String {
         String::from_utf8_lossy(bytes).replace('\x1b', "⎋").replace('\x07', "🔔")
+    }
+
+    /// CSI sequences, held back or not, come out as they went in --
+    /// split anywhere, aborted, overlong.
+    #[test]
+    fn csi_sequences_pass_unchanged() {
+        let input: &[u8] = b"a\x1b[31mred\x1b[?2004h\x1b[>1u\x1b[<u\x1b[?u\x1b[>4;1m\x1b[?1049h\x1b[2J\x1b[?1049l\x1b[A\x1b[?12\x18x\x1b[?1\x1b[0m\x1b[?1;2;3;4;5;6;7;8;9;10;11;12;13;14;15h\x1b[\x1b[Ab";
+        assert_eq!(text(&run(&[input]).0), text(input));
+        for at in 0..input.len() {
+            let (start, end) = input.split_at(at);
+            assert_eq!(text(&run(&[start, end]).0), text(input), "split at {at}");
+        }
+    }
+
+    fn pushes(out: &[u8]) -> usize {
+        out.windows(5).filter(|window| window == b"\x1b[>1u").count()
+    }
+
+    /// Kitty keyboard mode pushes beyond the limit go, per screen;
+    /// pops and RIS make room again.
+    #[test]
+    fn keyboard_mode_pushes_are_capped() {
+        let flood = b"\x1b[>1u".repeat(100);
+        let mut filter = Filter::default();
+        let (mut out, mut events) = (Vec::new(), Vec::new());
+        filter.feed(&flood, &mut out, &mut events);
+        assert_eq!(pushes(&out), usize::from(MAX_KEYBOARD_MODES));
+
+        // The alternate screen has a stack of its own.
+        out.clear();
+        filter.feed(b"\x1b[?1049h", &mut out, &mut events);
+        filter.feed(&flood, &mut out, &mut events);
+        assert_eq!(pushes(&out), usize::from(MAX_KEYBOARD_MODES));
+        out.clear();
+        filter.feed(b"\x1b[?1049l\x1b[<3u", &mut out, &mut events);
+        filter.feed(&flood, &mut out, &mut events);
+        assert_eq!(pushes(&out), 3, "room for the three popped");
+        out.clear();
+        filter.feed(b"\x1b[<u\x1b[<0u", &mut out, &mut events);
+        filter.feed(&flood, &mut out, &mut events);
+        assert_eq!(pushes(&out), 2, "an empty or 0 count pops one");
+        out.clear();
+        filter.feed(b"\x1bc", &mut out, &mut events);
+        filter.feed(&flood, &mut out, &mut events);
+        assert_eq!(pushes(&out), usize::from(MAX_KEYBOARD_MODES), "RIS empties the stacks");
+    }
+
+    /// The reason for the cap: `alacritty_terminal` 0.26 panics on the
+    /// 4097th push while no title is stacked. Through the filter a flood
+    /// of pushes leaves the terminal working, the protocol still on.
+    #[test]
+    fn a_flood_of_keyboard_modes_leaves_the_terminal_alive() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::test::TermSize;
+        use alacritty_terminal::term::{Config, Term, TermMode};
+        use alacritty_terminal::vte::ansi::Processor;
+
+        let config = Config { kitty_keyboard: true, ..Config::default() };
+        let mut term = Term::new(config, &TermSize::new(20, 5), VoidListener);
+        let mut parser: Processor = Processor::new();
+        let mut filter = Filter::default();
+        let (mut out, mut events) = (Vec::new(), Vec::new());
+        filter.feed(&b"\x1b[>1u".repeat(5000), &mut out, &mut events);
+        parser.advance(&mut term, &out);
+        assert!(term.mode().contains(TermMode::DISAMBIGUATE_ESC_CODES));
     }
 
     #[test]

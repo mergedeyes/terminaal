@@ -78,6 +78,12 @@ settings and a text field there has focus. This is deliberate: otherwise a
 sidebar, and the next <kbd>Enter</kbd> would press a button. Clicking the
 terminal, hiding the sidebar or switching tabs gives the keyboard back.
 
+Keys that reach the terminal are encoded per terminal (`input/keyboard.rs`):
+the classic xterm way, or the kitty keyboard protocol if the program in that
+terminal switched it on – a broadcast can send the same key both ways. A key
+release goes only to the terminals that got the press, and only if they asked
+for releases.
+
 ## The drop-down window
 
 `terminaal --quake` needs a window along the top edge of the screen, above the

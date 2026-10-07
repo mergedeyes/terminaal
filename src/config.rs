@@ -138,6 +138,9 @@ pub struct Config {
     /// Ask before a paste with several lines or risky commands
     /// (`ui::paste_warning`).
     pub paste_warning: bool,
+    /// Programs may switch to the kitty keyboard protocol (fish 4, Neovim,
+    /// Helix): keys like Ctrl+I and Tab, or Esc and Alt+[, become distinct.
+    pub kitty_keyboard: bool,
     /// The system the built-in commands are tailored to, e.g. `debian`
     /// (`commands::Family::key`). Unset (or `auto`): from `/etc/os-release`.
     pub system: Option<String>,
@@ -211,6 +214,7 @@ impl Default for Config {
             commands_warned: false,
             commands_collapsed: Vec::new(),
             paste_warning: true,
+            kitty_keyboard: true,
             system: None,
             editor: None,
             shortcuts: BTreeMap::new(),
@@ -458,6 +462,7 @@ impl Config {
             Setting::CommandsAssumeYes(on) => self.commands_assume_yes = on,
             Setting::CommandsWarned(on) => self.commands_warned = on,
             Setting::PasteWarning(on) => self.paste_warning = on,
+            Setting::KittyKeyboard(on) => self.kitty_keyboard = on,
         }
     }
 
@@ -530,6 +535,7 @@ pub enum Setting {
     CommandsAssumeYes(bool),
     CommandsWarned(bool),
     PasteWarning(bool),
+    KittyKeyboard(bool),
 }
 
 impl Setting {
@@ -572,6 +578,7 @@ impl Setting {
             Self::CommandsAssumeYes(on) => set_value(doc, "commands_assume_yes", on),
             Self::CommandsWarned(on) => set_value(doc, "commands_warned", on),
             Self::PasteWarning(on) => set_value(doc, "paste_warning", on),
+            Self::KittyKeyboard(on) => set_value(doc, "kitty_keyboard", on),
         }
     }
 }
@@ -674,6 +681,7 @@ mod tests {
             Setting::UpdateCheck(false),
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
+            Setting::KittyKeyboard(false),
         ] {
             setting.write(&mut doc);
         }
@@ -706,6 +714,8 @@ mod tests {
         assert!(!config.update_check);
         assert_eq!(config.quake_height(), 40.0);
         assert!(!config.quake_hide_on_unfocus);
+        assert!(!config.kitty_keyboard);
+        assert!(Config::default().kitty_keyboard);
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);
     }
 
