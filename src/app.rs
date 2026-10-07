@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event as TermEvent, WindowSize};
-use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
@@ -63,6 +63,7 @@ use crate::panes::{self, Axis, Direction, Divider};
 use crate::render::grid::{self, CursorStyle, GridText, PaneText};
 use crate::render::palette::{to_linear, Palette};
 use crate::render::quad::{QuadInstance, QuadRenderer};
+use crate::render::scrollbar::{self, Scrollbar};
 use crate::render::search_bar::{SearchBar, SearchBarView};
 use crate::render::tab_bar::{self, Activity, TabBar, TabBarHit, TabBarLayout, TabLook};
 use crate::render::text::{CellMetrics, FontFamilies, TextRendererState};
@@ -364,6 +365,10 @@ struct Pane {
     /// The SSH connection whose shell got its startup commands (see
     /// `Opener::connection`); a new one gets them again.
     startup_connection: u64,
+    /// The scrollback position its scrollbar was last drawn for, and
+    /// until when it stays after that changed.
+    scroll_seen: usize,
+    scrollbar_until: Option<Instant>,
     /// A command line to go in once, after the startup commands: a command
     /// button middle-clicked into a new tab. Whether it's run with Enter
     /// (`commands_run` at the time).
@@ -458,6 +463,10 @@ const PROGRAM_POLL: Duration = Duration::from_millis(250);
 
 /// How often a selection dragged past the edge of its pane scrolls on.
 const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(40);
+
+/// How long a pane's scrollbar stays after it was scrolled, once back at
+/// the bottom (scrolled back, it stays anyway).
+const SCROLLBAR_LINGER: Duration = Duration::from_millis(1200);
 
 /// How soon a press on the same cell counts as the next of a double or
 /// triple click (GTK's default).
@@ -588,6 +597,9 @@ enum Drag {
     /// The tab at this index, on its way to another place in the bar,
     /// held `grab` pixels in from its left edge.
     Tab { index: usize, grab: f32 },
+    /// The scrollbar thumb of the pane with this id, held `grab` pixels
+    /// below its top edge.
+    Scrollbar { pane: usize, grab: f32 },
 }
 
 /// Where the item at `index` ends up once the one at `from` is taken
@@ -750,6 +762,10 @@ struct AppState {
     /// While a selection is dragged past the top or bottom of its pane:
     /// when to scroll it along next.
     drag_scroll_at: Option<Instant>,
+    /// The pane whose scrollbar the pointer is on: drawn wide.
+    scrollbar_hover: Option<usize>,
+    /// When a scrollbar shown after scrolling goes again: redraw then.
+    scrollbar_hide_at: Option<Instant>,
     last_cursor_pos: (f64, f64),
 
     cursor_visible: bool,
@@ -880,6 +896,8 @@ impl AppState {
             modifiers: ModifiersState::empty(),
             drag: None,
             drag_scroll_at: None,
+            scrollbar_hover: None,
+            scrollbar_hide_at: None,
             last_cursor_pos: (0.0, 0.0),
             cursor_visible: true,
             next_blink,
@@ -1042,6 +1060,8 @@ impl AppState {
             startup,
             startup_connection: 0,
             queued: None,
+            scroll_seen: 0,
+            scrollbar_until: None,
             hold: run.hold,
             exit_code: None,
             broadcast: false,
@@ -2308,6 +2328,120 @@ impl AppState {
         self.config.padding * self.window.scale_factor() as f32
     }
 
+    /// From the top of a pane's grid to the bottom of its last row.
+    fn grid_span(&self, rect: LabelRect, size: GridSize) -> (f32, f32) {
+        let top = self.pane_geometry(rect).origin_y;
+        (top, top + size.screen_lines as f32 * self.text.cell.height)
+    }
+
+    /// `pane`'s scrollbar as it stands, `None` where it has none: turned
+    /// off, nothing scrolled out yet, or a full-screen program.
+    fn scrollbar_of(&self, pane: &Pane, active: bool) -> Option<Scrollbar> {
+        if !self.config.scrollbar {
+            return None;
+        }
+        let (history, offset) = {
+            let term = pane.terminal.term.lock();
+            if term.mode().contains(TermMode::ALT_SCREEN) {
+                return None;
+            }
+            (term.grid().history_size(), term.grid().display_offset())
+        };
+        let scale = self.window.scale_factor() as f32;
+        let span = self.grid_span(pane.rect, pane.size);
+        Scrollbar::new(pane.rect, span, (history, pane.size.screen_lines, offset), scale, active)
+    }
+
+    /// The pane whose scrollbar can be taken hold of at `x`/`y`.
+    fn scrollbar_at(&self, x: f64, y: f64) -> Option<usize> {
+        let pane = self.pane_at(x, y)?;
+        let scale = self.window.scale_factor() as f32;
+        let span = self.grid_span(pane.rect, pane.size);
+        if !scrollbar::hit(pane.rect, span, scale, x as f32, y as f32) {
+            return None;
+        }
+        self.scrollbar_of(pane, true).map(|_| pane.id)
+    }
+
+    fn set_scrollbar_hover(&mut self, pane: Option<usize>) {
+        if pane != self.scrollbar_hover {
+            self.scrollbar_hover = pane;
+            self.window.request_redraw();
+        }
+    }
+
+    /// A press on pane `id`'s scrollbar at `y`: on the thumb it's held
+    /// where it was grabbed, beside it the thumb jumps there (centred).
+    fn start_scrollbar_drag(&mut self, id: usize, y: f32) {
+        let Some(bar) = self.pane_at(self.last_cursor_pos.0, self.last_cursor_pos.1).and_then(|pane| self.scrollbar_of(pane, true))
+        else {
+            return;
+        };
+        let thumb = bar.thumb;
+        let grab = if y >= thumb.y && y < thumb.y + thumb.h { y - thumb.y } else { thumb.h / 2.0 };
+        self.drag = Some(Drag::Scrollbar { pane: id, grab });
+        self.set_hovered(None);
+        self.drag_scrollbar(id, grab);
+    }
+
+    /// Scroll pane `id` to where its thumb, held `grab` below its top, is
+    /// under the pointer.
+    fn drag_scrollbar(&mut self, id: usize, grab: f32) {
+        let Some(pane) = self.tabs.get(self.active_tab).and_then(Tab::panes).and_then(|panes| panes.panes.iter().find(|pane| pane.id == id))
+        else {
+            return;
+        };
+        let Some(bar) = self.scrollbar_of(pane, true) else { return };
+        let target = bar.offset_at(self.last_cursor_pos.1 as f32 - grab);
+        let mut term = pane.terminal.term.lock();
+        let current = term.grid().display_offset();
+        if target != current {
+            term.scroll_display(Scroll::Delta(target as i32 - current as i32));
+            drop(term);
+            self.window.request_redraw();
+        }
+    }
+
+    /// The scrollbars of the panes on screen: while scrolled back, for a
+    /// moment after scrolling, and while the pointer is on one.
+    fn build_scrollbars(&mut self, views: &[PaneView]) {
+        let now = Instant::now();
+        let dragged = match self.drag {
+            Some(Drag::Scrollbar { pane, .. }) => Some(pane),
+            _ => None,
+        };
+        let color = self.theme.ui.see_through(self.ui_opacity()).text_weak;
+        let mut hide_at: Option<Instant> = None;
+        for view in views {
+            let Some(at) = self.locate(view.id) else { continue };
+            let active = dragged == Some(view.id) || self.scrollbar_hover == Some(view.id);
+            let pane = &self.tabs[at.0].panes().expect("located").panes[at.1];
+            let bar = self.scrollbar_of(pane, active);
+            let offset = pane.terminal.term.lock().grid().display_offset();
+            let Some(pane) = self.pane_mut(at) else { continue };
+            // Scrolled since the last frame: show it for a moment.
+            if offset != pane.scroll_seen {
+                pane.scroll_seen = offset;
+                pane.scrollbar_until = Some(now + SCROLLBAR_LINGER);
+            }
+            let lingering = pane.scrollbar_until.filter(|&until| until > now);
+            let Some(bar) = bar.filter(|_| active || offset > 0 || lingering.is_some()) else { continue };
+            if let Some(until) = lingering {
+                hide_at = Some(hide_at.map_or(until, |at| at.min(until)));
+            }
+            let quad = |rect: LabelRect, alpha: f32| QuadInstance {
+                offset: [rect.x, rect.y],
+                size: [rect.w, rect.h],
+                color: to_linear(color, alpha),
+            };
+            if active {
+                self.quads.push(quad(bar.track, 0.15));
+            }
+            self.quads.push(quad(bar.thumb, if active { 0.85 } else { 0.55 }));
+        }
+        self.scrollbar_hide_at = hide_at;
+    }
+
     /// Where the grid of a pane at `rect` starts: the configured padding
     /// in from its corner.
     fn pane_geometry(&self, rect: LabelRect) -> grid::GridGeometry {
@@ -2458,6 +2592,7 @@ impl AppState {
             self.silence_due(),
             self.program_due(),
             self.drag_scroll_at,
+            self.scrollbar_hide_at,
         ]
             .into_iter()
             .flatten()
@@ -3301,6 +3436,8 @@ impl AppState {
                 self.set_hovered(hit);
                 let divider = if self.context_menu.is_none() { self.divider_at(x, y) } else { None };
                 self.set_divider_hovered(divider.map(|divider| divider.axis));
+                let bar = if self.over_ui(self.last_cursor_pos) || divider.is_some() { None } else { self.scrollbar_at(x, y) };
+                self.set_scrollbar_hover(bar);
                 if self.modifiers.control_key() || self.link.is_some() {
                     self.update_link();
                 }
@@ -3322,6 +3459,7 @@ impl AppState {
                 // It follows the pointer even where nothing is re-sorted.
                 self.window.request_redraw();
             }
+            Some(Drag::Scrollbar { pane, grab }) => self.drag_scrollbar(pane, grab),
             Some(Drag::Divider(divider)) => {
                 let (gap, padding, cell) = (self.divider_gap(), self.padding(), self.text.cell);
                 let (pos, min) = match divider.axis {
@@ -3445,6 +3583,14 @@ impl AppState {
         {
             self.drag = Some(Drag::Divider(divider));
             self.set_hovered(None);
+            return;
+        }
+        // The scrollbar: the thumb is taken where it was grabbed, a press
+        // beside it jumps there first. Focus stays where it was.
+        if button == MouseButton::Left
+            && let Some(id) = self.scrollbar_at(x, y)
+        {
+            self.start_scrollbar_drag(id, y as f32);
             return;
         }
         // Any click into a pane gives it the keyboard.
@@ -3991,6 +4137,7 @@ impl AppState {
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
             | Setting::ScrollSelectFactor(_)
+            | Setting::Scrollbar(_)
             | Setting::WindowSize { .. }
             | Setting::Sidebar(_)
             | Setting::Splash(_)
@@ -4283,6 +4430,7 @@ impl AppState {
         if show_grid {
             self.grid_text.update(&mut self.text, pane_rows);
         }
+        self.build_scrollbars(&views);
         self.build_pane_borders(&views, area, split);
 
         if let Some(layout) = self.tab_bar_layout() {
@@ -4738,6 +4886,10 @@ impl ApplicationHandler<UserEvent> for App {
             state.splash_redraw_at = None;
             state.window.request_redraw();
         }
+        if state.scrollbar_hide_at.is_some_and(|at| now >= at) {
+            state.scrollbar_hide_at = None;
+            state.window.request_redraw();
+        }
     }
 
     /// Runs right before the loop sleeps, after this iteration's redraw
@@ -4842,6 +4994,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => state.on_cursor_moved(position),
             WindowEvent::CursorLeft { .. } => {
                 state.set_hovered(None);
+                state.set_scrollbar_hover(None);
                 if state.drag.is_none() {
                     state.set_divider_hovered(None);
                 }

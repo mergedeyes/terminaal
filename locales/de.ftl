@@ -155,6 +155,8 @@ settings-scroll-select-off = wie sonst
 settings-scroll-select-hint = Solange mit gedrückter Maustaste markiert wird, scrollt das Rad um diesen Faktor weiter – so reicht die Auswahl schnell über mehrere Bildschirme, ohne an den Rand ziehen zu müssen. Standard 3, 1× schaltet es ab.
 settings-select-path-segments = Doppelklick markiert einen Pfadteil
 settings-select-path-segments-hint = An: in ~/Projekte/Terminal markiert ein Doppelklick auf „Terminal“ nur diesen Ordner. Aus: den ganzen Pfad. IP-Adressen und Dateinamen bleiben immer ganz; Dreifachklick markiert die Zeile.
+settings-scrollbar = Bildlaufleiste
+settings-scrollbar-hint = Am rechten Rand jedes Terminals, solange zurückgescrollt ist, kurz nach dem Scrollen und wenn die Maus dort ist. Ziehen scrollt, ein Klick daneben springt.
 settings-scrollback = Scrollback
 settings-scrollback-lines = { $lines ->
     [one] { $lines } Zeile

@@ -88,7 +88,7 @@ disk.
   screen and hides again, a real layer surface on COSMIC, KDE, Sway and
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
 - Bracketed paste, mouse selection that scrolls along (double-click a word,
-  triple-click a line), the mouse wheel in
+  triple-click a line), a scrollbar that shows when needed, the mouse wheel in
   full-screen programs (`less`, `htop`, `vim`), a right-click menu, and a
   settings tab for every option
 
@@ -358,6 +358,7 @@ line_height_factor = 1.25
 padding = 8.0                 # around the terminal grid
 scrollback_lines = 10000
 scroll_lines = 3.0            # lines per mouse-wheel notch
+scrollbar = true              # scrollbar at the right edge, shown when scrolling or on hover
 scroll_select_factor = 3.0    # wheel multiplier while marking text (1 = off)
 select_path_segments = false  # double-click marks one folder of a path, not all of it
 default_width = 1000.0        # window size at start
@@ -492,6 +493,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Folder sync over SFTP – two-way or one-way, on opening or live in the background
 - [x] Selecting several files at once in the files tab
 - [x] Updates from the GitHub releases, offered at start and installed on request
+- [x] A scrollbar for the scrollback
 
 </details>
 
@@ -501,6 +503,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Search: number of matches, optional regex
 - [ ] An integrated title bar: window buttons in the tab bar instead of the desktop's title bar
 - [ ] A scrollbar for the scrollback
+- [ ] Update check at start-up against the GitHub releases, updating on request
 
 **Terminal protocols**
 - [ ] OSC 52: programs (also over SSH) may set the clipboard, after asking
