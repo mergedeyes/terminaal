@@ -87,6 +87,9 @@ disk.
 - **Drop-down window** (`terminaal --quake`) – drops down from the top of the
   screen and hides again, a real layer surface on COSMIC, KDE, Sway and
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
+- **Clipboard from programs (OSC 52)** – vim or tmux, on a server too, copy into
+  your clipboard; reading it asks first. Synchronized output (mode 2026) for
+  flicker-free full-screen programs
 - Bracketed paste, mouse selection that scrolls along (double-click a word,
   triple-click a line), a scrollbar that shows when needed, the mouse wheel in
   full-screen programs (`less`, `htop`, `vim`), a right-click menu, and a
@@ -368,6 +371,8 @@ cursor_blink_interval_ms = 600
 notifications = true          # desktop notifications at all
 notify_after_secs = 10        # notify when a command ran this long unseen (0: never)
 paste_warning = true          # ask before risky pastes (several lines, sudo, curl | sh, rm -rf)
+clipboard_write = true        # programs may set the clipboard (OSC 52)
+clipboard_read = "ask"        # programs reading the clipboard: "never", "ask" or "always"
 silence_secs = 15             # a terminal watched for silence is quiet after this long
 tab_bar = true
 sidebar = true                # show the sidebar at start
@@ -495,6 +500,8 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Selecting several files at once in the files tab
 - [x] Updates from the GitHub releases, offered at start and installed on request
 - [x] A scrollbar for the scrollback
+- [x] OSC 52: programs (also over SSH) may set the clipboard; reading it asks first
+- [x] Synchronized output (mode 2026)
 
 </details>
 
@@ -507,9 +514,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Update check at start-up against the GitHub releases, updating on request
 
 **Terminal protocols**
-- [ ] OSC 52: programs (also over SSH) may set the clipboard, after asking
 - [ ] Kitty keyboard protocol
-- [ ] Synchronized output (mode 2026)
 - [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter
 - [ ] Vi mode for selecting and copying in the scrollback
 - [ ] Images in the terminal (Kitty graphics protocol or Sixel)

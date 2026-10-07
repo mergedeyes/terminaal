@@ -81,6 +81,16 @@ With the broadcast, the dialog says how many terminals the paste goes to.
 programs such as editors are left alone. It's a look at the text, not a
 guarantee: a command can do harm without matching any of these.
 
+## Programs and the clipboard
+
+Programs can set the clipboard through the OSC 52 escape sequence – on a server
+too, which is what makes copying in a remote vim or tmux work (`clipboard_write`,
+on by default). Reading it is the dangerous half: a program on a server you
+logged into could otherwise pick up a password you just copied. So reading asks
+first (`clipboard_read = "ask"`), the dialog shows only how long the clipboard
+is, never its content, and it can't be answered by a key typed at the wrong
+moment – only by a click. Denied, the program gets an empty clipboard.
+
 ## Broadcast
 
 Input goes to other terminals only while the **focused** one is in the broadcast
