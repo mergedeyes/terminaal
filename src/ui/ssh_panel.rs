@@ -204,7 +204,7 @@ impl HostKeys {
             }
             if self.confirm {
                 ui.label(RichText::new(t!("known-hosts-confirm")).color(theme::colors().error));
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let remove = RichText::new(t!("common-remove")).color(theme::colors().error);
                     if ui.button(remove).clicked() {
                         click = Some(HostKeysClick::Remove);
@@ -814,7 +814,7 @@ impl SshPanel {
                 && let Some(host) = config.get(i)
             {
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui.button(t!("ssh-connect")).clicked() {
                         self.connect(data, host, 0, actions);
                     }
@@ -990,7 +990,7 @@ impl SshPanel {
                 ui.label(RichText::new(err).color(theme::colors().error));
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 save = ui.button(t!("common-save")).clicked();
                 cancel = ui.button(t!("common-cancel")).clicked();
             });

@@ -459,7 +459,7 @@ impl CommandsPanel {
                 ui.label(RichText::new(err).color(theme::colors().error));
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 save = ui.button(t!("common-save")).clicked();
                 cancel = ui.button(t!("common-cancel")).clicked();
             });
@@ -537,7 +537,7 @@ impl CommandsPanel {
                     ui.label(RichText::new(line).monospace().size(12.0).color(theme::colors().text_weak));
                 }
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     confirmed = ui.button(t!("cmd-warn-run")).clicked();
                     cancelled = ui.button(t!("common-cancel")).clicked();
                 });
