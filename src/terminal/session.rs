@@ -25,6 +25,7 @@ use crate::ssh::SshTarget;
 use crate::ssh::connection::{self, SshHandle};
 use crate::ssh::forward::ForwardStatus;
 use crate::terminal::filtered_pty::FilteredPty;
+use crate::terminal::graphics::{Graphics, SharedGraphics};
 use crate::terminal::listener::EventProxyListener;
 
 /// Terminal grid size, in cells. Implements `Dimensions` so it can be
@@ -51,6 +52,8 @@ impl Dimensions for GridSize {
 
 pub struct TerminalSession {
     pub term: Arc<FairMutex<Term<EventProxyListener>>>,
+    /// Images the program sent (kitty graphics protocol).
+    pub graphics: SharedGraphics,
     backend: Backend,
 }
 
@@ -93,7 +96,8 @@ impl TerminalSession {
         let master = pty.file().try_clone()?.into();
         let shell_pid = pty.child().id();
         let shell_events = listener.clone();
-        let pty = FilteredPty::new(pty, move |event| shell_events.send_shell(event))?;
+        let graphics = Graphics::new(options.images, (cell_width, cell_height));
+        let pty = FilteredPty::new(pty, graphics.clone(), move |event| shell_events.send_shell(event))?;
 
         let pty_event_loop = PtyEventLoop::new(term.clone(), listener, pty, false, false)?;
         let notifier = Notifier(pty_event_loop.channel());
@@ -101,7 +105,7 @@ impl TerminalSession {
         // of the process; we don't need the join handle for the MVP.
         let _ = pty_event_loop.spawn();
 
-        Ok(Self { term, backend: Backend::Local { notifier, master, shell_pid } })
+        Ok(Self { term, graphics, backend: Backend::Local { notifier, master, shell_pid } })
     }
 
     /// Connect to `target` over SSH. Returns right away -- connecting,
@@ -115,8 +119,10 @@ impl TerminalSession {
         options: TermOptions,
     ) -> std::io::Result<Self> {
         let term = new_term(&listener, size, options);
-        let handle = connection::spawn(target, term.clone(), listener, window_size(size, cell_width, cell_height))?;
-        Ok(Self { term, backend: Backend::Ssh(handle) })
+        let graphics = Graphics::new(options.images, (cell_width, cell_height));
+        let handle =
+            connection::spawn(target, term.clone(), listener, window_size(size, cell_width, cell_height), graphics.clone())?;
+        Ok(Self { term, graphics, backend: Backend::Ssh(handle) })
     }
 
     /// Send raw bytes (already encoded by `input.rs`, or a reply to a
@@ -131,6 +137,9 @@ impl TerminalSession {
     /// Tell both the `Term` and the shell's PTY about a new size.
     pub fn resize(&mut self, size: GridSize, cell_width: f32, cell_height: f32) {
         self.term.lock().resize(size);
+        if let Ok(mut graphics) = self.graphics.lock() {
+            graphics.set_cell(cell_width, cell_height);
+        }
         let window_size = window_size(size, cell_width, cell_height);
         match &mut self.backend {
             Backend::Local { notifier, .. } => notifier.on_resize(window_size),
@@ -199,6 +208,9 @@ impl TerminalSession {
     /// oldest lines.
     pub fn set_options(&self, options: TermOptions) {
         self.term.lock().set_options(term_config(options));
+        if let Ok(mut graphics) = self.graphics.lock() {
+            graphics.enabled = options.images;
+        }
     }
 }
 
@@ -215,6 +227,8 @@ pub struct TermOptions {
     /// Programs may set the clipboard (OSC 52). Reading always gets
     /// through to `app.rs`, which asks or answers by `clipboard_read`.
     pub clipboard_write: bool,
+    /// Programs may show images (kitty graphics protocol).
+    pub images: bool,
 }
 
 pub(crate) fn term_config(options: TermOptions) -> TermConfig {

@@ -91,6 +91,14 @@ first (`clipboard_read = "ask"`), the dialog shows only how long the clipboard
 is, never its content, and it can't be answered by a key typed at the wrong
 moment – only by a click. Denied, the program gets an empty clipboard.
 
+## Images
+
+Programs can show pictures (the kitty graphics protocol), but only by sending
+the picture data themselves. Terminaal never reads a file, temporary file or
+shared memory a program names – a program on a server could otherwise make it
+read files on your computer. Images are size-capped and limited to 256 MB per
+terminal; turn the protocol off with `images = false`.
+
 ## Broadcast
 
 Input goes to other terminals only while the **focused** one is in the broadcast

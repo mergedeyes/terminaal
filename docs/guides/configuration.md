@@ -69,6 +69,7 @@ and keeps your comments and formatting. A missing file means defaults.
 | `paste_warning` | `true` | Ask before pasting several lines that would run at once, `sudo`, a download piped into a shell, `rm -rf` and the like |
 | `kitty_keyboard` | `true` | Programs may switch on the kitty keyboard protocol (fish 4, Neovim, Helix). `false` keeps every program on the classic xterm keys |
 | `clipboard_write` | `true` | Programs may put text into the clipboard (OSC 52) – vim, Neovim or tmux, on a server too |
+| `images` | `true` | Programs may show images (kitty graphics protocol: yazi, `kitten icat`, chafa) |
 | `clipboard_read` | `"ask"` | Whether programs may read the clipboard (OSC 52): `"never"` (they get an empty one), `"ask"` (a dialog each time) or `"always"` |
 
 ### Built-in commands

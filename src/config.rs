@@ -138,6 +138,9 @@ pub struct Config {
     /// Ask before a paste with several lines or risky commands
     /// (`ui::paste_warning`).
     pub paste_warning: bool,
+    /// Programs may show images (kitty graphics protocol: `kitten icat`,
+    /// yazi, chafa).
+    pub images: bool,
     /// Programs may switch to the kitty keyboard protocol (fish 4, Neovim,
     /// Helix): keys like Ctrl+I and Tab, or Esc and Alt+[, become distinct.
     pub kitty_keyboard: bool,
@@ -220,6 +223,7 @@ impl Default for Config {
             commands_warned: false,
             commands_collapsed: Vec::new(),
             paste_warning: true,
+            images: true,
             kitty_keyboard: true,
             clipboard_write: true,
             clipboard_read: None,
@@ -479,6 +483,7 @@ impl Config {
             Setting::CommandsAssumeYes(on) => self.commands_assume_yes = on,
             Setting::CommandsWarned(on) => self.commands_warned = on,
             Setting::PasteWarning(on) => self.paste_warning = on,
+            Setting::Images(on) => self.images = on,
             Setting::KittyKeyboard(on) => self.kitty_keyboard = on,
             Setting::ClipboardWrite(on) => self.clipboard_write = on,
             Setting::ClipboardRead(read) => self.clipboard_read = Some(read.key().to_string()),
@@ -554,6 +559,7 @@ pub enum Setting {
     CommandsAssumeYes(bool),
     CommandsWarned(bool),
     PasteWarning(bool),
+    Images(bool),
     KittyKeyboard(bool),
     /// Programs may set the clipboard (OSC 52).
     ClipboardWrite(bool),
@@ -600,6 +606,7 @@ impl Setting {
             Self::CommandsAssumeYes(on) => set_value(doc, "commands_assume_yes", on),
             Self::CommandsWarned(on) => set_value(doc, "commands_warned", on),
             Self::PasteWarning(on) => set_value(doc, "paste_warning", on),
+            Self::Images(on) => set_value(doc, "images", on),
             Self::KittyKeyboard(on) => set_value(doc, "kitty_keyboard", on),
             Self::ClipboardWrite(on) => set_value(doc, "clipboard_write", on),
             Self::ClipboardRead(read) => set_value(doc, "clipboard_read", read.key()),
@@ -743,6 +750,7 @@ mod tests {
             Setting::UpdateCheck(false),
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
+            Setting::Images(false),
             Setting::KittyKeyboard(false),
             Setting::ClipboardWrite(false),
             Setting::ClipboardRead(ClipboardRead::Always),
@@ -778,6 +786,8 @@ mod tests {
         assert!(!config.update_check);
         assert_eq!(config.quake_height(), 40.0);
         assert!(!config.quake_hide_on_unfocus);
+        assert!(!config.images);
+        assert!(Config::default().images);
         assert!(!config.kitty_keyboard);
         assert!(Config::default().kitty_keyboard);
         assert!(!config.clipboard_write);

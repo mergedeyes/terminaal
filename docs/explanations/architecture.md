@@ -84,6 +84,18 @@ terminal switched it on – a broadcast can send the same key both ways. A key
 release goes only to the terminals that got the press, and only if they asked
 for releases.
 
+## Images
+
+Kitty graphics commands (APC `ESC _ G …`) are picked out of the output by the
+same filter as the shell integration (`terminal/graphics.rs` decodes and keeps
+them). The filter doesn't know the cursor position – the parser runs later – so
+it writes an *anchor* instead: one blank cell with a hyperlink naming the
+placement, then moves the cursor past the image. The anchor scrolls and gets
+erased like any text; each frame the renderer looks for anchors on screen (and
+a few screens above, for images reaching down into view) and draws their
+images as textured quads (`render/image.rs`), between each pane's cell
+backgrounds and what's drawn over the cells.
+
 ## The drop-down window
 
 `terminaal --quake` needs a window along the top edge of the screen, above the

@@ -60,6 +60,7 @@ use crate::i18n::t;
 use crate::ssh::agent_forward::AgentForwarding;
 use crate::ssh::forward::{ForwardStatus, Forwards};
 use crate::ssh::known_hosts;
+use crate::terminal::graphics::SharedGraphics;
 use crate::terminal::integration::Filter;
 use crate::ssh::options::{AlgorithmKind, AuthMethod, ForwardAgent, HostKeyCheck, algorithm_list};
 use crate::ssh::{AgentSocket, AuthPlan, SshTarget, default_key_files, display_path, expand_tilde};
@@ -240,6 +241,7 @@ pub fn spawn(
     term: SharedTerm,
     listener: EventProxyListener,
     size: WindowSize,
+    graphics: SharedGraphics,
 ) -> io::Result<SshHandle> {
     let (tx, rx) = mpsc::channel();
     let (wake_tx, wake_rx) = UnixStream::pair()?;
@@ -264,7 +266,7 @@ pub fn spawn(
         term,
         listener,
         parser: Processor::new(),
-        filter: Filter::default(),
+        filter: Filter::with_graphics(graphics),
         rx,
         wake: wake_rx,
         size,
@@ -376,7 +378,7 @@ impl Worker {
         let mut attempt: Option<u32> = None;
         loop {
             self.unattended = attempt.is_some();
-            self.filter = Filter::default();
+            self.filter.reset();
             let connections = self.connections;
             let result = self.connect_and_pump();
             // It was up again: the next drop starts with the short pause.

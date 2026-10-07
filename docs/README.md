@@ -49,6 +49,8 @@ Look something up, or get one thing done.
   down from the top of the screen at a key press
 - [Files on a server (SFTP)](guides/files-and-sftp.md) – browse, copy, sync
   folders, edit server files locally, sudo for root's files
+- [Images in the terminal](guides/images.md) – yazi, icat, chafa: pictures
+  between the text, over SSH too
 - [Appearance](guides/appearance.md) – themes, COSMIC, translucency, fonts
 - [Updates](guides/updates.md) – how Terminaal updates itself, and where it can't
 

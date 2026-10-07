@@ -87,6 +87,8 @@ disk.
 - **Drop-down window** (`terminaal --quake`) – drops down from the top of the
   screen and hides again, a real layer surface on COSMIC, KDE, Sway and
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
+- **Images in the terminal** – the kitty graphics protocol, for yazi's previews,
+  `kitten icat`, chafa or timg, over SSH too. → [Images](docs/guides/images.md)
 - **Hints** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>) – links, paths, IP
   addresses and hashes on screen get a letter or two; type them to copy, open or
   insert that text. → [Search, links and the scrollback](docs/guides/search-and-links.md#hints)
@@ -384,6 +386,7 @@ notify_after_secs = 10        # notify when a command ran this long unseen (0: n
 paste_warning = true          # ask before risky pastes (several lines, sudo, curl | sh, rm -rf)
 kitty_keyboard = true         # programs may switch on the kitty keyboard protocol
 clipboard_write = true        # programs may set the clipboard (OSC 52)
+images = true                 # programs may show images (kitty graphics protocol)
 clipboard_read = "ask"        # programs reading the clipboard: "never", "ask" or "always"
 silence_secs = 15             # a terminal watched for silence is quiet after this long
 tab_bar = true
@@ -517,6 +520,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Keyboard hints: copy, open or insert URLs, paths, IPs and hashes on screen by a letter
 - [x] Kitty keyboard protocol, and modifiers on every key the xterm way
 - [x] Vi mode for selecting and copying in the scrollback
+- [x] Images in the terminal (kitty graphics protocol)
 
 </details>
 
@@ -527,9 +531,6 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] An integrated title bar: window buttons in the tab bar instead of the desktop's title bar
 - [ ] A scrollbar for the scrollback
 - [ ] Update check at start-up against the GitHub releases, updating on request
-
-**Terminal protocols**
-- [ ] Images in the terminal (Kitty graphics protocol or Sixel)
 
 **SSH**
 - [ ] Folders and tags for hosts, search in the sidebar

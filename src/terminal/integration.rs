@@ -34,12 +34,20 @@
 //! and drops pushes beyond [`MAX_KEYBOARD_MODES`]; no real program gets
 //! anywhere near that.
 //!
+//! Kitty graphics commands (APC `ESC _ G … ESC \\`) go to the terminal's
+//! [`Graphics`]: what they show becomes an anchor cell in the output,
+//! what they answer a [`ShellEvent::Reply`] (see `terminal::graphics`).
+//! Without graphics, or with images turned off, they pass through and the
+//! parser drops them, as before.
+//!
 //! Everything else goes through byte for byte. The filter keeps no more
 //! than an unfinished OSC sequence, or a short CSI sequence that might be
 //! one of the above, between calls; `feed` never holds on to anything
 //! that isn't part of one.
 
 use std::path::{Path, PathBuf};
+
+use crate::terminal::graphics::SharedGraphics;
 
 /// URI scheme of prompt marks; never opened as a link.
 pub const PROMPT_SCHEME: &str = "terminaal-prompt:";
@@ -48,6 +56,9 @@ pub const OUTPUT_SCHEME: &str = "terminaal-output:";
 
 /// Longest OSC sequence looked at; longer ones pass through unexamined.
 const MAX_OSC: usize = 4096;
+/// Longest graphics command taken; longer ones are dropped. Chunks are
+/// 4 KiB, but a local program may send a whole image in one.
+const MAX_APC: usize = 64 << 20;
 /// Longest CSI sequence held back to look at.
 const MAX_CSI: usize = 32;
 /// Kitty keyboard modes a screen's stack may hold; pushes beyond go.
@@ -70,6 +81,8 @@ pub enum ShellEvent {
     CommandStarted,
     /// OSC 133;D: it finished, with this exit status if the shell said.
     CommandFinished { exit: Option<i32> },
+    /// Bytes to send back to the program: a graphics command's answer.
+    Reply(Vec<u8>),
 }
 
 /// What a prompt mark says about the command typed at the prompt before.
@@ -115,6 +128,17 @@ enum State {
     /// An OSC too long to look at, passed through up to its end.
     OscPassthrough,
     OscPassthroughEscape,
+    /// Right after ESC _, which is held back.
+    ApcStart,
+    /// Collecting a graphics command into `apc`.
+    Apc,
+    ApcEscape,
+    /// Another APC, passed through to its end.
+    ApcPassthrough,
+    ApcPassthroughEscape,
+    /// A graphics command too long to take, dropped up to its end.
+    ApcDrop,
+    ApcDropEscape,
 }
 
 pub struct Filter {
@@ -136,6 +160,10 @@ pub struct Filter {
     /// Continuation bytes still to come of the UTF-8 character being printed
     /// while the output mark is open.
     utf8_rest: u8,
+    /// Where graphics commands go; none: they pass through.
+    graphics: Option<SharedGraphics>,
+    /// The graphics command being collected, from its `G`.
+    apc: Vec<u8>,
     /// The CSI sequence held back, from its ESC [.
     csi: Vec<u8>,
     /// Kitty keyboard modes pushed and not popped: normal and alternate
@@ -157,6 +185,8 @@ impl Default for Filter {
             last_duration: None,
             output_open: false,
             utf8_rest: 0,
+            graphics: None,
+            apc: Vec::new(),
             csi: Vec::new(),
             keyboard_modes: [0; 2],
             alt_screen: false,
@@ -165,6 +195,16 @@ impl Default for Filter {
 }
 
 impl Filter {
+    /// A filter that hands graphics commands to `graphics`.
+    pub fn with_graphics(graphics: SharedGraphics) -> Self {
+        Self { graphics: Some(graphics), ..Self::default() }
+    }
+
+    /// Start over, as for a new connection; graphics go where they went.
+    pub fn reset(&mut self) {
+        *self = Self { graphics: self.graphics.take(), ..Self::default() };
+    }
+
     /// Filter `input` into `out`; what the shell said goes to `events`.
     pub fn feed(&mut self, input: &[u8], out: &mut Vec<u8>, events: &mut Vec<ShellEvent>) {
         for &byte in input {
@@ -194,6 +234,7 @@ impl Filter {
                         self.state = State::Osc;
                     }
                     ESC => out.push(ESC),
+                    b'_' => self.state = State::ApcStart,
                     b'[' => self.state = State::CsiStart,
                     _ => {
                         // RIS resets everything, both stacks too.
@@ -295,7 +336,90 @@ impl Filter {
                         self.feed(&[byte], out, events);
                     }
                 }
+                State::ApcStart => {
+                    let enabled = self.graphics.as_ref().is_some_and(|graphics| graphics.lock().is_ok_and(|g| g.enabled));
+                    if byte == b'G' && enabled {
+                        self.apc.clear();
+                        self.apc.push(byte);
+                        self.state = State::Apc;
+                    } else {
+                        out.extend_from_slice(&[ESC, b'_']);
+                        self.state = State::ApcPassthrough;
+                        self.feed(&[byte], out, events);
+                    }
+                }
+                State::Apc => match byte {
+                    ESC => self.state = State::ApcEscape,
+                    CAN | SUB => {
+                        self.apc.clear();
+                        self.state = State::Ground;
+                    }
+                    _ if self.apc.len() >= MAX_APC => {
+                        log::debug!("graphics command over {MAX_APC} bytes dropped");
+                        self.apc = Vec::new();
+                        self.state = State::ApcDrop;
+                    }
+                    _ => self.apc.push(byte),
+                },
+                State::ApcEscape => {
+                    if byte == b'\\' {
+                        self.state = State::Ground;
+                        self.finish_apc(out, events);
+                    } else {
+                        // An ESC aborts the string, as in vte.
+                        self.apc.clear();
+                        self.state = State::Escape;
+                        self.feed(&[byte], out, events);
+                    }
+                }
+                State::ApcPassthrough => {
+                    out.push(byte);
+                    match byte {
+                        CAN | SUB => self.state = State::Ground,
+                        ESC => self.state = State::ApcPassthroughEscape,
+                        _ => {}
+                    }
+                }
+                State::ApcPassthroughEscape => {
+                    if byte == b'\\' {
+                        out.push(byte);
+                        self.state = State::Ground;
+                    } else {
+                        out.pop();
+                        self.state = State::Escape;
+                        self.feed(&[byte], out, events);
+                    }
+                }
+                State::ApcDrop => match byte {
+                    ESC => self.state = State::ApcDropEscape,
+                    CAN | SUB => self.state = State::Ground,
+                    _ => {}
+                },
+                State::ApcDropEscape => {
+                    self.state = State::Ground;
+                    if byte != b'\\' {
+                        self.state = State::Escape;
+                        self.feed(&[byte], out, events);
+                    }
+                }
             }
+        }
+    }
+
+    /// A complete graphics command is in `apc`: the anchor of what it
+    /// shows goes into the output, its answer to `events`.
+    fn finish_apc(&mut self, out: &mut Vec<u8>, events: &mut Vec<ShellEvent>) {
+        let apc = std::mem::take(&mut self.apc);
+        let Some(graphics) = &self.graphics else { return };
+        let outcome = match graphics.lock() {
+            Ok(mut graphics) => graphics.command(&apc),
+            Err(_) => return,
+        };
+        if let Some(anchor) = outcome.anchor {
+            out.extend_from_slice(&anchor.bytes());
+        }
+        if let Some(reply) = outcome.reply {
+            events.push(ShellEvent::Reply(reply));
         }
     }
 
@@ -520,6 +644,44 @@ mod tests {
 
     fn text(bytes: &[u8]) -> String {
         String::from_utf8_lossy(bytes).replace('\x1b', "⎋").replace('\x07', "🔔")
+    }
+
+    /// Graphics commands go to `Graphics` -- split anywhere -- and come
+    /// out as an anchor plus a reply; other APCs, and all of them with
+    /// images off or no graphics, pass through.
+    #[test]
+    fn graphics_commands_become_anchors_and_replies() {
+        use crate::terminal::graphics::Graphics;
+
+        let command: &[u8] = b"a\x1b_Gi=3,f=24,s=1,v=1,c=2,r=1;AAAA\x1b\\b";
+        for at in 0..command.len() {
+            let graphics = Graphics::new(true, (10.0, 20.0));
+            let mut filter = Filter::with_graphics(graphics.clone());
+            let (mut out, mut events) = (Vec::new(), Vec::new());
+            filter.feed(&command[..at], &mut out, &mut events);
+            filter.feed(&command[at..], &mut out, &mut events);
+            assert_eq!(
+                text(&out),
+                "a⎋]8;;terminaal-image:1⎋\\ ⎋]8;;⎋\\\u{8}⎋[2Cb",
+                "split at {at}"
+            );
+            assert_eq!(events, [ShellEvent::Reply(b"\x1b_Gi=3;OK\x1b\\".to_vec())]);
+            assert!(graphics.lock().unwrap().placement(1).is_some());
+        }
+
+        let other: &[u8] = b"\x1b_Xsomething\x1b\\ok";
+        let graphics = Graphics::new(false, (10.0, 20.0));
+        for input in [other, command] {
+            let (out, events) = {
+                let mut filter = Filter::with_graphics(graphics.clone());
+                let (mut out, mut events) = (Vec::new(), Vec::new());
+                filter.feed(input, &mut out, &mut events);
+                (out, events)
+            };
+            assert_eq!(text(&out), text(input), "images off");
+            assert!(events.is_empty());
+            assert_eq!(text(&run(&[input]).0), text(input), "no graphics");
+        }
     }
 
     /// CSI sequences, held back or not, come out as they went in --
