@@ -447,11 +447,22 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
     ui.label(weak(t!("settings-scrollback-note")).size(11.0));
 
     ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-notifications-title"));
+    if let Some(on) = checkbox(ui, t!("settings-notifications"), "notifications", config.notifications) {
+        change(actions, Some(true), Setting::Notifications(on));
+    }
+    ui.label(weak(t!("settings-notifications-hint")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
     section_title(ui, &t!("settings-integration"));
     let mut secs = config.notify_after_secs;
-    let moved = slider(ui, &t!("settings-notify-after"), "notify_after_secs", &mut secs, 0..=300, 5.0, |secs| {
-        if secs == 0 { t!("settings-notify-never") } else { t!("settings-seconds", secs = secs) }
-    });
+    let moved = ui
+        .add_enabled_ui(config.notifications, |ui| {
+            slider(ui, &t!("settings-notify-after"), "notify_after_secs", &mut secs, 0..=300, 5.0, |secs| {
+                if secs == 0 { t!("settings-notify-never") } else { t!("settings-seconds", secs = secs) }
+            })
+        })
+        .inner;
     change(actions, moved, Setting::NotifyAfter(secs));
     ui.label(weak(t!("settings-integration-note")).size(11.0));
 

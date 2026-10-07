@@ -163,6 +163,9 @@ settings-scrollback-lines = { $lines ->
    *[other] { $lines } lines
 }
 settings-scrollback-note = Applies to all tabs once released; set lower, it drops the oldest lines.
+settings-notifications-title = Notifications
+settings-notifications = Desktop notifications
+settings-notifications-hint = When a long command finishes or a watched terminal goes quiet while you're elsewhere: a notification, and the window is highlighted in the dock. The dots in the tab bar come either way.
 settings-integration = Shell integration
 settings-notify-after = Notify after
 settings-notify-never = never
@@ -170,7 +173,7 @@ settings-seconds = { $secs } s
 settings-integration-note = Notifies when a command ran this long and its tab isn't in view. fish, bash and zsh report prompts and directory in Terminaal by themselves, other shells with OSC 133 and OSC 7.
 settings-activity = Background tabs
 settings-silence-after = Quiet after
-settings-activity-note = A tab in the background gets a dot before its title: blue for new output, red for the bell, green when a terminal watched for silence (right-click → Watch for silence) has had no output this long – then there's also a notification.
+settings-activity-note = A tab in the background gets a dot before its title: blue for new output, red for the bell, green when a terminal watched for silence (right-click → Watch for silence) has had no output this long – then there's also a notification, if they're on.
 paste-warn-title = ⚠ Paste this?
 paste-warn-broadcast = Goes to { $terminals } terminals (broadcast).
 paste-warn-runs-lines = { $lines ->

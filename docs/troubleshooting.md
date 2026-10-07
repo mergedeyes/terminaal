@@ -117,6 +117,8 @@ wins over the directory.
 - The name follows the output, a quarter of a second behind it.
 
 **No notification when a command finishes.**
+- **Desktop notifications** must be on (Settings → Terminal → Notifications,
+  `notifications`).
 - It only fires when the command ran at least `notify_after_secs` and the tab
   wasn't visible (window unfocused, or another tab active).
 - `notify-send` must be installed (`libnotify`).

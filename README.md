@@ -365,6 +365,7 @@ default_width = 1000.0        # window size at start
 default_height = 650.0
 cursor_blink = true
 cursor_blink_interval_ms = 600
+notifications = true          # desktop notifications at all
 notify_after_secs = 10        # notify when a command ran this long unseen (0: never)
 paste_warning = true          # ask before risky pastes (several lines, sudo, curl | sh, rm -rf)
 silence_secs = 15             # a terminal watched for silence is quiet after this long

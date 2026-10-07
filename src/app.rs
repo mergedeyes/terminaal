@@ -1178,6 +1178,7 @@ impl AppState {
         let now = Instant::now();
         let window_focused = self.focused;
         let active_tab = self.active_tab;
+        let notifications = self.config.notifications;
         let mut announced = false;
         for (tab_idx, tab) in self.tabs.iter_mut().enumerate() {
             let Some(panes) = tab.panes_mut() else { continue };
@@ -1189,7 +1190,8 @@ impl AppState {
                 pane.activity.watch = None;
                 let in_view = window_focused && tab_idx == active_tab && visible;
                 pane.activity.silent = tab_idx != active_tab;
-                if !in_view {
+                // The dot in the tab bar comes either way.
+                if !in_view && notifications {
                     notify_silence(&pane.title, after);
                     announced = true;
                 }
@@ -3217,7 +3219,7 @@ impl AppState {
         let Some(at) = self.locate(pane_id) else { return };
         let (visible, focused) = (self.pane_visible(pane_id), self.current_pane().is_some_and(|pane| pane.id == pane_id));
         let (hostname, in_view) = (self.hostname.clone(), self.focused && visible);
-        let threshold = self.config.notify_after_secs;
+        let threshold = if self.config.notifications { self.config.notify_after_secs } else { 0 };
         let Some(pane) = self.pane_mut(at) else { return };
         match event {
             ShellEvent::Cwd { host, path } => {
@@ -4108,7 +4110,7 @@ impl AppState {
             // `run_ui` moves the console along.
             Setting::SidebarWidth(_) => {}
             Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
-            Setting::NotifyAfter(_) => {}
+            Setting::NotifyAfter(_) | Setting::Notifications(_) => {}
             Setting::QuakeHeight(percent) => {
                 if let AppWindow::Layer(window) = &self.window {
                     window.layer.borrow_mut().set_height(percent);
