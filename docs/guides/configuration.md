@@ -58,6 +58,7 @@ and keeps your comments and formatting. A missing file means defaults.
 | `shell` | `$SHELL` | Default shell for new tabs, a path |
 | `scrollback_lines` | `10000` | Lines kept per tab; lowering it drops the oldest |
 | `scroll_lines` | `3.0` | Lines per mouse-wheel notch |
+| `scrollbar` | `true` | A scrollbar at the right edge of each terminal while scrolled back, after scrolling and on hover |
 | `scroll_select_factor` | `3.0` | How much faster the wheel scrolls while text is being marked (1–10, `1` for the usual speed) |
 | `select_path_segments` | `false` | A double-click in a path marks only the folder or file under the pointer instead of the whole path |
 | `notify_after_secs` | `10` | Notify when a command that ran this long finishes unseen; `0` = never |

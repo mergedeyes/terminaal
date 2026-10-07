@@ -154,6 +154,8 @@ settings-scroll-select-off = as usual
 settings-scroll-select-hint = While you hold the button to mark text, the wheel scrolls this much further – a selection reaches over several screens without dragging to the edge. Default 3, 1× turns it off.
 settings-select-path-segments = Double-click marks one part of a path
 settings-select-path-segments-hint = On: in ~/Projects/Terminal, a double-click on “Terminal” marks only that folder. Off: the whole path. IP addresses and file names always stay whole; a triple-click marks the line.
+settings-scrollbar = Scrollbar
+settings-scrollbar-hint = At the right edge of each terminal while scrolled back, briefly after scrolling, and when the pointer is there. Drag it to scroll, click beside the thumb to jump.
 settings-scrollback = Scrollback
 settings-scrollback-lines = { $lines ->
     [one] { $lines } line
