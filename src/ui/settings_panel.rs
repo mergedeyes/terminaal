@@ -17,7 +17,7 @@ use egui::{
 };
 
 use crate::commands::{self, Family};
-use crate::config::{self, Config, FontSlot, Setting};
+use crate::config::{self, ClipboardRead, Config, FontSlot, Setting};
 use crate::i18n::{Language, t};
 use crate::render::text::FontFamilies;
 use crate::shells::InstalledShell;
@@ -481,6 +481,24 @@ fn terminal(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
         actions.push(SidebarAction::ChangeSetting { setting: Setting::PasteWarning(on), save: true });
     }
     ui.label(weak(t!("settings-paste-warning-hint")).size(11.0));
+
+    ui.add_space(SECTION_GAP);
+    section_title(ui, &t!("settings-clipboard"));
+    if let Some(on) = checkbox(ui, t!("settings-clipboard-write"), "clipboard_write", config.clipboard_write) {
+        actions.push(SidebarAction::ChangeSetting { setting: Setting::ClipboardWrite(on), save: true });
+    }
+    ui.label(weak(t!("settings-clipboard-write-hint")).size(11.0));
+    ui.add_space(4.0);
+    let read = config.clipboard_read();
+    ui.label(t!("settings-clipboard-read")).on_hover_text(key_hint("clipboard_read"));
+    egui::ComboBox::from_id_salt("settings-clipboard-read").width(COMBO_WIDTH).selected_text(read.label()).show_ui(ui, |ui| {
+        for value in ClipboardRead::ALL {
+            if ui.selectable_label(read == value, value.label()).clicked() && read != value {
+                actions.push(SidebarAction::ChangeSetting { setting: Setting::ClipboardRead(value), save: true });
+            }
+        }
+    });
+    ui.label(weak(t!("settings-clipboard-read-hint")).size(11.0));
 }
 
 impl SettingsPanel {
