@@ -4,6 +4,10 @@
 
 - **Mouse wheel:** 3 lines per notch by default (**Settings → Terminal → Mouse
   wheel**, 1–20). Touchpads scroll smoothly, pixel by pixel.
+- **Scrollbar:** at the right edge of each terminal. It shows while you're
+  scrolled back, for a moment after scrolling, and when the pointer is on the
+  edge. Drag the thumb, or click beside it to jump there. Off with **Settings →
+  Terminal → Scrollbar** (`scrollbar = false`). Full-screen programs have none.
 - **Keyboard:** <kbd>Shift</kbd>+<kbd>PageUp</kbd>/<kbd>PageDown</kbd> by page,
   <kbd>Shift</kbd>+<kbd>Home</kbd>/<kbd>End</kbd> to the top or bottom.
 - **Typing** jumps back to the bottom.

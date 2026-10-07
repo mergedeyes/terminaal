@@ -56,6 +56,9 @@ pub struct Config {
     /// A double-click in a path marks only the folder or file under the
     /// pointer; off, the whole path.
     pub select_path_segments: bool,
+    /// A scrollbar at the right edge of each terminal, while scrolled back
+    /// or the pointer is on it.
+    pub scrollbar: bool,
     /// Default window size (logical pixels).
     pub default_width: f64,
     pub default_height: f64,
@@ -176,6 +179,7 @@ impl Default for Config {
             // here; dragging to the edge covers the slow case.
             scroll_select_factor: 3.0,
             select_path_segments: false,
+            scrollbar: true,
             default_width: 1000.0,
             default_height: 650.0,
             cursor_blink: true,
@@ -414,6 +418,7 @@ impl Config {
             Setting::ScrollLines(lines) => self.scroll_lines = lines,
             Setting::ScrollSelectFactor(factor) => self.scroll_select_factor = factor,
             Setting::SelectPathSegments(on) => self.select_path_segments = on,
+            Setting::Scrollbar(on) => self.scrollbar = on,
             Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
@@ -476,6 +481,7 @@ pub enum Setting {
     /// How much faster the wheel scrolls while marking text.
     ScrollSelectFactor(f32),
     SelectPathSegments(bool),
+    Scrollbar(bool),
     /// Window size at start; both keys at once.
     WindowSize { width: f64, height: f64 },
     CursorBlink(bool),
@@ -518,6 +524,7 @@ impl Setting {
             Self::ScrollLines(lines) => set_value(doc, "scroll_lines", float(lines.into())),
             Self::ScrollSelectFactor(factor) => set_value(doc, "scroll_select_factor", float(factor.into())),
             Self::SelectPathSegments(on) => set_value(doc, "select_path_segments", on),
+            Self::Scrollbar(on) => set_value(doc, "scrollbar", on),
             Self::WindowSize { width, height } => {
                 set_value(doc, "default_width", float(width.round()));
                 set_value(doc, "default_height", float(height.round()));
@@ -632,6 +639,7 @@ mod tests {
             Setting::Opacity(0.85),
             Setting::UiOpacity(Some(0.9)),
             Setting::SelectPathSegments(true),
+            Setting::Scrollbar(false),
             Setting::Blur(false),
             Setting::CommandsRun(false),
             Setting::CommandsAssumeYes(true),
@@ -661,6 +669,7 @@ mod tests {
         assert_eq!(config.opacity(), 0.85);
         assert_eq!(config.ui_opacity(), Some(0.9));
         assert!(config.select_path_segments);
+        assert!(!config.scrollbar);
         assert!(!config.blur);
         assert!(!config.commands_run);
         assert!(config.commands_assume_yes);
