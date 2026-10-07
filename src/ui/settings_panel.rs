@@ -12,7 +12,7 @@ use std::ops::RangeInclusive;
 
 use egui::emath::Numeric;
 use egui::{
-    Align2, Button, CornerRadius, DragValue, Frame, Margin, Rect, Response, RichText, ScrollArea, Stroke, TextStyle, Ui,
+    Button, CornerRadius, DragValue, Frame, Margin, Rect, Response, RichText, ScrollArea, Stroke, TextStyle, Ui,
     pos2, vec2,
 };
 
@@ -224,13 +224,17 @@ impl SettingsPanel {
                 ui.add_space(SECTION_GAP);
             }
             section_title(ui, &group.label());
-            egui::Grid::new(("shortcuts", i)).num_columns(2).min_col_width(240.0).spacing(vec2(12.0, 6.0)).show(
+            // The names get at most this much and wrap beyond it, so a long
+            // one in a wide font doesn't push the combinations off the page.
+            let name_width = (ui.available_width() * 0.45).clamp(160.0, 320.0);
+            let grid = egui::Grid::new(("shortcuts", i)).num_columns(2).min_col_width(name_width).max_col_width(name_width);
+            grid.spacing(vec2(12.0, 6.0)).show(
                 ui,
                 |ui| {
                     for action in Action::ALL.into_iter().filter(|action| action.group() == group) {
                         let key = t!("shortcuts-key-hint", key = action.name().into_owned());
-                        ui.label(action.label()).on_hover_text(key);
-                        ui.horizontal(|ui| self.shortcut_combos(ui, keymap, action, actions));
+                        ui.add(egui::Label::new(action.label()).wrap()).on_hover_text(key);
+                        ui.horizontal_wrapped(|ui| self.shortcut_combos(ui, keymap, action, actions));
                         ui.end_row();
                     }
                 },
@@ -783,7 +787,20 @@ fn slider<N: Numeric>(
     step: f64,
     shown: impl Fn(N) -> String,
 ) -> Option<bool> {
-    let label = ui.label(name).on_hover_text(key_hint(key));
+    // Name and value in one row, the value at the slider's right end --
+    // laid out, not painted there: in a wide font (a Nerd Font) the two
+    // don't fit beside each other and the value goes after the name.
+    let color = if ui.is_enabled() { theme::colors().text_weak } else { theme::colors().border };
+    let value_text = egui::WidgetText::from(RichText::new(shown(*value)).color(color));
+    ui.horizontal(|ui| {
+        let label = ui.label(name).on_hover_text(key_hint(key));
+        let galley = value_text.clone().into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, TextStyle::Body);
+        let gap = ui.spacing().slider_width - label.rect.width() - galley.size().x - ui.spacing().item_spacing.x;
+        if gap > 0.0 {
+            ui.add_space(gap);
+        }
+        ui.label(value_text);
+    });
     // `Edits`: an out-of-range value from the config file only gets
     // clamped once the user moves the slider, not by merely showing it.
     let slider = egui::Slider::new(value, range)
@@ -791,14 +808,6 @@ fn slider<N: Numeric>(
         .show_value(false)
         .clamping(egui::SliderClamping::Edits);
     let response = ui.add(slider);
-    let color = if ui.is_enabled() { theme::colors().text_weak } else { theme::colors().border };
-    ui.painter().text(
-        pos2(response.rect.right(), label.rect.center().y),
-        Align2::RIGHT_CENTER,
-        shown(*value),
-        TextStyle::Body.resolve(ui.style()),
-        color,
-    );
     changed(&response)
 }
 

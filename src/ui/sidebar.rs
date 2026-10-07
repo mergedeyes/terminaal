@@ -328,7 +328,7 @@ impl Sidebar {
 
         let shell = self.selected_shell().clone();
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let new_tab = ui.button(t!("shells-new-tab")).on_hover_text(t!("shells-new-tab-hint", shell = &shell.name));
             if new_tab.clicked() {
                 actions.push(SidebarAction::OpenTab(shell.clone()));
@@ -367,7 +367,7 @@ impl Sidebar {
 
         let count = |kind| entries.iter().filter(|e| e.kind == kind).count();
         let before = self.list;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut self.list, EntryKind::Alias, t!("shells-aliases", count = count(EntryKind::Alias)));
             ui.selectable_value(
                 &mut self.list,
@@ -550,7 +550,7 @@ impl Sidebar {
                 ui.label(RichText::new(err).color(theme::colors().error));
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button(t!("common-save")).clicked() {
                     save = true;
                 }

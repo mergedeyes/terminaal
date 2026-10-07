@@ -376,7 +376,7 @@ impl KeysPanel {
                 }
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 save = ui.button(t!("common-save")).clicked();
                 cancel = ui.button(t!("common-cancel")).clicked();
             });
