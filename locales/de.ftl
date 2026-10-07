@@ -81,6 +81,13 @@ menu-files = Dateien (SFTP)
 
 ## Suche im Scrollback (render/search_bar.rs)
 
+hints-prompt = Schnellauswahl:
+hints-none = Nichts zu wählen auf dem Bildschirm
+hints-count = { $count ->
+    [one] 1 Treffer
+   *[other] { $count } Treffer
+}
+hints-keys = Buchstaben kopieren, Umschalt öffnet, Alt fügt ein, Esc beendet
 search-prompt = Suchen:
 search-prompt-regex = Suchen (Regex):
 search-no-match = Keine Treffer
@@ -330,6 +337,7 @@ palette-theme-current = aktuell
 palette-new-tab = Neuer Tab: { $shell }
 shortcut-copy = Kopieren
 shortcut-copy-last-output = Ausgabe des letzten Befehls kopieren
+shortcut-hints = Schnellauswahl: Links, Pfade, IPs und Hashes per Buchstaben
 shortcut-paste = Einfügen
 shortcut-paste-and-run = Einfügen und ausführen
 shortcut-scroll-page-up = Eine Seite zurück

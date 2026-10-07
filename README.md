@@ -87,6 +87,9 @@ disk.
 - **Drop-down window** (`terminaal --quake`) – drops down from the top of the
   screen and hides again, a real layer surface on COSMIC, KDE, Sway and
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
+- **Hints** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>) – links, paths, IP
+  addresses and hashes on screen get a letter or two; type them to copy, open or
+  insert that text. → [Search, links and the scrollback](docs/guides/search-and-links.md#hints)
 - **Keys as programs expect them** – Alt, Ctrl and Shift with arrows, function
   and editing keys the xterm way, and the kitty keyboard protocol for programs
   that ask for it (fish 4, Neovim, Helix)
@@ -296,6 +299,7 @@ The ones you'll use most:
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> | Command palette |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> | Copy the last command's output |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Hints: copy, open or insert a link, path, IP or hash by its letters |
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
@@ -506,6 +510,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] A scrollbar for the scrollback
 - [x] OSC 52: programs (also over SSH) may set the clipboard; reading it asks first
 - [x] Synchronized output (mode 2026)
+- [x] Keyboard hints: copy, open or insert URLs, paths, IPs and hashes on screen by a letter
 - [x] Kitty keyboard protocol, and modifiers on every key the xterm way
 
 </details>
@@ -519,6 +524,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Update check at start-up against the GitHub releases, updating on request
 
 **Terminal protocols**
+- [ ] Kitty keyboard protocol
 - [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter
 - [ ] Vi mode for selecting and copying in the scrollback
 - [ ] Images in the terminal (Kitty graphics protocol or Sixel)

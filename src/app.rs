@@ -77,7 +77,7 @@ use crate::session::{self, SavedPane, SavedTab, Session};
 use crate::ssh::{Catalog, SshTarget};
 use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
-use crate::terminal::{links, prompts};
+use crate::terminal::{hints, links, prompts};
 use crate::terminal::search::Search;
 use crate::terminal::session::TermOptions;
 use crate::terminal::{EventProxyListener, GridSize, TerminalSession};
@@ -744,6 +744,10 @@ struct AppState {
     /// Exit codes next to the prompts of failed commands.
     prompt_labels: Labels,
     links: links::Finder,
+    /// Keyboard hints over the focused pane, while they're up; the keys
+    /// are theirs meanwhile.
+    hints: Option<hints::Hints>,
+    hint_finder: hints::Finder,
     /// The link under the mouse while Ctrl is held, and the pane it's in.
     link: Option<(usize, links::Link)>,
     /// Search in the focused pane's scrollback, while its bar is open.
@@ -895,6 +899,8 @@ impl AppState {
             pressed_keys: Vec::new(),
             prompt_labels: Labels::default(),
             links: links::Finder::default(),
+            hints: None,
+            hint_finder: hints::Finder::default(),
             link: None,
             search: None,
             search_bar: SearchBar::new(ui_colors),
@@ -1224,6 +1230,7 @@ impl AppState {
     /// one's scrollback.
     fn switched_pane(&mut self) {
         self.search = None;
+        self.hints = None;
         self.link = None;
         self.reset_cursor_blink();
         self.update_window_title();
@@ -1649,6 +1656,7 @@ impl AppState {
         self.close_context_menu();
         self.close_palette();
         self.paste_warning = None;
+        self.hints = None;
         self.answer_clipboard_request(clipboard_request::Choice::Deny);
         self.drag = None;
         self.drag_scroll_at = None;
@@ -3131,6 +3139,9 @@ impl AppState {
             self.palette_key(&event);
             return;
         }
+        if self.hints.is_some() && self.hint_key(&event) {
+            return;
+        }
         // A key closes the context menu -- modifiers aside, they may be
         // the start of Ctrl+Shift+C. Escape is used up by that.
         if self.context_menu.is_some() {
@@ -3252,6 +3263,7 @@ impl AppState {
             Action::ScrollToTop => return self.scroll_by_key(Scroll::Top),
             Action::ScrollToBottom => return self.scroll_by_key(Scroll::Bottom),
             Action::Search => return self.open_search(),
+            Action::Hints => return self.toggle_hints(),
             Action::PreviousPrompt => return self.jump_prompt(true),
             Action::NextPrompt => return self.jump_prompt(false),
             Action::FontBigger => self.zoom(1.0),
@@ -3332,12 +3344,84 @@ impl AppState {
     /// query if it's open. Not on the settings tab.
     fn open_search(&mut self) -> bool {
         let Some(term) = self.current_terminal().map(|terminal| terminal.term.clone()) else { return false };
+        self.hints = None;
         match &mut self.search {
             Some(search) => search.set_editing(true),
             None => self.search = Some(Search::new(&term.lock())),
         }
         self.window.request_redraw();
         true
+    }
+
+    /// Label what's worth picking on the focused pane's screen, or take
+    /// the labels away again. Not on the settings or files tab.
+    fn toggle_hints(&mut self) -> bool {
+        if self.hints.take().is_some() {
+            self.window.request_redraw();
+            return true;
+        }
+        let Some(pane) = self.current_pane() else { return false };
+        let hints = hints::Hints::new(pane.id, pane.terminal.is_local(), pane.local_cwd(&self.hostname));
+        self.search = None;
+        self.close_context_menu();
+        self.hints = Some(hints);
+        self.window.request_redraw();
+        true
+    }
+
+    /// A key while the hints are up. A label's letters pick its hint --
+    /// to copy, with Shift to open, with Alt to type into the terminal;
+    /// Backspace takes a letter back, Escape ends. `false` for any other
+    /// key: it ends the hints and goes on as usual (Ctrl+Shift+H too).
+    fn hint_key(&mut self, event: &KeyInput) -> bool {
+        let mods = self.modifiers;
+        // Its own shortcut ends it rather than opening it anew.
+        if KeyCombo::from_event(event, mods).and_then(|combo| self.keymap.action(&combo)) == Some(Action::Hints) {
+            self.hints = None;
+            self.window.request_redraw();
+            return true;
+        }
+        let Some(hints) = self.hints.as_mut() else { return false };
+        let letter = match &event.key_without_modifiers {
+            Key::Character(key) if !mods.control_key() && !mods.super_key() => {
+                key.chars().next().map(|c| c.to_ascii_lowercase()).filter(|&c| hints::ALPHABET.contains(c))
+            }
+            _ => None,
+        };
+        match (&event.logical_key, letter) {
+            (Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super), _) => return true,
+            (Key::Named(NamedKey::Escape), _) => self.hints = None,
+            (Key::Named(NamedKey::Backspace), _) => hints.pop(),
+            (_, Some(letter)) => {
+                if let Some(hint) = hints.push(letter).cloned() {
+                    let pick = if mods.alt_key() {
+                        hints::Pick::Insert
+                    } else if mods.shift_key() {
+                        hints::Pick::Open
+                    } else {
+                        hints::Pick::Copy
+                    };
+                    self.hints = None;
+                    self.pick_hint(hint, pick);
+                }
+            }
+            _ => {
+                self.hints = None;
+                self.window.request_redraw();
+                return false;
+            }
+        }
+        self.window.request_redraw();
+        true
+    }
+
+    fn pick_hint(&mut self, hint: hints::Hint, pick: hints::Pick) {
+        log::debug!("hint {:?} picked: {pick:?}", hint.text);
+        match (pick, &hint.target) {
+            (hints::Pick::Open, Some(target)) => open_link(target),
+            (hints::Pick::Insert, _) => self.send_to_input_panes(|mode| input::paste_to_bytes(&hint.text, mode, false)),
+            _ => self.set_clipboard(hint.text),
+        }
     }
 
     /// A key while the search bar is open. Typing the query: text,
@@ -3599,6 +3683,10 @@ impl AppState {
                 self.window.request_redraw();
             }
             return;
+        }
+        // A click ends the hints, and goes on as usual.
+        if self.hints.take().is_some() {
+            self.window.request_redraw();
         }
         // Presses on the paste dialog are egui's; one anywhere else cancels.
         if self.paste_warning.is_some() {
@@ -4362,7 +4450,25 @@ impl AppState {
             let search = self.search.as_mut().filter(|_| pane.focused);
             let matches = search.map(|search| search.visible_matches(&term)).unwrap_or_default();
             let focus = self.search.as_ref().filter(|_| pane.focused).and_then(Search::focus);
-            let highlight = grid::Highlights { matches: &matches, focus, link };
+            // Hints are found afresh each frame: output or scrolling may
+            // have moved them.
+            let mut hint_cells = Vec::new();
+            let mut hint_labels = Vec::new();
+            if let Some(hints) = self.hints.as_mut().filter(|hints| hints.pane == pane.id) {
+                hints.update(self.hint_finder.find(&term, hints.files, hints.cwd.as_deref()));
+                let typed = hints.typed.len();
+                for hint in hints.shown() {
+                    let mut point = *hint.cells.start();
+                    for letter in hint.label[typed..].chars() {
+                        hint_labels.push((point, letter));
+                        point = point.add(&*term, alacritty_terminal::index::Boundary::Grid, 1);
+                    }
+                    hint_cells.push(hint.cells.clone());
+                }
+                hint_labels.sort_by_key(|(point, _)| *point);
+            }
+            let highlight =
+                grid::Highlights { matches: &matches, focus, link, hints: &hint_cells, hint_labels: &hint_labels };
             let offset = term.grid().display_offset() as i32;
             let focus_rows = focus.map(|m| (m.start().line.0 + offset, m.end().line.0 + offset));
             let rows =
@@ -4404,6 +4510,26 @@ impl AppState {
                 status: &status,
                 no_match: search.no_match() || search.invalid(),
                 focus_rows,
+            };
+            let scale_factor = self.window.scale_factor() as f32;
+            let size = (pane.size.columns, pane.size.screen_lines);
+            self.search_bar.build(geometry, size, &view, scale_factor, &mut self.text, &mut self.quads);
+            cutout = self.search_bar.cutout();
+        }
+        if let Some(hints) = self.hints.as_ref().filter(|hints| hints.pane == pane.id) {
+            let count = hints.shown().count();
+            let status = if count == 0 {
+                t!("hints-none")
+            } else {
+                format!("{}  ·  {}", t!("hints-count", count = count as u32), t!("hints-keys"))
+            };
+            let view = SearchBarView {
+                prompt: &t!("hints-prompt"),
+                query: &hints.typed,
+                editing: true,
+                status: &status,
+                no_match: count == 0,
+                focus_rows: None,
             };
             let scale_factor = self.window.scale_factor() as f32;
             let size = (pane.size.columns, pane.size.screen_lines);
