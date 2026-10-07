@@ -15,13 +15,13 @@ use alacritty_terminal::term::search::{RegexIter, RegexSearch};
 
 /// URI schemes that are opened, in text and hyperlinks alike; a program
 /// can't make a click start just anything a scheme handler does.
-const SCHEMES: [&str; 12] =
+pub(crate) const SCHEMES: [&str; 12] =
     ["ipfs:", "ipns:", "magnet:", "mailto:", "gemini://", "gopher://", "https://", "http://", "news:", "file:", "git://", "ftp://"];
 /// Like Alacritty's default URL hint.
-const URL: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ftp://)\
+pub(crate) const URL: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ftp://)\
                    [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`\\\\]+";
 /// Anything that could be a file name; whether it is one is up to the disk.
-const PATH: &str = "[^\\s'\"`<>|:;,()\\[\\]{}]+";
+pub(crate) const PATH: &str = "[^\\s'\"`<>|:;,()\\[\\]{}]+";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -77,7 +77,7 @@ impl Finder {
 }
 
 /// The cells around `point` that carry the same OSC 8 hyperlink.
-fn hyperlink<T>(term: &Term<T>, point: Point) -> Option<Link> {
+pub(crate) fn hyperlink<T>(term: &Term<T>, point: Point) -> Option<Link> {
     let grid = term.grid();
     let link = grid[point].hyperlink().filter(|link| SCHEMES.iter().any(|scheme| link.uri().starts_with(scheme)))?;
     let same = |p: Point| grid[p].hyperlink().is_some_and(|other| other == link);
@@ -112,13 +112,13 @@ fn containing<T>(
         .find(|found| found.contains(&point))
 }
 
-fn text_of<T>(term: &Term<T>, cells: &RangeInclusive<Point>) -> String {
+pub(crate) fn text_of<T>(term: &Term<T>, cells: &RangeInclusive<Point>) -> String {
     term.bounds_to_string(*cells.start(), *cells.end()).replace('\n', "")
 }
 
 /// A URL without what usually follows one in prose: a full stop, a comma,
 /// a closing bracket it doesn't open.
-fn trim_url<T>(term: &Term<T>, cells: RangeInclusive<Point>) -> (RangeInclusive<Point>, String) {
+pub(crate) fn trim_url<T>(term: &Term<T>, cells: RangeInclusive<Point>) -> (RangeInclusive<Point>, String) {
     let mut text = text_of(term, &cells);
     let mut end = *cells.end();
     while let Some(last) = text.chars().last() {
@@ -133,7 +133,7 @@ fn trim_url<T>(term: &Term<T>, cells: RangeInclusive<Point>) -> (RangeInclusive<
 }
 
 /// `name` as an existing file or folder: `~/` expanded, relative to `cwd`.
-fn resolve(name: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn resolve(name: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     let path = match name.strip_prefix("~/").or(if name == "~" { Some("") } else { None }) {
         Some(rest) => PathBuf::from(std::env::var_os("HOME")?).join(rest),
         None if name.starts_with('/') => PathBuf::from(name),

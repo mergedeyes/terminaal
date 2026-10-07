@@ -23,6 +23,7 @@
 | Command palette | `command_palette` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Copy | `copy` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> |
 | Copy the last command's output | `copy_last_output` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> |
+| Hints: pick links, paths, IPs and hashes by letters | `hints` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> |
 | Paste | `paste` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> |
 | Paste and run | `paste_and_run` | none |
 | Scroll a page up / down | `scroll_page_up`, `scroll_page_down` | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> |

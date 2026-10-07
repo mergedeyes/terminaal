@@ -101,3 +101,34 @@ What counts, in this order:
 
 An **executable file** isn't opened (that could run it); its folder opens
 instead.
+
+## Hints
+
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> labels everything on the screen
+worth picking with a letter or two, highlighted over its start, and the bar at
+the bottom shows how many there are. Type a label:
+
+- its letters **copy** the text,
+- with <kbd>Shift</kbd> held for the last letter, it's **opened** like a
+  <kbd>Ctrl</kbd>-clicked link (what can't be opened – an IP, a hash – is copied),
+- with <kbd>Alt</kbd>, it's **typed into the terminal** – a hash into
+  `git show `, a path into the command line.
+
+<kbd>Backspace</kbd> takes a letter back, <kbd>Esc</kbd>, a click or any other key
+ends the hints (the key then goes on as usual). The labels follow the screen: new
+output or scrolling relabels.
+
+What gets a label, earlier kinds first where they overlap:
+
+1. Hyperlinks a program set (OSC 8) and URLs, as for <kbd>Ctrl</kbd>+click
+2. Paths: absolute, `~/…`, `./…`, `../…`, and any word naming a file or folder
+   that exists here (relative to the shell's working directory). Over SSH all of
+   these can be copied or inserted, but not opened – they're the server's.
+3. IPv4 and IPv6 addresses – only valid ones, so a time like `12:30:45` or a
+   version like `v1.2.3.4` isn't one
+4. Hashes and IDs: hex of 7 characters or more with a letter and a digit (git
+   commits, container IDs, checksums), UUIDs, MAC addresses
+
+Labels start at the bottom of the screen, so the newest output gets the easiest
+letters (`f`, `j`, `d`, `k`, …). Labels use no `y` or `z`, which swap places
+between German and US keyboards.
