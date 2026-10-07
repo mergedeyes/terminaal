@@ -87,7 +87,8 @@ disk.
 - **Drop-down window** (`terminaal --quake`) – drops down from the top of the
   screen and hides again, a real layer surface on COSMIC, KDE, Sway and
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
-- Bracketed paste, mouse selection that scrolls along, the mouse wheel in
+- Bracketed paste, mouse selection that scrolls along (double-click a word,
+  triple-click a line), the mouse wheel in
   full-screen programs (`less`, `htop`, `vim`), a right-click menu, and a
   settings tab for every option
 
@@ -358,6 +359,8 @@ quake_hide_on_unfocus = true  # hide it when another window gets the keyboard
 # font_family = "Hack"        # console font (default: Noto Sans Mono)
 # ui_font_family = "Inter"    # font of menus and panels (default: built in)
 opacity = 1.0                 # below 1 the window is see-through (0.2–1.0)
+# ui_opacity = 0.85           # tab bar, sidebar, settings in a see-through window
+                              # (default: the theme's, else 0.85)
 blur = true                   # blur what's behind a see-through window
 commands_run = true           # command buttons run at once; off: typed into the prompt
 commands_assume_yes = false   # let them skip confirmations (-y, --noconfirm)
@@ -473,6 +476,9 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Reopen a closed tab
 - [ ] Resize and swap panes with the keyboard
 - [ ] Search: number of matches, optional regex
+- [ ] An integrated title bar: window buttons in the tab bar instead of the desktop's title bar
+- [ ] A scrollbar for the scrollback
+- [ ] Update check at start-up against the GitHub releases, updating on request
 
 **Terminal protocols**
 - [ ] OSC 52: programs (also over SSH) may set the clipboard, after asking

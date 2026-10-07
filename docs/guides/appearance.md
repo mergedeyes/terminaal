@@ -31,7 +31,7 @@ Summary of what a theme file can contain:
 | `[colors.cursor]` | `cursor` | no |
 | `[colors.selection]` | `background`, `text` | no |
 | `[colors.search.matches]`, `[colors.search.focused_match]` | `background`, `foreground` | no |
-| `[ui]` | `accent` `background` `row` `hover` `selected` `border` `border_strong` `text` `text_weak` `error` `success` `input` `text_selection` | no |
+| `[ui]` | `accent` `background` `row` `hover` `selected` `border` `border_strong` `text` `text_weak` `error` `success` `input` `text_selection`, and `opacity` (0–1, how opaque the panels are in a see-through window) | no |
 
 Colors are `#rrggbb`, `#rgb` or `0xrrggbb`. Alacritty's `CellForeground` /
 `CellBackground` values count as "not set", and unknown keys are ignored – so
@@ -43,7 +43,8 @@ On the COSMIC desktop there's a **COSMIC** theme built from your desktop theme:
 
 - Background and text from COSMIC's background colors, the ANSI colors from its
   palette, the cursor in your accent color
-- The interface like COSMIC's own panels
+- The interface like COSMIC's own panels – with frosted glass on, as see-through
+  as they are (85 %)
 - Follows changes live – switching between light and dark, a new accent color –
   without restarting
 
@@ -52,8 +53,13 @@ It doesn't copy COSMIC's "frosted" window look; use translucency below for that.
 ## Translucency
 
 - **Opacity** (0.2–1): below 1, the terminal background, tab bar, sidebar and
-  settings become see-through. Text, lines, colored cells and popups stay solid, so
-  everything remains readable.
+  settings become see-through. Text, lines, colored cells and popups stay solid.
+- **Interface opacity**: how see-through the tab bar, sidebar and settings are –
+  never more than the terminal. Text sits on them, and a bright wallpaper behind
+  a dark theme's grey text leaves little to read, so by default they stay at 85 %
+  (the COSMIC theme: whatever COSMIC's own panels use, a theme file: `[ui]
+  opacity`). **Theme default** goes back to that. The lower it is, the more the
+  interface text moves towards white (black for light themes).
 - **Blur what's behind (frosted)**: blurs the desktop behind the window. Works on
   COSMIC and other compositors with `ext-background-effect`, and on KDE.
 

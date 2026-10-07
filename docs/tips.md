@@ -103,7 +103,8 @@
 - **Any Alacritty theme** works – drop the `.toml` into
   `~/.config/terminaal/themes/` and click **Reload**.
 - **Readable translucency:** opacity around 0.85–0.92 with blur keeps text crisp
-  while showing the desktop.
+  while showing the desktop. Going lower for the console? The interface keeps its
+  own **Interface opacity**, so the tab bar and sidebar stay readable.
 - **On COSMIC**, pick the **COSMIC** theme and change your desktop's accent color –
   Terminaal follows immediately.
 

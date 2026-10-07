@@ -99,6 +99,10 @@ pub struct UiColors {
     pub input: Rgb,
     /// Selected text in text fields.
     pub text_selection: Rgb,
+    /// How opaque the theme wants the panels in a see-through window
+    /// (`[ui] opacity`, COSMIC's own panels); `None`:
+    /// `config::DEFAULT_UI_OPACITY`.
+    pub opacity: Option<f32>,
 }
 
 impl UiColors {
@@ -122,7 +126,26 @@ impl UiColors {
             success: colors.bright[2],
             input: mix(base, fg, 0.05),
             text_selection: mix(background, accent, 0.4),
+            opacity: None,
         }
+    }
+
+    /// The colors for panels drawn `opacity` opaque. Whatever shines
+    /// through then makes up much of what the text sits on -- a light
+    /// wallpaper behind a dark theme's grey text leaves next to no
+    /// contrast. So the text moves towards white (black for a light theme)
+    /// and the weak text towards the text, the further the more
+    /// see-through; from half opaque down all the way.
+    pub fn see_through(mut self, opacity: f32) -> Self {
+        let amount = ((1.0 - opacity) / 0.5).clamp(0.0, 1.0);
+        if amount == 0.0 {
+            return self;
+        }
+        let extreme = if self.is_dark() { Rgb { r: 255, g: 255, b: 255 } } else { Rgb { r: 0, g: 0, b: 0 } };
+        let text = mix(self.text, extreme, amount);
+        self.text_weak = mix(self.text_weak, text, 0.6 * amount);
+        self.text = text;
+        self
     }
 
     /// A dark theme, going by its background.
@@ -195,6 +218,11 @@ impl Theme {
             success: optional("ui.success", &u.success, derived.success)?,
             input: optional("ui.input", &u.input, derived.input)?,
             text_selection: optional("ui.text_selection", &u.text_selection, derived.text_selection)?,
+            opacity: match u.opacity {
+                Some(opacity) if (0.0..=1.0).contains(&opacity) => Some(opacity),
+                Some(_) => return Err(t!("theme-bad-opacity", key = "ui.opacity")),
+                None => None,
+            },
         };
 
         let name = file.name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| name.to_string());
@@ -460,6 +488,7 @@ struct FileUi {
     success: Option<String>,
     input: Option<String>,
     text_selection: Option<String>,
+    opacity: Option<f32>,
 }
 
 #[cfg(test)]
@@ -519,6 +548,21 @@ white = '#e5e5e5'
     }
 
     #[test]
+    fn see_through_panels_get_stronger_text() {
+        let ui = default_theme().ui;
+        assert_eq!(ui.see_through(1.0), ui);
+        // Half opaque and below: white text, the weak text most of the way.
+        let glass = ui.see_through(0.3);
+        assert_eq!(glass.text, rgb(255, 255, 255));
+        assert_eq!(glass.text_weak, mix(ui.text_weak, glass.text, 0.6));
+        let frosted = ui.see_through(0.85);
+        assert!(frosted.text.r > ui.text.r && frosted.text.r < 255, "{:?}", frosted.text);
+        // A light theme darkens its text instead.
+        let light = parse("light", &format!("[colors.primary]\nbackground = '#ffffff'\nforeground = '#555555'\n{NORMAL}")).unwrap().ui;
+        assert_eq!(light.see_through(0.3).text, rgb(0, 0, 0));
+    }
+
+    #[test]
     fn reads_alacritty_theme_files() {
         let text = format!(
             "[colors.primary]
@@ -572,12 +616,14 @@ foreground = '#657b83'
 [ui]
 accent = '#ff0000'
 row = '#010203'
+opacity = 0.9
 "
         );
         let theme = parse("file-stem", &text).unwrap();
         assert_eq!(theme.name, "Mine");
         assert_eq!(theme.ui.accent, rgb(255, 0, 0));
         assert_eq!(theme.ui.row, rgb(1, 2, 3));
+        assert_eq!(theme.ui.opacity, Some(0.9));
         // Derived from the new accent, not the console's blue.
         assert_eq!(theme.ui.selected, mix(theme.ui.background, rgb(255, 0, 0), 0.18));
         assert!(!theme.ui.is_dark());
@@ -595,6 +641,8 @@ row = '#010203'
         assert!(err.contains("colors.normal.cyan"), "{err}");
         let err = parse("x", &format!("{text}[ui]\nborder = 'blue'\n")).unwrap_err();
         assert!(err.contains("ui.border"), "{err}");
+        let err = parse("x", &format!("{text}[ui]\nopacity = 1.5\n")).unwrap_err();
+        assert!(err.contains("ui.opacity"), "{err}");
         assert!(parse("x", "colors = 1").is_err());
     }
 

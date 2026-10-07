@@ -585,7 +585,7 @@ impl Sidebar {
             EntryKind::Function | EntryKind::Block => editor.value.trim_end().to_string(),
         };
 
-        managed::validate_name(&name)?;
+        managed::validate_name(kind, &name)?;
         if value.trim().is_empty() {
             return Err(match kind {
                 EntryKind::Alias => t!("shells-command-missing"),
@@ -599,8 +599,9 @@ impl Sidebar {
         let is_original = |e: &Entry| e.kind == kind && original.as_deref() == Some(e.name.as_str());
         // One namespace for both: a same-named alias would shadow the
         // function (bash/zsh) or replace it (fish, where aliases are
-        // functions).
-        if let Some(clash) = entries.iter().find(|e| e.name == name && !is_original(e)) {
+        // functions). A block's name is only a label, among the blocks.
+        let same_namespace = |e: &Entry| (e.kind == EntryKind::Block) == (kind == EntryKind::Block);
+        if let Some(clash) = entries.iter().find(|e| e.name == name && same_namespace(e) && !is_original(e)) {
             return Err(t!("shells-name-taken", name = &name, kind = clash.kind.label()));
         }
         let entry = Entry { kind, name: name.clone(), value };

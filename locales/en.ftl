@@ -227,6 +227,8 @@ settings-theme-cosmic = Follows the desktop's COSMIC theme, switching between li
 settings-transparency = Translucency
 settings-opacity = Opacity
 settings-percent = { $value } %
+settings-ui-opacity = Interface opacity
+settings-ui-opacity-reset = Theme default ({ $value } %)
 settings-blur = Blur what's behind (frosted)
 settings-blur-unsupported = Blur needs a compositor with ext-background-effect (such as COSMIC); on KDE it works anyway.
 settings-transparency-unsupported = The graphics driver or compositor offers no see-through windows.
@@ -246,6 +248,7 @@ settings-font-note = The tab bar uses the console font.
 
 theme-missing-color = The color { $key } is missing.
 theme-bad-color = { $key }: “{ $value }” is not a color (#rrggbb).
+theme-bad-opacity = { $key }: the opacity must be between 0 and 1.
 
 ## Settings: keyboard shortcuts
 
@@ -453,6 +456,7 @@ managed-function = function
 managed-block = lines
 managed-unsupported = this shell is not supported
 managed-invalid-name = Only letters, digits and _ . : + - are allowed (and no - at the start).
+managed-invalid-label = The name must fit on one line.
 managed-marker-line = A line must not start with “# terminaal:” – those are the file’s markers.
 managed-header =
     # Aliases, functions and lines of your own for Terminaal.

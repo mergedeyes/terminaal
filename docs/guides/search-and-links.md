@@ -61,6 +61,8 @@ Good to know:
 ## Selection and clipboard
 
 - Drag with the left mouse button to select.
+- Double-click selects a word (an IP address, a path up to a `:`), triple-click
+  the whole line. Keep the button down and drag to extend by words or lines.
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or right-click → **Copy**.
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> or right-click → **Paste**.
 - Right-click → **Paste and run**: pastes, removes trailing line breaks and

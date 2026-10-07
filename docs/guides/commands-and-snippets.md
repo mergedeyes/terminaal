@@ -167,3 +167,7 @@ go into a file of their own that only Terminaal loads –
 `~/.config/fish/terminaal.fish`, `~/.bash_terminaal` or `$ZDOTDIR/.zsh_terminaal` –
 so your other terminals are unaffected. Aliases and functions share one
 namespace per shell; the form refuses a name that's already taken.
+
+**Lines** are for what you'd otherwise put into your `.bashrc` by hand – an
+`export PATH=…`, a `source`, a `set -gx`. They go into the file exactly as typed.
+Their name is just a label, so it may contain spaces and any other characters.

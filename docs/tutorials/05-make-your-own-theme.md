@@ -108,6 +108,7 @@ error         = "#e0707a"   # also marks broadcast tabs
 success       = "#8cc98a"
 input         = "#0c131b"   # text fields
 text_selection = "#2b4a68"
+opacity       = 0.9         # panels in a see-through window (default 0.85)
 ```
 
 A good workflow: keep the settings tab open next to a terminal tab, edit the

@@ -26,6 +26,9 @@ pub const FONT_SIZES: RangeInclusive<f32> = 6.0..=36.0;
 /// Window opacities the settings allow; less and the text on top would be
 /// all that's left.
 pub const OPACITIES: RangeInclusive<f32> = 0.2..=1.0;
+/// How opaque the panels are in a see-through window unless the theme or
+/// `ui_opacity` says otherwise: what COSMIC's frosted panels use.
+pub const DEFAULT_UI_OPACITY: f32 = 0.85;
 /// How much faster the wheel may scroll while marking text; 1 is the
 /// usual speed.
 pub const SELECT_FACTORS: RangeInclusive<f32> = 1.0..=10.0;
@@ -94,6 +97,12 @@ pub struct Config {
     /// How opaque the window's backgrounds are, 1 = not see-through. Read
     /// through [`Config::opacity`].
     pub opacity: f32,
+    /// How opaque tab bar, sidebar and settings page are in a see-through
+    /// window -- text sits on them, so they needn't follow the console all
+    /// the way. Never below `opacity`. Unset: the theme's (COSMIC's own
+    /// panels), else [`DEFAULT_UI_OPACITY`]. Read through
+    /// [`Config::ui_opacity`].
+    pub ui_opacity: Option<f32>,
     /// Blur what shines through a see-through window, where the compositor
     /// can.
     pub blur: bool,
@@ -152,6 +161,7 @@ impl Default for Config {
             font_family: None,
             ui_font_family: None,
             opacity: 1.0,
+            ui_opacity: None,
             blur: true,
             font_size: 15.0,
             line_height_factor: 1.25,
@@ -384,6 +394,12 @@ impl Config {
         if self.opacity.is_finite() { self.opacity.clamp(*OPACITIES.start(), *OPACITIES.end()) } else { 1.0 }
     }
 
+    /// The configured opacity of the panels, within [`OPACITIES`]; unset
+    /// or not a number: `None`, the theme decides.
+    pub fn ui_opacity(&self) -> Option<f32> {
+        self.ui_opacity.filter(|opacity| opacity.is_finite()).map(|opacity| opacity.clamp(*OPACITIES.start(), *OPACITIES.end()))
+    }
+
     /// Take over `setting` in memory only.
     pub fn set(&mut self, setting: Setting) {
         match setting {
@@ -406,6 +422,7 @@ impl Config {
             Setting::QuakeHeight(percent) => self.quake_height = percent,
             Setting::QuakeHideOnUnfocus(on) => self.quake_hide_on_unfocus = on,
             Setting::Opacity(opacity) => self.opacity = opacity,
+            Setting::UiOpacity(opacity) => self.ui_opacity = opacity,
             Setting::Blur(on) => self.blur = on,
             Setting::CommandsRun(on) => self.commands_run = on,
             Setting::CommandsAssumeYes(on) => self.commands_assume_yes = on,
@@ -471,6 +488,8 @@ pub enum Setting {
     QuakeHeight(f32),
     QuakeHideOnUnfocus(bool),
     Opacity(f32),
+    /// The panels' opacity; `None`: the theme's.
+    UiOpacity(Option<f32>),
     Blur(bool),
     /// Run built-in commands right away instead of typing them out.
     CommandsRun(bool),
@@ -508,6 +527,8 @@ impl Setting {
             Self::QuakeHeight(percent) => set_value(doc, "quake_height", float(percent.round().into())),
             Self::QuakeHideOnUnfocus(on) => set_value(doc, "quake_hide_on_unfocus", on),
             Self::Opacity(opacity) => set_value(doc, "opacity", float(opacity.into())),
+            Self::UiOpacity(Some(opacity)) => set_value(doc, "ui_opacity", float(opacity.into())),
+            Self::UiOpacity(None) => drop(doc.remove("ui_opacity")),
             Self::Blur(on) => set_value(doc, "blur", on),
             Self::CommandsRun(on) => set_value(doc, "commands_run", on),
             Self::CommandsAssumeYes(on) => set_value(doc, "commands_assume_yes", on),
@@ -602,6 +623,7 @@ mod tests {
             Setting::NotifyAfter(30),
             Setting::SilenceAfter(45),
             Setting::Opacity(0.85),
+            Setting::UiOpacity(Some(0.9)),
             Setting::Blur(false),
             Setting::CommandsRun(false),
             Setting::CommandsAssumeYes(true),
@@ -617,6 +639,7 @@ mod tests {
         assert!(text.starts_with("# mine\nfont_size = 14.0 # small\ntab_bar = false\n"), "{text}");
         assert!(text.contains("line_height_factor = 1.3\n"), "{text}");
         assert!(text.contains("opacity = 0.85\n"), "{text}");
+        assert!(text.contains("ui_opacity = 0.9\n"), "{text}");
 
         let config: Config = toml::from_str(&text).unwrap();
         assert_eq!(config.font_size, 14.0);
@@ -628,6 +651,7 @@ mod tests {
         assert_eq!(config.notify_after_secs, 30);
         assert_eq!(config.silence_secs, 45);
         assert_eq!(config.opacity(), 0.85);
+        assert_eq!(config.ui_opacity(), Some(0.9));
         assert!(!config.blur);
         assert!(!config.commands_run);
         assert!(config.commands_assume_yes);
@@ -700,6 +724,11 @@ mod tests {
         assert_eq!(parse("opacity = 0"), 0.2);
         assert_eq!(parse("opacity = 3.0"), 1.0);
         assert_eq!(parse("opacity = nan"), 1.0);
+        let ui = |text| toml::from_str::<Config>(text).unwrap().ui_opacity();
+        assert_eq!(ui(""), None);
+        assert_eq!(ui("ui_opacity = 0.7"), Some(0.7));
+        assert_eq!(ui("ui_opacity = 0"), Some(0.2));
+        assert_eq!(ui("ui_opacity = nan"), None);
     }
 
     #[test]

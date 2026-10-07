@@ -90,9 +90,18 @@ pub fn validate_value(value: &str) -> Result<(), String> {
     }
 }
 
-pub fn validate_name(name: &str) -> Result<(), String> {
+/// An entry's name. An alias or function becomes a command of that name,
+/// so it's held to what every shell takes; a block's name is only the
+/// label on its marker line, anything that fits on it (`export PATH`).
+pub fn validate_name(kind: EntryKind, name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err(t!("common-name-missing"));
+    }
+    if kind == EntryKind::Block {
+        return match name.chars().any(char::is_control) {
+            true => Err(t!("managed-invalid-label")),
+            false => Ok(()),
+        };
     }
     if name.starts_with('-') || !name.chars().all(|c| c.is_ascii_alphanumeric() || "_.:+-".contains(c)) {
         return Err(t!("managed-invalid-name"));
@@ -298,6 +307,11 @@ mod tests {
                 name: "editor".into(),
                 value: "export EDITOR=vim\n\nexport PAGER='less -R'".into(),
             },
+            Entry {
+                kind: EntryKind::Block,
+                name: "export PATH (cargo, \"pipx\")".into(),
+                value: "export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:$PATH\"".into(),
+            },
         ]
     }
 
@@ -343,10 +357,17 @@ mod tests {
 
     #[test]
     fn validates_names() {
-        assert!(validate_name("git-log.v2").is_ok());
-        assert!(validate_name("").is_err());
-        assert!(validate_name("-x").is_err());
-        assert!(validate_name("a b").is_err());
-        assert!(validate_name("a'b").is_err());
+        for kind in [EntryKind::Alias, EntryKind::Function] {
+            assert!(validate_name(kind, "git-log.v2").is_ok());
+            assert!(validate_name(kind, "").is_err());
+            assert!(validate_name(kind, "-x").is_err());
+            assert!(validate_name(kind, "a b").is_err());
+            assert!(validate_name(kind, "a'b").is_err());
+        }
+        // A block's name is just a label.
+        assert!(validate_name(EntryKind::Block, "export PATH").is_ok());
+        assert!(validate_name(EntryKind::Block, "PATH=$HOME/.local/bin:$PATH (Cargo, \"pipx\")").is_ok());
+        assert!(validate_name(EntryKind::Block, "").is_err());
+        assert!(validate_name(EntryKind::Block, "a\nb").is_err());
     }
 }

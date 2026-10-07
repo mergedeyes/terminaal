@@ -32,6 +32,7 @@ and keeps your comments and formatting. A missing file means defaults.
 | `line_height_factor` | `1.25` | Line height as a multiple of the font size |
 | `padding` | `8.0` | Space around the terminal grid, in logical pixels |
 | `opacity` | `1.0` | `0.2`–`1.0`; below 1 the window is see-through (Wayland only) |
+| `ui_opacity` | theme's, else `0.85` | `0.2`–`1.0`; how opaque tab bar, sidebar and settings are in a see-through window, never below `opacity` |
 | `blur` | `true` | Blur what's behind a see-through window |
 | `cursor_blink` | `true` | |
 | `cursor_blink_interval_ms` | `600` | |

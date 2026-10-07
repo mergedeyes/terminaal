@@ -227,6 +227,8 @@ settings-theme-cosmic = Folgt dem COSMIC-Theme des Desktops, auch beim Wechsel z
 settings-transparency = Transparenz
 settings-opacity = Deckkraft
 settings-percent = { $value } %
+settings-ui-opacity = Deckkraft der Oberfläche
+settings-ui-opacity-reset = Vorgabe des Themes ({ $value } %)
 settings-blur = Dahinter unscharf („milchig“)
 settings-blur-unsupported = Unschärfe braucht einen Compositor mit ext-background-effect (etwa COSMIC); unter KDE wirkt sie auch so.
 settings-transparency-unsupported = Grafiktreiber oder Compositor bieten keine durchscheinenden Fenster an.
@@ -246,6 +248,7 @@ settings-font-note = Die Tab-Leiste nutzt die Konsolenschrift.
 
 theme-missing-color = Die Farbe { $key } fehlt.
 theme-bad-color = { $key }: „{ $value }“ ist keine Farbe (#rrggbb).
+theme-bad-opacity = { $key }: die Deckkraft muss zwischen 0 und 1 liegen.
 
 ## Einstellungen: Tastenkürzel
 
@@ -453,6 +456,7 @@ managed-function = Funktion
 managed-block = Zeilen
 managed-unsupported = diese Shell wird nicht unterstützt
 managed-invalid-name = Erlaubt sind Buchstaben, Ziffern und _ . : + - (nicht am Anfang: -).
+managed-invalid-label = Der Name muss in eine Zeile passen.
 managed-marker-line = Eine Zeile darf nicht mit „# terminaal:“ beginnen – das sind die Markierungen der Datei.
 managed-header =
     # Aliase, Funktionen und eigene Zeilen für Terminaal.
