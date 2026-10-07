@@ -67,6 +67,8 @@ and keeps your comments and formatting. A missing file means defaults.
 | `notify_after_secs` | `10` | Notify when a command that ran this long finishes unseen; `0` = never |
 | `silence_secs` | `15` | A terminal watched for silence counts as quiet after this many seconds without output (3–300) |
 | `paste_warning` | `true` | Ask before pasting several lines that would run at once, `sudo`, a download piped into a shell, `rm -rf` and the like |
+| `clipboard_write` | `true` | Programs may put text into the clipboard (OSC 52) – vim, Neovim or tmux, on a server too |
+| `clipboard_read` | `"ask"` | Whether programs may read the clipboard (OSC 52): `"never"` (they get an empty one), `"ask"` (a dialog each time) or `"always"` |
 
 ### Built-in commands
 

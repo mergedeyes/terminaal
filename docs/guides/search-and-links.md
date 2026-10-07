@@ -79,6 +79,30 @@ do), a multi-line paste is inserted as a whole instead of running line by line.
 Escape characters and Ctrl+C in the clipboard are always removed, so pasted text
 can't smuggle in terminal sequences.
 
+### Programs and the clipboard (OSC 52)
+
+Programs can copy into the clipboard themselves with the OSC 52 escape
+sequence – vim, Neovim, tmux, and that works over SSH too: copy in vim on the
+server and paste on your computer. That's on by default; turn it off with
+**Programs may write to the clipboard** (Settings → Terminal → Clipboard for
+programs, `clipboard_write`).
+
+The other direction – a program *reading* your clipboard – is riskier: it would
+get whatever you copied last, a password too. By default Terminaal asks each
+time (`clipboard_read = "ask"`): a dialog at the top names the terminal and how
+many characters the clipboard holds, never the text itself.
+
+- **Allow** – this once.
+- **Always for this terminal** – this and every later request of that
+  terminal, until it closes.
+- **Deny** – the program gets an empty clipboard right away.
+
+The dialog doesn't take the keyboard – an <kbd>Enter</kbd> typed just then goes
+to the terminal, not to the dialog – and lapses unanswered after 20 seconds.
+Only one terminal can ask at a time; another one asking meanwhile is turned
+down. `"never"` answers every request with an empty clipboard, `"always"`
+hands it over without asking.
+
 ## Links
 
 Hold <kbd>Ctrl</kbd>: whatever is clickable under the mouse gets underlined and

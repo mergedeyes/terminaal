@@ -61,6 +61,12 @@
   exactly once – handy for commands copied from docs. Bind it to a key under
   Settings → Shortcuts, e.g. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>
   (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> is already taken by maximizing a pane).
+- **Copy from vim or tmux on a server** into your own clipboard: Terminaal
+  takes OSC 52. tmux's copy mode does it by default, programs inside tmux need
+  `set -g set-clipboard on`; Neovim ≥ 0.10 uses it by
+  itself in an SSH session. Pasting with `"+p` reads the clipboard, and
+  Terminaal asks first (see
+  [Search, links and the scrollback](guides/search-and-links.md#programs-and-the-clipboard-osc-52)).
 - **Multi-line pastes** are inserted, not executed line by line, in bash, zsh,
   fish and editors – review, then press Enter.
 - **Asked before pasting?** Several lines that would run at once, `sudo`,

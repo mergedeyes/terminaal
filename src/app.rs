@@ -53,7 +53,7 @@ fn window_icon() -> Option<Icon> {
 
 use crate::Cli;
 use crate::commands::{System, Target};
-use crate::config::{self, Config, FontSlot, Setting};
+use crate::config::{self, ClipboardRead, Config, FontSlot, Setting};
 use crate::i18n::{self, t};
 use crate::gpu::GpuState;
 use crate::quake::layer::{Layer, LayerEvent};
@@ -88,6 +88,7 @@ use crate::ssh::connection::Opener;
 use crate::ui::command_palette::{self, CommandPalette};
 use crate::ui::context_menu::{ContextMenu, MenuAction};
 use crate::ui::paste_warning::{self, PasteWarning};
+use crate::ui::clipboard_request::{self, ClipboardPrompt};
 use crate::ui::update_dialog::{self, UpdateDialog};
 use crate::update;
 use crate::ui::files_panel::{FilesAction, FilesPanel, FilesView};
@@ -381,6 +382,9 @@ struct Pane {
     /// Takes part in the broadcast: input typed into one such terminal
     /// goes to all of them.
     broadcast: bool,
+    /// Its programs may read the clipboard without asking ("Always for
+    /// this terminal").
+    clipboard_allowed: bool,
     /// Its host's color and theme.
     look: PaneLook,
     /// What happened in it while it wasn't in view.
@@ -471,6 +475,11 @@ const SCROLLBAR_LINGER: Duration = Duration::from_millis(1200);
 /// How soon a press on the same cell counts as the next of a double or
 /// triple click (GTK's default).
 const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+/// How long the question whether a program may read the clipboard stays.
+/// Unanswered it goes without a reply: the program has given up by then,
+/// and a late one would land in whatever reads the terminal next (the
+/// shell's command line).
+const CLIPBOARD_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// What a terminal is called in the tab bar, out of everything it says
 /// about itself: the title a running program set for itself, else the
@@ -714,6 +723,8 @@ struct AppState {
     paste_warning: Option<PasteWarning>,
     /// A newer release on offer, or being installed.
     update: Option<UpdateDialog>,
+    /// A program asking to read the clipboard (`clipboard_read = "ask"`).
+    clipboard_request: Option<ClipboardRequest>,
     /// The running binary, as it was at start: an update replaces the
     /// file, after which `/proc/self/exe` names it "(deleted)".
     exe: Option<PathBuf>,
@@ -878,6 +889,7 @@ impl AppState {
             hosts_seen: 0,
             paste_warning: None,
             update: None,
+            clipboard_request: None,
             exe: std::env::current_exe().ok(),
             hostname: hostname(),
             focused: true,
@@ -1071,6 +1083,7 @@ impl AppState {
             hold: run.hold,
             exit_code: None,
             broadcast: false,
+            clipboard_allowed: false,
             look,
             activity: PaneActivity { ignore_until: Some(Instant::now() + ACTIVITY_GRACE), ..PaneActivity::default() },
             rect,
@@ -1640,6 +1653,7 @@ impl AppState {
         self.close_palette();
         self.paste_warning = None;
         self.hints = None;
+        self.answer_clipboard_request(clipboard_request::Choice::Deny);
         self.drag = None;
         self.drag_scroll_at = None;
     }
@@ -2289,6 +2303,7 @@ impl AppState {
         self.command_palette.as_ref().is_some_and(|palette| palette.contains(self.to_points(pos)))
             || self.paste_warning.as_ref().is_some_and(|warning| warning.contains(self.to_points(pos)))
             || self.update.as_ref().is_some_and(|dialog| dialog.contains(self.to_points(pos)))
+            || self.clipboard_request.as_ref().is_some_and(|request| request.prompt.contains(self.to_points(pos)))
     }
 
     /// The settings page is at `pos`: everything below the tab bar right
@@ -2603,6 +2618,7 @@ impl AppState {
             self.program_due(),
             self.drag_scroll_at,
             self.scrollbar_hide_at,
+            self.clipboard_request.as_ref().map(|request| request.expires),
         ]
             .into_iter()
             .flatten()
@@ -2613,6 +2629,23 @@ impl AppState {
         if let Some(text) = self.current_terminal().and_then(|terminal| terminal.term.lock().selection_to_string()) {
             self.set_clipboard(text);
         }
+    }
+
+    /// The clipboard question answered (or dropped, as `Deny`): the
+    /// program gets the clipboard or an empty one.
+    fn answer_clipboard_request(&mut self, choice: clipboard_request::Choice) {
+        let Some(request) = self.clipboard_request.take() else { return };
+        let text = match choice {
+            clipboard_request::Choice::Deny => String::new(),
+            clipboard_request::Choice::Allow | clipboard_request::Choice::AllowTerminal => clipboard_text(&mut self.clipboard),
+        };
+        if let Some(at) = self.locate(request.pane)
+            && let Some(pane) = self.pane_mut(at)
+        {
+            pane.clipboard_allowed |= choice == clipboard_request::Choice::AllowTerminal;
+            pane.terminal.send_input((request.format)(&text).into_bytes());
+        }
+        self.window.request_redraw();
     }
 
     fn set_clipboard(&mut self, text: String) {
@@ -3615,8 +3648,12 @@ impl AppState {
             }
             return;
         }
-        // Presses on the update dialog are egui's; it stays open otherwise.
-        if self.update.as_ref().is_some_and(|dialog| dialog.contains(self.to_points(self.last_cursor_pos))) {
+        // Presses on the update dialog or the clipboard question are
+        // egui's; they stay open otherwise.
+        let at = self.to_points(self.last_cursor_pos);
+        if self.update.as_ref().is_some_and(|dialog| dialog.contains(at))
+            || self.clipboard_request.as_ref().is_some_and(|request| request.prompt.contains(at))
+        {
             return;
         }
         // Presses on the palette are egui's; one anywhere else closes it.
@@ -3844,6 +3881,10 @@ impl AppState {
             egui::pos2(console.x / ppp, console.y / ppp),
             egui::vec2(console.w / ppp, console.h / ppp),
         );
+        // The asking terminal may have closed meanwhile.
+        if self.clipboard_request.as_ref().is_some_and(|request| self.locate(request.pane).is_none()) {
+            self.clipboard_request = None;
+        }
         let context_menu = &mut self.context_menu;
         let mut menu_action = None;
         let palette = &mut self.command_palette;
@@ -3852,6 +3893,8 @@ impl AppState {
         let mut paste_choice = None;
         let update_dialog = &mut self.update;
         let mut update_choice = None;
+        let clipboard_request = &mut self.clipboard_request;
+        let mut clipboard_choice = None;
         let mut files_tab = match self.tabs.get_mut(active_tab).map(|tab| &mut tab.content) {
             Some(TabContent::Files(files)) => Some(files),
             _ => None,
@@ -3918,6 +3961,9 @@ impl AppState {
             if let Some(dialog) = update_dialog.as_mut() {
                 update_choice = dialog.show(ui.ctx(), console).or(update_choice);
             }
+            if let Some(request) = clipboard_request.as_mut() {
+                clipboard_choice = request.prompt.show(ui.ctx(), console).or(clipboard_choice);
+            }
             // Painted last, on egui's foreground layer: over the sidebar
             // as well as the grid and tab bar drawn before egui.
             if let Some(splash) = splash {
@@ -3965,6 +4011,9 @@ impl AppState {
         }
         if let Some(choice) = paste_choice {
             self.answer_paste_warning(choice);
+        }
+        if let Some(choice) = clipboard_choice {
+            self.answer_clipboard_request(choice);
         }
         if let Some(choice) = update_choice {
             self.answer_update(choice);
@@ -4222,7 +4271,7 @@ impl AppState {
             // Only once let go: dragging down and back up would have
             // dropped the oldest lines on the way.
             Setting::ScrollbackLines(_) if save => self.apply_term_options(),
-            Setting::SelectPathSegments(_) => self.apply_term_options(),
+            Setting::SelectPathSegments(_) | Setting::ClipboardWrite(_) => self.apply_term_options(),
             // Read where they're used, or only at the next start.
             Setting::ScrollbackLines(_)
             | Setting::ScrollLines(_)
@@ -4235,6 +4284,7 @@ impl AppState {
             | Setting::CommandsAssumeYes(_)
             | Setting::CommandsWarned(_)
             | Setting::PasteWarning(_)
+            | Setting::ClipboardRead(_)
             | Setting::UpdateCheck(_)
             | Setting::SilenceAfter(_) => {}
         }
@@ -4246,7 +4296,11 @@ impl AppState {
 
     /// What the panes' terminals are built with, from the config.
     fn term_options(&self) -> TermOptions {
-        TermOptions { scrollback: self.config.scrollback_lines, path_segments: self.config.select_path_segments }
+        TermOptions {
+            scrollback: self.config.scrollback_lines,
+            path_segments: self.config.select_path_segments,
+            clipboard_write: self.config.clipboard_write,
+        }
     }
 
     /// Hand every terminal the configured [`TermOptions`].
@@ -4856,6 +4910,20 @@ fn spawn_splash_decoder(proxy: EventLoopProxy<UserEvent>, scale_factor: f32) -> 
 }
 
 /// Physical-pixel height of the tab bar; 0 when it's turned off.
+/// A program waiting to read the clipboard, until the dialog is answered.
+struct ClipboardRequest {
+    pane: usize,
+    /// Wraps the text into the reply (`TermEvent::ClipboardLoad`).
+    format: Arc<dyn Fn(&str) -> String + Sync + Send + 'static>,
+    prompt: ClipboardPrompt,
+    expires: Instant,
+}
+
+/// The clipboard's text; none (or no clipboard) reads as empty.
+fn clipboard_text(clipboard: &mut Option<Clipboard>) -> String {
+    clipboard.as_mut().and_then(|clipboard| clipboard.get_text().ok()).unwrap_or_default()
+}
+
 fn tab_bar_height(config: &Config, cell: CellMetrics, scale_factor: f32) -> f32 {
     if config.tab_bar { tab_bar::bar_height(cell, scale_factor) } else { 0.0 }
 }
@@ -5049,6 +5117,11 @@ impl ApplicationHandler<UserEvent> for App {
         if state.drag_scroll_at.is_some_and(|at| Instant::now() >= at) {
             state.tick_drag_scroll();
         }
+        if state.clipboard_request.as_ref().is_some_and(|request| Instant::now() >= request.expires) {
+            log::debug!("clipboard request lapsed unanswered");
+            state.clipboard_request = None;
+            state.window.request_redraw();
+        }
         let redraw_pending = matches!(&state.window, AppWindow::Layer(window) if window.redraw.get() && state.gpu.surface.is_some());
         let wakeup = if redraw_pending { Some(Instant::now()) } else { state.next_wakeup() };
         event_loop.set_control_flow(wakeup.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
@@ -5240,9 +5313,36 @@ impl ApplicationHandler<UserEvent> for App {
                     let _ = clipboard.set_text(text);
                 }
             }
+            // A program reading the clipboard: `clipboard_read` says
+            // whether it may, or a dialog asks. Refused, it gets an empty
+            // clipboard rather than no answer, so it needn't wait for one.
             TermEvent::ClipboardLoad(_ty, format) => {
-                let text = state.clipboard.as_mut().and_then(|c| c.get_text().ok()).unwrap_or_default();
-                pane.terminal.send_input(format(&text).into_bytes());
+                let read = if pane.clipboard_allowed { ClipboardRead::Always } else { state.config.clipboard_read() };
+                match read {
+                    ClipboardRead::Always => {
+                        let text = clipboard_text(&mut state.clipboard);
+                        pane.terminal.send_input(format(&text).into_bytes());
+                    }
+                    ClipboardRead::Never => pane.terminal.send_input(format("").into_bytes()),
+                    ClipboardRead::Ask => match &mut state.clipboard_request {
+                        // Only the newest reply is still awaited.
+                        Some(request) if request.pane == pane_id => request.format = format,
+                        Some(_) => {
+                            log::debug!("clipboard read refused: another terminal is asking already");
+                            pane.terminal.send_input(format("").into_bytes());
+                        }
+                        None => {
+                            let chars = clipboard_text(&mut state.clipboard).chars().count();
+                            state.clipboard_request = Some(ClipboardRequest {
+                                pane: pane_id,
+                                format,
+                                prompt: ClipboardPrompt::new(pane.title.clone(), chars),
+                                expires: Instant::now() + CLIPBOARD_REQUEST_TIMEOUT,
+                            });
+                            state.window.request_redraw();
+                        }
+                    },
+                }
             }
 
             TermEvent::CursorBlinkingChange => {
@@ -5323,7 +5423,7 @@ mod tests {
 
         use crate::terminal::session::{TermOptions, term_config};
 
-        let options = TermOptions { scrollback: 100, path_segments: false };
+        let options = TermOptions { scrollback: 100, path_segments: false, clipboard_write: true };
         let mut term = Term::new(term_config(options), &TermSize::new(40, 3), VoidListener);
         Processor::<StdSyncHandler>::new().advance(&mut term, b"ping 192.168.178.20: ok\r\n~/Projekte/Terminal main");
         let select = |term: &mut Term<VoidListener>, kind, column| {
@@ -5344,6 +5444,58 @@ mod tests {
         assert_eq!(select_below(&mut term, 14), "Terminal");
         assert_eq!(select_below(&mut term, 4), "Projekte");
         assert_eq!(select(&mut term, SelectionType::Lines, 10), "ping 192.168.178.20: ok\n");
+    }
+
+    /// OSC 52: setting the clipboard goes by `clipboard_write`; a read
+    /// always comes through, for `app.rs` to answer by `clipboard_read`,
+    /// and the reply is the clipboard in base64.
+    #[test]
+    fn osc52_writes_by_the_option_and_reads_reach_the_app() {
+        use std::sync::{Arc, Mutex};
+
+        use alacritty_terminal::event::{Event, EventListener};
+        use alacritty_terminal::grid::Dimensions;
+        use alacritty_terminal::term::Term;
+        use alacritty_terminal::vte::ansi::Processor;
+
+        use crate::terminal::session::{TermOptions, term_config};
+
+        #[derive(Clone, Default)]
+        struct Events(Arc<Mutex<Vec<String>>>);
+        impl EventListener for Events {
+            fn send_event(&self, event: Event) {
+                let text = match event {
+                    Event::ClipboardStore(_, text) => format!("store {text}"),
+                    Event::ClipboardLoad(_, format) => format!("load {}", format("hi")),
+                    _ => return,
+                };
+                self.0.lock().unwrap().push(text);
+            }
+        }
+        struct Size;
+        impl Dimensions for Size {
+            fn total_lines(&self) -> usize {
+                5
+            }
+            fn screen_lines(&self) -> usize {
+                5
+            }
+            fn columns(&self) -> usize {
+                20
+            }
+        }
+
+        let events = Events::default();
+        let options = TermOptions { scrollback: 10, path_segments: false, clipboard_write: true };
+        let mut term = Term::new(term_config(options), &Size, events.clone());
+        let mut parser: Processor = Processor::new();
+        // "copied" in base64, then a read of the clipboard.
+        parser.advance(&mut term, b"\x1b]52;c;Y29waWVk\x07\x1b]52;c;?\x1b\\");
+        assert_eq!(events.0.lock().unwrap().drain(..).collect::<Vec<_>>(), ["store copied", "load \x1b]52;c;aGk=\x1b\\"]);
+
+        term.set_options(term_config(TermOptions { clipboard_write: false, ..options }));
+        parser.advance(&mut term, b"\x1b]52;c;Y29waWVk\x07\x1b]52;c;?\x07");
+        assert_eq!(events.0.lock().unwrap().drain(..).collect::<Vec<_>>(), ["load \x1b]52;c;aGk=\x07"]);
     }
 
     #[test]
