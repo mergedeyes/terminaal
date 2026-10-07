@@ -65,6 +65,8 @@ pub enum Action {
     ScrollToBottom,
     /// Search the scrollback.
     Search,
+    /// Move through the scrollback with vi's keys, select and copy.
+    ViMode,
     /// Scroll to the prompt above / below (shell integration).
     PreviousPrompt,
     NextPrompt,
@@ -103,7 +105,7 @@ impl Group {
 impl Action {
     /// Every action, in the order the settings page lists them. A
     /// combination bound to several belongs to the first.
-    pub const ALL: [Action; 52] = [
+    pub const ALL: [Action; 53] = [
         Action::NewTab,
         Action::CloseTab,
         Action::ReopenTab,
@@ -151,6 +153,7 @@ impl Action {
         Action::ScrollToTop,
         Action::ScrollToBottom,
         Action::Search,
+        Action::ViMode,
         Action::PreviousPrompt,
         Action::NextPrompt,
         Action::FontBigger,
@@ -200,6 +203,7 @@ impl Action {
             Action::ScrollToTop => "scroll_to_top",
             Action::ScrollToBottom => "scroll_to_bottom",
             Action::Search => "search",
+            Action::ViMode => "vi_mode",
             Action::PreviousPrompt => "previous_prompt",
             Action::NextPrompt => "next_prompt",
             Action::FontBigger => "font_bigger",
@@ -253,6 +257,7 @@ impl Action {
             Action::ScrollToTop => t!("shortcut-scroll-to-top"),
             Action::ScrollToBottom => t!("shortcut-scroll-to-bottom"),
             Action::Search => t!("shortcut-search"),
+            Action::ViMode => t!("shortcut-vi-mode"),
             Action::PreviousPrompt => t!("shortcut-previous-prompt"),
             Action::NextPrompt => t!("shortcut-next-prompt"),
             Action::FontBigger => t!("shortcut-font-bigger"),
@@ -288,6 +293,7 @@ impl Action {
             | Action::ScrollToTop
             | Action::ScrollToBottom
             | Action::Search
+            | Action::ViMode
             | Action::PreviousPrompt
             | Action::NextPrompt => Group::Scrolling,
             Action::FontBigger | Action::FontSmaller | Action::FontReset => Group::Font,
@@ -345,6 +351,8 @@ impl Action {
             Action::ScrollToTop => &["Shift+Home"],
             Action::ScrollToBottom => &["Shift+End"],
             Action::Search => &["Ctrl+Shift+F"],
+            // Like Alacritty.
+            Action::ViMode => &["Ctrl+Shift+Space"],
             Action::PreviousPrompt => &["Ctrl+Shift+Up"],
             Action::NextPrompt => &["Ctrl+Shift+Down"],
             // `+` sits on its own key on a German layout, on `=` on a US one.

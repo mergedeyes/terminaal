@@ -87,6 +87,9 @@ disk.
 - **Drop-down window** (`terminaal --quake`) – drops down from the top of the
   screen and hides again, a real layer surface on COSMIC, KDE, Sway and
   Hyprland. → [Drop-down window](docs/guides/drop-down-window.md)
+- **Vi mode** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>) – move through
+  the scrollback with vi's keys, select with `v`/`V`/Ctrl+V, copy with `y`.
+  → [Search, links and the scrollback](docs/guides/search-and-links.md#vi-mode)
 - Bracketed paste, mouse selection that scrolls along (double-click a word,
   triple-click a line), a scrollbar that shows when needed, the mouse wheel in
   full-screen programs (`less`, `htop`, `vim`), a right-click menu, and a
@@ -293,6 +296,7 @@ The ones you'll use most:
 | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> | Scroll the scrollback a page up / down |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> | Scroll to the top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Search the scrollback |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> | Vi mode: select and copy in the scrollback with vi keys |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Previous / next prompt |
 | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Font bigger / smaller / back (until Terminaal quits) |
 
@@ -495,6 +499,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Selecting several files at once in the files tab
 - [x] Updates from the GitHub releases, offered at start and installed on request
 - [x] A scrollbar for the scrollback
+- [x] Vi mode for selecting and copying in the scrollback
 
 </details>
 
@@ -511,7 +516,6 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [ ] Kitty keyboard protocol
 - [ ] Synchronized output (mode 2026)
 - [ ] Keyboard hints: pick URLs, paths, IPs and hashes on screen by a letter
-- [ ] Vi mode for selecting and copying in the scrollback
 - [ ] Images in the terminal (Kitty graphics protocol or Sixel)
 
 **SSH**

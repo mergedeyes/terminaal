@@ -28,6 +28,7 @@
 | Scroll a page up / down | `scroll_page_up`, `scroll_page_down` | <kbd>Shift</kbd>+<kbd>PageUp</kbd> / <kbd>PageDown</kbd> |
 | Scroll to top / bottom | `scroll_to_top`, `scroll_to_bottom` | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd> |
 | Search the scrollback | `search` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |
+| Vi mode: move through the scrollback with vi keys | `vi_mode` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> |
 | Previous / next prompt | `previous_prompt`, `next_prompt` | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
 | Font bigger | `font_bigger` | <kbd>Ctrl</kbd>+<kbd>+</kbd> and <kbd>Ctrl</kbd>+<kbd>=</kbd> |
 | Font smaller | `font_smaller` | <kbd>Ctrl</kbd>+<kbd>-</kbd> |

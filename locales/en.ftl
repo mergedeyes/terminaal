@@ -81,6 +81,9 @@ menu-files = Files (SFTP)
 
 ## Scrollback search (render/search_bar.rs)
 
+vi-prompt = Vi mode
+vi-line = Line { $line } of { $total }
+vi-keys = v selects, y copies, / searches, Esc ends
 search-prompt = Search:
 search-prompt-regex = Search (regex):
 search-no-match = No matches
@@ -316,6 +319,7 @@ shortcut-scroll-page-down = One page down
 shortcut-scroll-to-top = To the top of the scrollback
 shortcut-scroll-to-bottom = To the bottom
 shortcut-search = Search the scrollback
+shortcut-vi-mode = Vi mode: move through the scrollback with vi keys
 shortcut-previous-prompt = To the previous prompt
 shortcut-next-prompt = To the next prompt
 shortcut-font-bigger = Bigger
