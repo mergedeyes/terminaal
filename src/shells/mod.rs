@@ -20,6 +20,9 @@ pub enum ShellKind {
     Fish,
     Bash,
     Zsh,
+    /// `pwsh` and Windows PowerShell: shell integration, but no managed
+    /// aliases.
+    PowerShell,
     Other,
 }
 
@@ -31,6 +34,7 @@ impl ShellKind {
             "fish" => Self::Fish,
             "bash" => Self::Bash,
             "zsh" => Self::Zsh,
+            "pwsh" | "powershell" => Self::PowerShell,
             _ => Self::Other,
         }
     }

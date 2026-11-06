@@ -52,7 +52,7 @@ pub fn path_for(kind: ShellKind) -> Option<PathBuf> {
         ShellKind::Fish => Some(super::xdg_config_home()?.join("fish/terminaal.fish")),
         ShellKind::Bash => Some(super::home()?.join(".bash_terminaal")),
         ShellKind::Zsh => Some(super::zdotdir()?.join(".zsh_terminaal")),
-        ShellKind::Other => None,
+        ShellKind::PowerShell | ShellKind::Other => None,
     }
 }
 

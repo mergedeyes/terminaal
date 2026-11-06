@@ -18,6 +18,9 @@
 //! marks (OSC 133) -- `A` before the prompt, `C` when a command starts,
 //! `D;status` when it's done. Other terminals never see any of it.
 //!
+//! PowerShell gets only the integration, inline (`-EncodedCommand`): a
+//! script file wouldn't run under Windows' default execution policy.
+//!
 //! The generated files live in `~/.config/terminaal/shell-integration`.
 //! Every shell still starts as an interactive non-login shell, same as
 //! alacritty_terminal's default.
@@ -45,12 +48,12 @@ impl Launch {
 /// Never fails: if the integration files can't be written, the shell
 /// just starts without Terminaal's aliases/functions.
 pub fn launch(shell: &InstalledShell) -> Launch {
-    let Some(file) = managed::path_for(shell.kind) else { return Launch::plain(shell) };
-    let result = match shell.kind {
-        ShellKind::Fish => fish(shell, &file),
-        ShellKind::Bash => bash(shell, &file),
-        ShellKind::Zsh => zsh(shell, &file),
-        ShellKind::Other => Ok(Launch::plain(shell)),
+    let result = match (shell.kind, managed::path_for(shell.kind)) {
+        (ShellKind::PowerShell, _) => Ok(powershell(shell)),
+        (ShellKind::Fish, Some(file)) => fish(shell, &file),
+        (ShellKind::Bash, Some(file)) => bash(shell, &file),
+        (ShellKind::Zsh, Some(file)) => zsh(shell, &file),
+        _ => Ok(Launch::plain(shell)),
     };
     result.unwrap_or_else(|err| {
         log::warn!("{}: shell integration unavailable, starting without managed aliases: {err}", shell.name);
@@ -186,6 +189,53 @@ fn zsh(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
     Ok(launch)
 }
 
+/// Runs after the user's `$PROFILE` and wraps their `prompt`. `C` comes
+/// from Enter (PSReadLine), PowerShell has no hook before a command; the
+/// status is `$LASTEXITCODE` of a failed program, else 1 for a failed
+/// cmdlet. `ESC`/`BEL` as `[char]`: Windows PowerShell 5.1 has no `` `e ``.
+const POWERSHELL_INTEGRATION: &str = r#"# Terminaal: working directory (OSC 7) and prompts (OSC 133).
+if (-not $global:__terminaal) {
+    $global:__terminaal = @{ Prompt = $function:prompt; Ran = $false }
+    function global:prompt {
+        $ok = $?
+        $code = $global:LASTEXITCODE
+        $e = [char]27; $a = [char]7
+        $out = ''
+        if ($global:__terminaal.Ran) {
+            $status = if ($ok) { 0 } elseif ($code) { $code } else { 1 }
+            $out += "$e]133;D;$status$a"
+            $global:__terminaal.Ran = $false
+        }
+        $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+        if ($loc.Provider.Name -eq 'FileSystem') {
+            $path = ('/' + $loc.ProviderPath.Replace('', '/')).Replace('%', '%25').Replace(' ', '%20')
+            $out += "$e]7;file://$env:COMPUTERNAME$path$a"
+        }
+        $out += "$e]133;A$a"
+        $out + (& $global:__terminaal.Prompt)
+    }
+    if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
+        Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {
+            $line = $null; $cursor = $null
+            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+            [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+            if ($line.Trim()) {
+                $global:__terminaal.Ran = $true
+                [Console]::Write("$([char]27)]133;C$([char]7)")
+            }
+        }
+    }
+}
+"#;
+
+fn powershell(shell: &InstalledShell) -> Launch {
+    use base64::Engine;
+    // `-EncodedCommand` takes Base64 of UTF-16LE.
+    let utf16: Vec<u8> = POWERSHELL_INTEGRATION.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    Launch { args: vec!["-NoExit".into(), "-EncodedCommand".into(), encoded], ..Launch::plain(shell) }
+}
+
 fn integration_dir() -> io::Result<PathBuf> {
     let config = super::xdg_config_home().ok_or_else(|| io::Error::other("$HOME is not set"))?;
     Ok(config.join("terminaal/shell-integration"))
@@ -239,5 +289,19 @@ mod tests {
                  test -f '/home/u/.config/fish/terminaal.fish'; and source '/home/u/.config/fish/terminaal.fish'"
             ]
         );
+    }
+
+    #[test]
+    fn powershell_gets_the_integration_inline() {
+        use base64::Engine;
+        for path in ["/usr/bin/pwsh", "/opt/powershell"] {
+            let shell = InstalledShell::new(path);
+            assert_eq!(shell.kind, ShellKind::PowerShell, "{path}");
+            let launch = launch(&shell);
+            assert_eq!(launch.args[..2], ["-NoExit", "-EncodedCommand"]);
+            let bytes = base64::engine::general_purpose::STANDARD.decode(&launch.args[2]).unwrap();
+            let utf16: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+            assert_eq!(String::from_utf16(&utf16).unwrap(), POWERSHELL_INTEGRATION);
+        }
     }
 }
