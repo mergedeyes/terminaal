@@ -11,9 +11,7 @@
 //! release page to point to. Downloads go through [`Fetch`], so the tests
 //! don't need the network.
 
-#[cfg(unix)]
 use std::fs::{File, OpenOptions};
-#[cfg(unix)]
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -21,13 +19,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-#[cfg(unix)]
 use sha2::{Digest, Sha256};
 
 /// Where the releases are.
 pub const REPO: &str = "mergedeyes/terminaal";
 /// A binary bigger than this isn't ours.
-#[cfg(unix)]
 const MAX_BINARY: u64 = 512 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -42,7 +38,6 @@ pub fn asset_name() -> String {
     format!("terminaal-{}-linux", std::env::consts::ARCH)
 }
 
-/// Not published yet: until it is, every release looks current.
 #[cfg(windows)]
 pub fn asset_name() -> String {
     format!("terminaal-{}-windows.exe", std::env::consts::ARCH)
@@ -184,7 +179,6 @@ pub fn check(fetch: &impl Fetch, current: Version) -> Result<Option<Release>, St
 
 /// Why an update couldn't be put in place.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(windows, allow(dead_code))]
 pub enum InstallError {
     /// No writing next to the binary (installed by the system's package
     /// manager, say): that's who updates it.
@@ -194,7 +188,6 @@ pub enum InstallError {
 }
 
 /// The SHA-256 at the start of a checksum file (`sha256sum` format).
-#[cfg(unix)]
 fn parse_checksum(text: &str) -> Option<[u8; 32]> {
     let hex = text.split_whitespace().next()?;
     if hex.len() != 64 {
@@ -207,22 +200,32 @@ fn parse_checksum(text: &str) -> Option<[u8; 32]> {
     Some(sum)
 }
 
-/// Download `binary`, check it and put it in place of `exe`. The new file
-/// is written next to `exe` first and renamed over it, so `exe` is either
-/// the old or the new binary, never half of one; the running process
-/// keeps the old one open.
+/// What a program for this system starts with, and what it's called.
 #[cfg(unix)]
+const PROGRAM: (&[u8], &str) = (b"\x7fELF", "a Linux program");
+#[cfg(windows)]
+const PROGRAM: (&[u8], &str) = (b"MZ", "a Windows program");
+
+/// Download `binary`, check it and put it in place of `exe`. The new file
+/// is written next to `exe` first and then takes its place
+/// ([`replace`]), so `exe` is either the old or the new binary, never
+/// half of one; the running process keeps the old one open.
 pub fn install(fetch: &impl Fetch, binary: &Binary, exe: &Path) -> Result<(), InstallError> {
     let failed = |err: String| InstallError::Failed(err);
     let dir = exe.parent().ok_or_else(|| failed(format!("{} has no folder", exe.display())))?;
     let staged = dir.join(format!(".terminaal-update-{}", std::process::id()));
-    let mut file = match OpenOptions::new().write(true).create_new(true).mode(0o755).open(&staged) {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o755);
+    let mut file = match options.open(&staged) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return Err(InstallError::NotWritable(dir.to_path_buf())),
         Err(err) => return Err(failed(format!("{}: {err}", staged.display()))),
     };
     let result = stage(fetch, binary, exe, &mut file, &staged).and_then(|()| {
-        std::fs::rename(&staged, exe).map_err(|err| format!("{}: {err}", exe.display()))
+        drop(file);
+        replace(&staged, exe).map_err(|err| format!("{}: {err}", exe.display()))
     });
     if result.is_err() {
         let _ = std::fs::remove_file(&staged);
@@ -232,7 +235,6 @@ pub fn install(fetch: &impl Fetch, binary: &Binary, exe: &Path) -> Result<(), In
 
 /// Fill `file` (at `staged`) with the checked download, executable like
 /// `exe`.
-#[cfg(unix)]
 fn stage(fetch: &impl Fetch, binary: &Binary, exe: &Path, file: &mut File, staged: &Path) -> Result<(), String> {
     let missing = |url: &str| format!("{url} is gone");
     let checksum = fetch.get(&binary.checksum_url, 4096)?.ok_or_else(|| missing(&binary.checksum_url))?;
@@ -241,13 +243,58 @@ fn stage(fetch: &impl Fetch, binary: &Binary, exe: &Path, file: &mut File, stage
     if <[u8; 32]>::from(Sha256::digest(&data)) != expected {
         return Err("the download doesn't match the release's checksum".into());
     }
-    if !data.starts_with(b"\x7fELF") {
-        return Err("the download isn't a Linux program".into());
+    let (magic, kind) = PROGRAM;
+    if !data.starts_with(magic) {
+        return Err(format!("the download isn't {kind}"));
     }
     file.write_all(&data).and_then(|()| file.sync_all()).map_err(|err| format!("{}: {err}", staged.display()))?;
     // As executable as the binary it replaces.
-    let mode = std::fs::metadata(exe).map(|meta| meta.permissions().mode() & 0o7777).unwrap_or(0o755);
-    std::fs::set_permissions(staged, std::fs::Permissions::from_mode(mode)).map_err(|err| err.to_string())
+    #[cfg(unix)]
+    {
+        let mode = std::fs::metadata(exe).map(|meta| meta.permissions().mode() & 0o7777).unwrap_or(0o755);
+        std::fs::set_permissions(staged, std::fs::Permissions::from_mode(mode)).map_err(|err| err.to_string())?;
+    }
+    #[cfg(windows)]
+    let _ = exe;
+    Ok(())
+}
+
+/// Renamed over `exe`.
+#[cfg(unix)]
+fn replace(staged: &Path, exe: &Path) -> std::io::Result<()> {
+    std::fs::rename(staged, exe)
+}
+
+/// A running program can't be replaced on Windows, only renamed: `exe`
+/// moves aside to [`old`] (gone with the next start, [`clean_up`]), the
+/// new one takes its name -- or the old one comes back.
+#[cfg(windows)]
+fn replace(staged: &Path, exe: &Path) -> std::io::Result<()> {
+    let old = old(exe);
+    let _ = std::fs::remove_file(&old);
+    std::fs::rename(exe, &old)?;
+    std::fs::rename(staged, exe).inspect_err(|_| {
+        let _ = std::fs::rename(&old, exe);
+    })
+}
+
+/// Where the replaced program waits on Windows: `terminaal.exe.old`.
+#[cfg(windows)]
+fn old(exe: &Path) -> PathBuf {
+    let mut name = exe.as_os_str().to_owned();
+    name.push(".old");
+    PathBuf::from(name)
+}
+
+/// The program an update replaced, once nothing runs it any more.
+#[cfg(windows)]
+pub fn clean_up(exe: &Path) {
+    let old = old(exe);
+    if old.exists()
+        && let Err(err) = std::fs::remove_file(&old)
+    {
+        log::info!("can't remove {} yet: {err}", old.display());
+    }
 }
 
 /// Start `exe` once this process has ended (within ten seconds): it then
@@ -269,19 +316,29 @@ pub fn restart(exe: &Path) -> std::io::Result<()> {
         .map(drop)
 }
 
-/// Not yet on Windows: a running program can't be replaced there, only
-/// renamed out of the way.
+/// The same on Windows, through a hidden PowerShell; program and process
+/// come in by environment.
 #[cfg(windows)]
-pub fn install(_fetch: &impl Fetch, _binary: &Binary, _exe: &Path) -> Result<(), InstallError> {
-    Err(InstallError::Failed("updating isn't supported on Windows yet".into()))
+pub fn restart(exe: &Path) -> std::io::Result<()> {
+    use base64::Engine;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script = "Wait-Process -Id $env:TERMINAAL_PID -Timeout 10 -ErrorAction SilentlyContinue; Start-Process -FilePath $env:TERMINAAL_EXE";
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        .arg(base64::engine::general_purpose::STANDARD.encode(utf16))
+        .env("TERMINAAL_PID", std::process::id().to_string())
+        .env("TERMINAAL_EXE", exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(drop)
 }
 
-#[cfg(windows)]
-pub fn restart(_exe: &Path) -> std::io::Result<()> {
-    Err(std::io::ErrorKind::Unsupported.into())
-}
-
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -400,17 +457,29 @@ mod tests {
         (fake, binary)
     }
 
+    /// A program for this system: its header, then `rest`.
+    fn program(rest: &str) -> Vec<u8> {
+        [PROGRAM.0, rest.as_bytes()].concat()
+    }
+
     #[test]
     fn installs_a_checked_binary_in_place() {
         let dir = temp_dir("ok");
         let exe = dir.join("terminaal");
-        std::fs::write(&exe, b"\x7fELF old").unwrap();
+        std::fs::write(&exe, program(" old")).unwrap();
+        #[cfg(unix)]
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o750)).unwrap();
-        let new = b"\x7fELF new version";
-        let (fake, binary) = serving(new, new);
+        let new = program(" new version");
+        let (fake, binary) = serving(&new, &new);
         install(&fake, &binary, &exe).unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), new);
+        #[cfg(unix)]
         assert_eq!(std::fs::metadata(&exe).unwrap().permissions().mode() & 0o777, 0o750, "keeps the mode");
+        #[cfg(windows)]
+        {
+            assert_eq!(std::fs::read(old(&exe)).unwrap(), program(" old"), "the old one moved aside");
+            clean_up(&exe);
+        }
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "nothing left over");
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -419,19 +488,20 @@ mod tests {
     fn a_bad_download_leaves_the_binary_alone() {
         let dir = temp_dir("bad");
         let exe = dir.join("terminaal");
-        std::fs::write(&exe, b"\x7fELF old").unwrap();
+        std::fs::write(&exe, program(" old")).unwrap();
         // Wrong checksum, not a program, nothing there.
-        let (fake, binary) = serving(b"\x7fELF tampered", b"\x7fELF original");
+        let (fake, binary) = serving(&program(" tampered"), &program(" original"));
         assert!(matches!(install(&fake, &binary, &exe), Err(InstallError::Failed(err)) if err.contains("checksum")));
         let (fake, binary) = serving(b"<html>", b"<html>");
         assert!(matches!(install(&fake, &binary, &exe), Err(InstallError::Failed(_))));
         let (_, binary) = serving(b"", b"");
         assert!(matches!(install(&Fake::default(), &binary, &exe), Err(InstallError::Failed(_))));
-        assert_eq!(std::fs::read(&exe).unwrap(), b"\x7fELF old");
+        assert_eq!(std::fs::read(&exe).unwrap(), program(" old"));
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no staged file left behind");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_folder_without_write_access_says_so() {
         let dir = temp_dir("ro");

@@ -204,6 +204,7 @@ mod tests {
         assert!(find("zsh", &installed).is_none());
         // A path is checked against the file system, not the list.
         assert!(find("/nonexistent/shell", &installed).is_none());
+        #[cfg(unix)]
         assert_eq!(find("/bin/sh", &installed).unwrap().name, "sh");
     }
 

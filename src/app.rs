@@ -945,6 +945,11 @@ impl AppState {
         };
         state.apply_ui_fonts();
         state.apply_transparency();
+        // The program an update replaced, kept while it was running.
+        #[cfg(windows)]
+        if let Some(exe) = &state.exe {
+            update::clean_up(exe);
+        }
         let proxy = state.proxy.clone();
         crate::theme::cosmic::watch(&crate::theme::cosmic::Roots::system(), move || {
             let _ = proxy.send_event(UserEvent::CosmicThemeChanged);

@@ -1,0 +1,3 @@
+# Text files keep `\n` on Windows too: the tests read the examples out of
+# the docs, and a CRLF checkout (Git for Windows' default) breaks them.
+* text=auto eol=lf

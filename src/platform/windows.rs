@@ -281,7 +281,31 @@ pub fn trash(paths: &[PathBuf]) -> Result<(), TrashError> {
     }
 }
 
-/// No desktop notification yet (a toast needs a registered app ID).
-pub fn notify_command(_title: String, _body: String) -> Option<Command> {
-    None
+/// Shows the toast in [`notify_command`]: Windows PowerShell's WinRT
+/// projection, under its app ID -- an app of our own would need one
+/// registered through a Start menu shortcut. Title and text come in by
+/// environment, never as code; `Escape` makes them XML.
+const TOAST: &str = r#"$notifications = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+$xml = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]::new()
+$title = [Security.SecurityElement]::Escape($env:TERMINAAL_TITLE)
+$body = [Security.SecurityElement]::Escape($env:TERMINAAL_BODY)
+$xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$title</text><text>$body</text></binding></visual></toast>")
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+$notifications::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+"#;
+
+/// A desktop notification: a toast, through a hidden Windows PowerShell
+/// (pwsh has no WinRT types).
+pub fn notify_command(title: String, body: String) -> Option<Command> {
+    use base64::Engine;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let utf16: Vec<u8> = TOAST.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut command = Command::new("powershell.exe");
+    command
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        .arg(base64::engine::general_purpose::STANDARD.encode(utf16))
+        .env("TERMINAAL_TITLE", title)
+        .env("TERMINAAL_BODY", body)
+        .creation_flags(CREATE_NO_WINDOW);
+    Some(command)
 }
