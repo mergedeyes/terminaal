@@ -809,9 +809,12 @@ impl Syncs {
     pub fn local_changed(&mut self, path: &Path) {
         for pair in self.pairs.iter_mut().filter(|pair| pair.config.live) {
             let Ok(rel) = path.strip_prefix(pair.config.local_path()) else { continue };
-            let Some(rel) = rel.to_str() else { continue };
+            // By component: on Windows the path has `\`.
+            let Some(names) = rel.components().map(|name| name.as_os_str().to_str()).collect::<Option<Vec<_>>>() else {
+                continue;
+            };
             let mut prefix = String::new();
-            let left_out = rel.split('/').any(|name| {
+            let left_out = names.into_iter().any(|name| {
                 prefix = child(&prefix, name);
                 excluded(&prefix, name, &pair.config.exclude)
             });

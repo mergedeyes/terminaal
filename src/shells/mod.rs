@@ -129,7 +129,7 @@ pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
 /// -- something not in `/etc/shells` can still be run deliberately --
 /// while a name has to be one of the installed shells.
 pub fn find(arg: &str, installed: &[InstalledShell]) -> Option<InstalledShell> {
-    if arg.contains('/') {
+    if arg.contains(std::path::is_separator) {
         let path = PathBuf::from(arg);
         return path.is_file().then(|| InstalledShell::new(path));
     }

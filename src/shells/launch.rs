@@ -65,9 +65,11 @@ pub fn launch(shell: &InstalledShell) -> Launch {
 /// line, like `sh -c`. Deliberately without the managed alias file and
 /// the shell integration -- those belong to an interactive shell, and
 /// bash and zsh don't read any rc file for `-c` anyway. What the line
-/// means is exactly what `<shell> -c '<line>'` means anywhere else.
+/// means is exactly what `<shell> -c '<line>'` means anywhere else
+/// (cmd: `/C`; PowerShell takes `-c` too).
 pub fn launch_command(shell: &InstalledShell, line: &str) -> Launch {
-    Launch { args: vec!["-c".into(), line.to_string()], ..Launch::plain(shell) }
+    let flag = if shell.name.eq_ignore_ascii_case("cmd") { "/C" } else { "-c" };
+    Launch { args: vec![flag.into(), line.to_string()], ..Launch::plain(shell) }
 }
 
 /// What the tab is called while the command runs: its first word without
