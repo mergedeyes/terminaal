@@ -1690,9 +1690,11 @@ mod tests {
             theme: Some("Nord".into()),
             ..Options::default()
         };
+        // Absolute on the system the test runs on.
+        let absolute = if cfg!(windows) { r"C:\data\notes" } else { "/data/notes" };
         host.syncs = vec![
             SyncPair { local: "~/site".into(), remote: "/srv/www".into(), direction: SyncDirection::Upload, delete_remote: true, live: true, exclude: vec![".git".into(), "*.tmp".into()], ..SyncPair::default() },
-            SyncPair { local: "/data/notes".into(), remote: "notes".into(), delete_local: true, delete_remote: true, ..SyncPair::default() },
+            SyncPair { local: absolute.into(), remote: "notes".into(), delete_local: true, delete_remote: true, ..SyncPair::default() },
         ];
         assert_eq!(HostEditor::from_host(&host, None).to_host(&data).unwrap(), host);
         let cfg = data.catalog.config[0].clone();

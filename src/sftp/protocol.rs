@@ -663,7 +663,8 @@ pub mod tests {
     /// A client connected to a fresh `sftp-server`, or `None` (test
     /// skipped) where OpenSSH's server isn't installed.
     pub fn connect() -> Option<(Server, Client<ChildStdout, ChildStdin>)> {
-        let Some(path) = sftp_server() else {
+        // OpenSSH's sftp-server is a Unix program (Wine would find it).
+        let Some(path) = sftp_server().filter(|_| cfg!(unix)) else {
             eprintln!("sftp-server not installed, skipping");
             return None;
         };

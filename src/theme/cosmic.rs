@@ -549,6 +549,7 @@ mod tests {
         std::fs::remove_dir_all(&user).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn watch_reports_a_changed_theme() {
         let user = temp("watch");

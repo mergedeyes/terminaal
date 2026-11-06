@@ -300,7 +300,7 @@ mod tests {
             let launch = launch(&shell);
             assert_eq!(launch.args[..2], ["-NoExit", "-EncodedCommand"]);
             let bytes = base64::engine::general_purpose::STANDARD.decode(&launch.args[2]).unwrap();
-            let utf16: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+            let utf16: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&pair| u16::from_le_bytes(pair)).collect();
             assert_eq!(String::from_utf16(&utf16).unwrap(), POWERSHELL_INTEGRATION);
         }
     }

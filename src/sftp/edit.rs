@@ -1020,29 +1020,9 @@ fn parse_events(mut buf: &[u8]) -> Vec<(i32, std::ffi::OsString)> {
     events
 }
 
-/// Not yet on Windows (`ReadDirectoryChangesW`): local copies aren't
-/// watched, so saving one doesn't upload it.
+/// `ReadDirectoryChangesW` on Windows.
 #[cfg(windows)]
-pub(super) enum Watcher {}
-
-#[cfg(windows)]
-impl Watcher {
-    fn new(_changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
-        Err(std::io::ErrorKind::Unsupported.into())
-    }
-
-    pub(super) fn with(_name: &str, _mask: u32, _changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
-        Err(std::io::ErrorKind::Unsupported.into())
-    }
-
-    pub(super) fn add(&self, _dir: &Path) -> std::io::Result<()> {
-        match *self {}
-    }
-
-    pub(super) fn remove(&self, _dir: &Path) {
-        match *self {}
-    }
-}
+pub(super) use super::watch_windows::Watcher;
 
 #[cfg(all(test, unix))]
 mod tests {

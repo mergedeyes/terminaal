@@ -5,3 +5,5 @@ pub mod edit;
 pub mod protocol;
 pub mod session;
 pub mod sync;
+#[cfg(windows)]
+mod watch_windows;

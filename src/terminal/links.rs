@@ -21,7 +21,11 @@ pub(crate) const SCHEMES: [&str; 12] =
 pub(crate) const URL: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ftp://)\
                    [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`\\\\]+";
 /// Anything that could be a file name; whether it is one is up to the disk.
+#[cfg(unix)]
 pub(crate) const PATH: &str = "[^\\s'\"`<>|:;,()\\[\\]{}]+";
+/// On Windows also with a drive in front (`C:\Users`), the one colon.
+#[cfg(windows)]
+pub(crate) const PATH: &str = "(?:[A-Za-z]:)?[^\\s'\"`<>|:;,()\\[\\]{}]+";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -136,7 +140,7 @@ pub(crate) fn trim_url<T>(term: &Term<T>, cells: RangeInclusive<Point>) -> (Rang
 pub(crate) fn resolve(name: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     let path = match name.strip_prefix("~/").or(if name == "~" { Some("") } else { None }) {
         Some(rest) => crate::platform::home_dir()?.join(rest),
-        None if name.starts_with('/') => PathBuf::from(name),
+        None if Path::new(name).is_absolute() => PathBuf::from(name),
         None => cwd?.join(name),
     };
     path.exists().then_some(path)
