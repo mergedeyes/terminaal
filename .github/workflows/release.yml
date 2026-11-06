@@ -5,6 +5,12 @@
 #   terminaal-x86_64-linux.sha256         from (src/update.rs), and its checksum
 #   terminaal-x86_64-linux.tar.gz         binary, install.sh, desktop entry,
 #   terminaal-x86_64-linux.tar.gz.sha256  icons and man page for a first install
+#   terminaal-x86_64-windows.exe          the Windows program, also what it
+#   terminaal-x86_64-windows.exe.sha256   updates itself from
+#
+# The Windows job adds its files to the release once the Linux one made it;
+# if it fails, the release is there without them (and Windows installs
+# simply see no newer version).
 #
 # Built on the oldest supported Ubuntu, so the binary runs wherever that
 # glibc or a newer one is (practically every current distribution). It needs
@@ -68,3 +74,34 @@ jobs:
             --title "Terminaal ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             --verify-tag
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    env:
+      NAME: terminaal-x86_64-windows.exe
+      # OpenSSL for libssh2 is built from source (feature `windows-openssl`);
+      # its Configure needs a full Perl, which Git's isn't.
+      OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/terminaal.exe "dist/$NAME"
+          cd dist
+          sha256sum "$NAME" > "$NAME.sha256"
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*
