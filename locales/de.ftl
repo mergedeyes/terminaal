@@ -49,6 +49,7 @@ cli-needs-value = { $option } braucht einen Wert.
 cli-quake-alone = --quake verträgt sich mit keinem anderen Argument.
 cli-hold-alone = --hold braucht --connect, -s oder -c: allein gibt es nichts offen zu halten.
 cli-unknown-host = Kein gespeicherter oder in ~/.ssh/config eingetragener Host namens „{ $host }“.
+cli-command-not-for-5250 = „{ $host }“ ist ein IBM-i-Host: -c braucht eine Shell, ein 5250-Bildschirm hat keine.
 cli-unknown-shell = Keine installierte Shell namens „{ $shell }“.
 cli-hold-exit = [ Beendet. Tab schließen: Strg+Umschalt+W ]
 cli-hold-exit-code = [ Beendet mit Status { $code }. Tab schließen: Strg+Umschalt+W ]
@@ -604,6 +605,36 @@ host-sync-remove = Ordnerpaar entfernen
 host-sync-add = +  Ordnerpaar
 host-syncs-note = Synchronisiert wird beim Öffnen des Dateien-Tabs (Strg+Umschalt+O) und nach jedem Wiederverbinden. Auf beiden Seiten geändert → beide Fassungen bleiben, eine als „Name (conflict)“.
 host-sync-invalid = Ordnerpaar { $row }: { $err }
+host-protocol-tn5250 = IBM i (5250)
+host-protocol-tn5250-hint = Ein IBM-i-Bildschirm (AS/400) über Telnet, z. B. PUB400. Angemeldet wird auf seinem Bildschirm.
+host-tn5250-badge = 5250
+host-tn5250-tls = Verschlüsselt (TLS)
+host-tn5250-tls-hint = Telnet über TLS, meist Port 992. Das Zertifikat des Servers wird gegen die des Systems geprüft.
+host-tn5250-ccsid = Codepage (CCSID)
+host-tn5250-ccsid-note = Der Server schickt Text in dieser Codepage; für Umlaute und Akzente muss sie zur Sprache des Systems passen.
+host-tn5250-wide = Bildschirme mit 27 × 132
+host-tn5250-wide-hint = Auch die breite Bildschirmgröße anbieten (Gerätetyp 3477 statt 3179); Programme, die sie nutzen, schalten um.
+host-tn5250-device = Gerätename (optional)
+host-tn5250-device-hint = vergibt der Server, z. B. QPADEV0001
+host-look =
+    { $count ->
+        [0] Aussehen
+       *[other] Aussehen ({ $count })
+    }
+host-bad-ccsid = „{ $name }“: Für die Codepage { $ccsid } gibt es keine Tabelle.
+host-bad-device = „{ $name }“: Ein Gerätename hat bis zu 10 Buchstaben, Ziffern, #, $, @ oder _ und beginnt mit einem Buchstaben.
+ccsid-entry = { $ccsid } – { $country }
+ccsid-entry-euro = { $ccsid } – { $country }, mit €
+ccsid-us = USA, Kanada
+ccsid-germany = Deutschland, Österreich
+ccsid-denmark = Dänemark, Norwegen
+ccsid-sweden = Schweden, Finnland
+ccsid-italy = Italien
+ccsid-spain = Spanien
+ccsid-uk = Großbritannien
+ccsid-france = Frankreich
+ccsid-international = International (Belgien, Schweiz)
+ccsid-iceland = Island
 host-advanced =
     { $count ->
         [0] Erweitert
@@ -699,6 +730,7 @@ opt-setenv-name = SetEnv „{ $entry }“: „{ $name }“ ist kein gültiger Va
 
 catalog-jump-and-proxy = „{ $name }“ hat ProxyJump und ProxyCommand – es geht nur eins von beiden.
 catalog-jump-loop = Die ProxyJump-Kette über „{ $name }“ ist zu lang oder führt im Kreis.
+catalog-not-ssh = „{ $name }“ ist ein IBM-i-Host, kein SSH-Host.
 catalog-key-gone = Den Schlüssel „{ $key }“ von „{ $host }“ gibt es nicht mehr.
 catalog-bad-jump = Ungültiger Jump-Host „{ $spec }“ – erwartet wird ein Hostname aus der Liste oder [user@]host[:port].
 
@@ -845,6 +877,24 @@ conn-agent-forward-refused = der Server lässt sie nicht zu (AllowAgentForwardin
 conn-agent-forward-unset = { $var } ist nicht gesetzt
 conn-agent-forward-off = IdentityAgent ist none
 conn-agent-forward-missing = kein Agent unter { $socket }
+
+## IBM-i-5250-Bildschirme (tn5250)
+tn5250-closed = Der Server hat die Verbindung beendet.
+tn5250-tls-failed = TLS-Verbindung zu { $host } fehlgeschlagen: { $err }
+tn5250-system = X SYSTEM
+tn5250-inhibited = X II
+tn5250-insert = EINF
+tn5250-message-waiting = MW
+tn5250-reset-hint = Strg+R: Grundstellung
+tn5250-error-protected = Cursor im geschützten Bereich des Bildschirms.
+tn5250-error-alpha-only = Das Feld nimmt nur Buchstaben.
+tn5250-error-numeric-only = Das Feld nimmt nur Zahlen.
+tn5250-error-digits-only = Nur die Ziffern 0 bis 9 sind erlaubt.
+tn5250-error-sign-position = Die Vorzeichenstelle des Felds nimmt keine Ziffer.
+tn5250-error-no-room = Kein Platz zum Einfügen.
+tn5250-error-field-minus = Feld− gibt es nur in numerischen Feldern.
+tn5250-error-exit-required = Das Feld ist voll: Feldende (Strg+Enter) verlässt es.
+tn5250-error-undefined-character = Das Zeichen gibt es in der Codepage des Bildschirms nicht.
 conn-algorithms-failed = { $keyword } für { $hop }: { $err }
 conn-unknown-key-type = unbekannter Schlüsseltyp
 

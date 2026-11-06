@@ -7,6 +7,7 @@ That is what desktop entries, file-manager actions and scripts use.
 terminaal                              # a local shell (or the last session)
 terminaal --connect myserver           # a saved or ~/.ssh/config host
 terminaal --connect admin@myserver     # ...with that host's login for "admin"
+terminaal --connect PUB400             # an IBM i host: its 5250 sign-on screen
 terminaal -s                           # list the installed shells and exit
 terminaal -s fish                      # first tab with that shell
 terminaal -c "journalctl -fu nginx"    # run that line instead of a shell

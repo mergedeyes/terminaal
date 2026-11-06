@@ -49,6 +49,7 @@ cli-needs-value = { $option } needs a value.
 cli-quake-alone = --quake goes with no other argument.
 cli-hold-alone = --hold needs --connect, -s or -c: on its own there's nothing to keep open.
 cli-unknown-host = No saved or ~/.ssh/config host named '{ $host }'.
+cli-command-not-for-5250 = '{ $host }' is an IBM i host: -c needs a shell, a 5250 screen has none.
 cli-unknown-shell = No installed shell named '{ $shell }'.
 cli-hold-exit = [ Finished. Close the tab with Ctrl+Shift+W ]
 cli-hold-exit-code = [ Finished with status { $code }. Close the tab with Ctrl+Shift+W ]
@@ -603,6 +604,36 @@ host-sync-remove = Remove folder pair
 host-sync-add = +  Folder pair
 host-syncs-note = Syncs when the files tab opens (Ctrl+Shift+O) and after every reconnect. Changed on both sides → both versions are kept, one as “name (conflict)”.
 host-sync-invalid = Folder pair { $row }: { $err }
+host-protocol-tn5250 = IBM i (5250)
+host-protocol-tn5250-hint = An IBM i (AS/400) green screen over telnet, e.g. PUB400. Signing on happens on its screen.
+host-tn5250-badge = 5250
+host-tn5250-tls = Encrypted (TLS)
+host-tn5250-tls-hint = Telnet over TLS, usually port 992. The server's certificate is checked against the system's.
+host-tn5250-ccsid = Code page (CCSID)
+host-tn5250-ccsid-note = The server sends text in this code page; it has to match the system's language for umlauts and accents.
+host-tn5250-wide = 27 × 132 screens
+host-tn5250-wide-hint = Offer the wide screen size as well (device type 3477 instead of 3179); programs that use it switch to it.
+host-tn5250-device = Device name (optional)
+host-tn5250-device-hint = chosen by the server, e.g. QPADEV0001
+host-look =
+    { $count ->
+        [0] Appearance
+       *[other] Appearance ({ $count })
+    }
+host-bad-ccsid = “{ $name }”: there's no table for code page { $ccsid }.
+host-bad-device = “{ $name }”: a device name is up to 10 letters, digits, #, $, @ or _ and starts with a letter.
+ccsid-entry = { $ccsid } – { $country }
+ccsid-entry-euro = { $ccsid } – { $country }, with €
+ccsid-us = USA, Canada
+ccsid-germany = Germany, Austria
+ccsid-denmark = Denmark, Norway
+ccsid-sweden = Sweden, Finland
+ccsid-italy = Italy
+ccsid-spain = Spain
+ccsid-uk = United Kingdom
+ccsid-france = France
+ccsid-international = International (Belgium, Switzerland)
+ccsid-iceland = Iceland
 host-advanced =
     { $count ->
         [0] Advanced
@@ -698,6 +729,7 @@ opt-setenv-name = SetEnv “{ $entry }”: “{ $name }” is not a valid variab
 
 catalog-jump-and-proxy = “{ $name }” has both ProxyJump and ProxyCommand – only one of them works.
 catalog-jump-loop = The ProxyJump chain via “{ $name }” is too long or goes in circles.
+catalog-not-ssh = “{ $name }” is an IBM i host, not an SSH host.
 catalog-key-gone = The key “{ $key }” of “{ $host }” no longer exists.
 catalog-bad-jump = Invalid jump host “{ $spec }” – expected a host name from the list or [user@]host[:port].
 
@@ -844,6 +876,24 @@ conn-agent-forward-refused = the server doesn't allow it (AllowAgentForwarding)
 conn-agent-forward-unset = { $var } isn't set
 conn-agent-forward-off = IdentityAgent is none
 conn-agent-forward-missing = no agent at { $socket }
+
+## IBM i 5250 screens (tn5250)
+tn5250-closed = The server closed the connection.
+tn5250-tls-failed = TLS connection to { $host } failed: { $err }
+tn5250-system = X SYSTEM
+tn5250-inhibited = X II
+tn5250-insert = INS
+tn5250-message-waiting = MW
+tn5250-reset-hint = Ctrl+R: Reset
+tn5250-error-protected = Cursor in a protected area of the screen.
+tn5250-error-alpha-only = The field only takes letters.
+tn5250-error-numeric-only = The field only takes numbers.
+tn5250-error-digits-only = Only digits 0 to 9 are allowed.
+tn5250-error-sign-position = The sign position of the field takes no digit.
+tn5250-error-no-room = No room to insert.
+tn5250-error-field-minus = Field− is only for numeric fields.
+tn5250-error-exit-required = The field is full: Field Exit (Ctrl+Enter) to leave it.
+tn5250-error-undefined-character = The character isn't in the screen's code page.
 conn-algorithms-failed = { $keyword } for { $hop }: { $err }
 conn-unknown-key-type = unknown key type
 

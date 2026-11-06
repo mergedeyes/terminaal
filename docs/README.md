@@ -37,6 +37,8 @@ Look something up, or get one thing done.
   works, keys
 - [SSH hosts and `~/.ssh/config`](guides/ssh-hosts.md) – what's read, per-host
   options, logins, jump hosts
+- [IBM i green screens (5250)](guides/ibm-i-5250.md) – AS/400 systems such as
+  PUB400 in a tab: adding a host, the keys, code pages
 - [Host keys and `known_hosts`](guides/host-keys.md) – new hosts, changed keys
 - [Shell integration](guides/shell-integration.md) – what it gives you, other
   shells, remote servers

@@ -42,7 +42,7 @@ disk.
 
 - [Highlights](#highlights)
 - [Features](#features)
-  - [Terminal](#terminal) · [Shell integration](#shell-integration) · [SSH](#ssh) · [Files on the server](#files-on-the-server-sftp) · [Shells and commands](#shells-and-commands) · [Keys](#keys) · [Look and feel](#look-and-feel)
+  - [Terminal](#terminal) · [Shell integration](#shell-integration) · [SSH](#ssh) · [IBM i](#ibm-i-5250) · [Files on the server](#files-on-the-server-sftp) · [Shells and commands](#shells-and-commands) · [Keys](#keys) · [Look and feel](#look-and-feel)
 - [Installation](#installation)
 - [Getting around](#getting-around) – shortcuts, mouse, command line
 - [Configuration](#configuration)
@@ -56,6 +56,7 @@ disk.
 - **Fast and quiet:** a custom wgpu renderer that redraws only when something changes
 - **SSH manager built in:** hosts, several logins per host, keys, jump hosts, port forwards, automatic reconnect
 - **Files over the same connection:** browse, copy, edit locally and **keep folders in sync** – no second login
+- **IBM i green screens:** a 5250 terminal for AS/400 systems such as PUB400, over TLS too
 - **Split panes, broadcast, command palette** for working on many terminals at once
 - **Shell integration** without setup for fish, bash and zsh: prompt jumps, exit codes, run times, notifications
 - **Nothing secret on disk**, and your own config files are never rewritten behind your back
@@ -143,6 +144,19 @@ OSC 7 and OSC 133 works too, also over SSH. →
   [Host keys](docs/guides/host-keys.md)
 - Prompts for host keys, passphrases and passwords appear **inside the tab**,
   like OpenSSH – nothing secret is stored
+
+### IBM i (5250)
+
+→ [IBM i green screens](docs/guides/ibm-i-5250.md)
+
+- **A real 5250 terminal** (TN5250) for IBM i / AS/400 systems such as
+  [PUB400](https://pub400.com): input fields, function keys F1–F24, Field Exit,
+  Field+/−, Roll on <kbd>Page Up</kbd>/<kbd>Down</kbd> and the mouse wheel,
+  Attention and System Request
+- **Saved like SSH hosts** – pick **IBM i (5250)** in the host form; telnet or
+  **TLS**, the screen's **code page** (US, German, French … with or without €),
+  27 × 132 screens, a device name, a color per host
+- Copy, search, split panes, themes and session restore work as in any tab
 
 ### Files on the server (SFTP)
 
@@ -435,7 +449,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 | --- | --- |
 | **Start here** | [Getting started](docs/getting-started.md) · [Tips and tricks](docs/tips.md) · [Troubleshooting](docs/troubleshooting.md) |
 | **Tutorials** | [Your first SSH host](docs/tutorials/01-your-first-ssh-host.md) · [Keys and the agent](docs/tutorials/02-keys-and-the-agent.md) · [Port forwarding](docs/tutorials/03-port-forwarding.md) · [One command on many servers](docs/tutorials/04-one-command-many-servers.md) · [Your own theme](docs/tutorials/05-make-your-own-theme.md) |
-| **Guides** | [Configuration](docs/guides/configuration.md) · [Shortcuts](docs/guides/keyboard-shortcuts.md) · [Command line](docs/guides/command-line.md) · [SSH hosts](docs/guides/ssh-hosts.md) · [Host keys](docs/guides/host-keys.md) · [Files and SFTP](docs/guides/files-and-sftp.md) · [Shell integration](docs/guides/shell-integration.md) · [Commands and snippets](docs/guides/commands-and-snippets.md) · [Command palette](docs/guides/command-palette.md) · [Search and links](docs/guides/search-and-links.md) · [Split panes](docs/guides/split-panes.md) · [Sessions](docs/guides/sessions.md) · [Drop-down window](docs/guides/drop-down-window.md) · [Appearance](docs/guides/appearance.md) |
+| **Guides** | [Configuration](docs/guides/configuration.md) · [Shortcuts](docs/guides/keyboard-shortcuts.md) · [Command line](docs/guides/command-line.md) · [SSH hosts](docs/guides/ssh-hosts.md) · [IBM i (5250)](docs/guides/ibm-i-5250.md) · [Host keys](docs/guides/host-keys.md) · [Files and SFTP](docs/guides/files-and-sftp.md) · [Shell integration](docs/guides/shell-integration.md) · [Commands and snippets](docs/guides/commands-and-snippets.md) · [Command palette](docs/guides/command-palette.md) · [Search and links](docs/guides/search-and-links.md) · [Split panes](docs/guides/split-panes.md) · [Sessions](docs/guides/sessions.md) · [Drop-down window](docs/guides/drop-down-window.md) · [Appearance](docs/guides/appearance.md) |
 | **Background** | [Architecture](docs/explanations/architecture.md) · [Security and your files](docs/explanations/security-and-your-files.md) · [How prompt marks work](docs/explanations/prompt-marks.md) |
 
 ## Known limitations
@@ -463,6 +477,13 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - The built-in commands ask an SSH host what it is right after login, which can
   hold the tab for up to two seconds on a slow link; set the host's system under
   **Advanced** to skip that
+
+**IBM i (5250)**
+- Display sessions only: no printer sessions, no automatic sign-on, no enhanced
+  5250 GUI elements (pop-up windows come as characters)
+- Single-byte code pages only; clicking doesn't move the cursor, and keys typed
+  while the server works (`X SYSTEM`) don't queue up
+- A 5250 screen has a fixed size: a pane smaller than 80 × 25 cells cuts it off
 
 **Files**
 - Deleting on the server is final. Transfers resume after a dropped connection
@@ -525,6 +546,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] Reopen a closed tab
 - [x] Resize and swap panes with the keyboard
 - [x] Search: number of matches, optional regex
+- [x] IBM i (AS/400) green screens: a 5250 terminal over telnet and TLS
 
 </details>
 

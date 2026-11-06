@@ -75,6 +75,7 @@ use crate::shells::{self, launch, InstalledShell, ShellKind};
 use crate::shortcuts::{Action, KeyCombo, Keymap};
 use crate::session::{self, SavedPane, SavedTab, Session};
 use crate::ssh::{Catalog, SshTarget};
+use crate::tn5250::Tn5250Target;
 use crate::render::label::{Labels, Rect as LabelRect};
 use crate::terminal::integration::{self, ShellEvent};
 use crate::render::image::{ImageDraw, ImageRenderer};
@@ -544,6 +545,7 @@ struct PaneLook {
 enum PaneOrigin {
     Shell(InstalledShell),
     Ssh(Box<SshTarget>),
+    Tn5250(Box<Tn5250Target>),
 }
 
 /// A closed tab, waiting to be opened again.
@@ -994,16 +996,19 @@ impl AppState {
 
     /// The color and theme `origin`'s host asks for.
     fn pane_look(&self, origin: &PaneOrigin) -> PaneLook {
-        let PaneOrigin::Ssh(target) = origin else { return PaneLook::default() };
-        let settings = &target.settings;
-        let palette = settings.theme.as_deref().and_then(|name| {
-            let theme = self.themes.find(name);
+        let (name, color, theme) = match origin {
+            PaneOrigin::Shell(_) => return PaneLook::default(),
+            PaneOrigin::Ssh(target) => (&target.name, target.settings.color, &target.settings.theme),
+            PaneOrigin::Tn5250(target) => (&target.name, target.color, &target.theme),
+        };
+        let palette = theme.as_deref().and_then(|theme_name| {
+            let theme = self.themes.find(theme_name);
             if theme.is_none() {
-                log::warn!("host {:?}: unknown theme {name:?}, using the window's", target.name);
+                log::warn!("host {name:?}: unknown theme {theme_name:?}, using the window's");
             }
             theme.map(|theme| Box::new(Palette::new(&theme.terminal)))
         });
-        PaneLook { accent: settings.color, palette }
+        PaneLook { accent: color, palette }
     }
 
     /// Open a tab that connects to `target` over SSH and switch to it.
@@ -1015,15 +1020,23 @@ impl AppState {
         Ok(())
     }
 
+    /// Open a tab with an IBM i 5250 screen and switch to it.
+    fn add_tn5250_tab(&mut self, target: &Tn5250Target) -> std::io::Result<()> {
+        let pane = self.spawn_pane(PaneOrigin::Tn5250(Box::new(target.clone())), None, self.console_rect(), Run::default())?;
+        self.push_tab(TabContent::Terminals(Panes::new(pane)));
+        Ok(())
+    }
+
     /// The single tab of a Terminaal started for one job (`main.rs`):
     /// an SSH connection (`--connect`), a shell of its own (`-s`), a
     /// command line for it (`-c`), and whether it stays once that ends
     /// (`--hold`). Over SSH the command is the host's `RemoteCommand`,
     /// set while the target was resolved, so only `hold` is left here.
     fn add_cli_tab(&mut self, cli: &Cli, default_shell: &InstalledShell) -> std::io::Result<()> {
-        let origin = match &cli.connect {
-            Some(target) => PaneOrigin::Ssh(target.clone()),
-            None => PaneOrigin::Shell(cli.shell.clone().unwrap_or_else(|| default_shell.clone())),
+        let origin = match (&cli.connect, &cli.ibm_i) {
+            (Some(target), _) => PaneOrigin::Ssh(target.clone()),
+            (None, Some(target)) => PaneOrigin::Tn5250(target.clone()),
+            (None, None) => PaneOrigin::Shell(cli.shell.clone().unwrap_or_else(|| default_shell.clone())),
         };
         let run = Run { command: cli.command.as_deref(), hold: cli.hold };
         let pane = self.spawn_pane(origin, None, self.console_rect(), run)?;
@@ -1070,6 +1083,11 @@ impl AppState {
                 }
                 (terminal, target.label.clone())
             }
+            PaneOrigin::Tn5250(target) => {
+                let terminal =
+                    TerminalSession::connect_tn5250(listener, (**target).clone(), size, cell.width, cell.height, options)?;
+                (terminal, target.label.clone())
+            }
         };
         let start_cwd = cwd.filter(|_| matches!(origin, PaneOrigin::Shell(_)));
         let look = self.pane_look(&origin);
@@ -1077,7 +1095,7 @@ impl AppState {
         let startup = match &origin {
             // A `-c` command line isn't a shell to type into.
             PaneOrigin::Shell(shell) if run.command.is_none() => Some(Startup::new(shell.kind != ShellKind::Other)),
-            PaneOrigin::Shell(_) | PaneOrigin::Ssh(_) => None,
+            PaneOrigin::Shell(_) | PaneOrigin::Ssh(_) | PaneOrigin::Tn5250(_) => None,
         };
         Ok(Pane {
             id,
@@ -1820,6 +1838,7 @@ impl AppState {
                             cwd: pane.local_cwd(&self.hostname).or_else(|| pane.start_cwd.clone()),
                         },
                         PaneOrigin::Ssh(target) => SavedPane::ssh(target),
+                        PaneOrigin::Tn5250(target) => SavedPane::Tn5250 { host: target.name.clone() },
                     })
                     .collect();
                 let mut layout = panes.layout.clone();
@@ -1923,6 +1942,17 @@ impl AppState {
                         .inspect_err(|err| log::warn!("session: can't connect to {user}@{host} again: {err}"))
                         .ok()
                         .map(|target| (PaneOrigin::Ssh(Box::new(target)), None))
+                }
+                SavedPane::Tn5250 { host } => {
+                    let catalog = catalog.get_or_insert_with(Catalog::load);
+                    let target = catalog.as_ref().map_err(Clone::clone).and_then(|catalog| {
+                        let found = catalog.find(&host).filter(|found| found.is_tn5250());
+                        found.ok_or_else(|| format!("no IBM i host named {host:?}"))?.tn5250_target()
+                    });
+                    target
+                        .inspect_err(|err| log::warn!("session: can't connect to {host} again: {err}"))
+                        .ok()
+                        .map(|target| (PaneOrigin::Tn5250(Box::new(target)), None))
                 }
             };
             if origin.is_none() && !layout.remove(idx) {
@@ -2131,7 +2161,9 @@ impl AppState {
     /// tab's system, with the configured one winning for a local shell.
     /// `None` while the settings tab is showing -- no shell to send to.
     fn command_target(&self) -> Option<Target> {
-        let mut target = self.target_of(self.current_terminal()?);
+        // An IBM i screen has no shell to type commands into.
+        let terminal = self.current_terminal().filter(|terminal| !terminal.is_tn5250())?;
+        let mut target = self.target_of(terminal);
         target.terminals = self.input_panes().len();
         Some(target)
     }
@@ -3097,8 +3129,12 @@ impl AppState {
                 let catalog = self.sidebar.catalog();
                 let hosts = if saved { &catalog.saved } else { &catalog.config };
                 let Some(host) = hosts.get(index).and_then(|host| host.with_login(login)) else { return };
-                match catalog.target(&host) {
-                    Ok(target) => self.apply_action(SidebarAction::Connect(Box::new(target)), Origin::Sidebar),
+                let action = match host.is_tn5250() {
+                    true => host.tn5250_target().map(|target| SidebarAction::Connect5250(Box::new(target))),
+                    false => catalog.target(&host).map(|target| SidebarAction::Connect(Box::new(target))),
+                };
+                match action {
+                    Ok(action) => self.apply_action(action, Origin::Sidebar),
                     Err(err) => self.report_elsewhere(err),
                 }
             }
@@ -4171,6 +4207,12 @@ impl AppState {
             SidebarAction::Connect(target) => {
                 if let Err(err) = self.add_ssh_tab(&target) {
                     log::error!("failed to open SSH tab for {}: {err}", target.label);
+                    self.report(origin, Err(t!("app-ssh-tab-failed", target = &target.label, err = err.to_string())));
+                }
+            }
+            SidebarAction::Connect5250(target) => {
+                if let Err(err) = self.add_tn5250_tab(&target) {
+                    log::error!("failed to open 5250 tab for {}: {err}", target.label);
                     self.report(origin, Err(t!("app-ssh-tab-failed", target = &target.label, err = err.to_string())));
                 }
             }

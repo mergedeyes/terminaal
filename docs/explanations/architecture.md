@@ -151,6 +151,18 @@ connections queue up briefly; and because it reads data for all channels
 whenever it reads for one, the loop doesn't sleep while any channel still has
 data buffered.
 
+## IBM i (5250) tabs
+
+A 5250 terminal works in whole screens with input fields, not as a stream of
+VT output, so Terminaal emulates it in a worker thread of its own
+(`src/tn5250/`): telnet negotiation and records, the screen buffer with its
+format table, editing in the fields, and the replies to the server. It draws the
+screen as VT output into the pane's ordinary terminal grid. Rendering,
+selection, search and themes then need nothing special. Keys arrive as the
+bytes the pane would send any program; the worker asks for the kitty keyboard
+protocol so that keys like keypad <kbd>+</kbd> come through distinct, and turns
+them back into 5250 keys.
+
 ## Files and settings
 
 - `config.toml` is read with serde and **written with `toml_edit`**, one key at
@@ -175,6 +187,7 @@ data buffered.
 | `src/gpu.rs`, `src/blur.rs` | wgpu device and surface; blur behind a see-through window |
 | `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links, hints, vi mode, images (kitty graphics) |
 | `src/sftp/` | SFTP client over the terminal's connection, its session thread (listing, pipelined transfers), editing files locally with sudo, folder sync |
+| `src/tn5250/` | IBM i 5250 terminal: telnet, EBCDIC code pages, screen and fields, drawing it as VT, key decoding, the connection worker |
 | `src/ssh/` | Host catalog, `~/.ssh/config` parser, connection worker, forwards, SOCKS, agent forwarding, keys, `known_hosts` |
 | `src/ui/` | egui sidebar, settings, SSH/keys/commands panels, files tab, context menu, command palette, the paste, clipboard and update dialogs, splash |
 | `src/update.rs` | Checking the GitHub releases, downloading and replacing the program |

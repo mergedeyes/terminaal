@@ -22,7 +22,8 @@ use crate::sftp::sync::{SyncDirection, SyncPair};
 use crate::ssh::options::{
     AddressFamily, Forward, ForwardAgent, ForwardKind, HOST_COLORS, HostKeyCheck, Options, Target, parse_host_color,
 };
-use crate::ssh::{self, Catalog, Host, Login, keys, known_hosts};
+use crate::ssh::{self, Catalog, Host, Login, Protocol, keys, known_hosts};
+use crate::tn5250;
 use crate::ssh::forward::ForwardState;
 use crate::ui::sidebar::{SidebarAction, TabForwards};
 use crate::ui::theme;
@@ -503,9 +504,15 @@ struct HostEditor {
     id: u64,
     /// Index in the saved list while editing; `None` for a new host.
     original: Option<usize>,
+    protocol: Protocol,
     name: String,
     host: String,
     port: String,
+    /// 5250 only: TLS, code page, wide screens, device name.
+    tls: bool,
+    ccsid: u16,
+    wide: bool,
+    device: String,
     /// The default login first; never empty.
     logins: Vec<Login>,
     /// `ProxyJump`; empty for none.
@@ -536,9 +543,14 @@ impl HostEditor {
         Self {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             original,
+            protocol: host.protocol,
             name: host.name.clone(),
             host: host.host.clone(),
             port: host.port.to_string(),
+            tls: host.tls,
+            ccsid: host.ccsid.unwrap_or(tn5250::codepage::DEFAULT_CCSID),
+            wide: host.wide,
+            device: host.device.clone().unwrap_or_default(),
             logins: host.all_logins(),
             jump: host.jump().unwrap_or_default().to_string(),
             forwards,
@@ -566,6 +578,9 @@ impl HostEditor {
         };
         if data.catalog.saved.iter().enumerate().any(|(i, h)| h.name == name && Some(i) != self.original) {
             return Err(t!("host-name-taken", name = &name));
+        }
+        if self.protocol == Protocol::Tn5250 {
+            return self.to_tn5250_host(name, host, port);
         }
 
         let mut logins: Vec<Login> = Vec::new();
@@ -650,6 +665,11 @@ impl HostEditor {
             name,
             host: host.to_string(),
             port,
+            protocol: Protocol::Ssh,
+            tls: false,
+            ccsid: None,
+            wide: false,
+            device: None,
             user: default.user,
             key: default.key,
             identities: lines(&advanced.identities),
@@ -660,6 +680,68 @@ impl HostEditor {
             logins,
             syncs,
         })
+    }
+}
+
+impl HostEditor {
+    /// An IBM i host: none of the SSH settings, only the 5250 ones and the
+    /// look.
+    fn to_tn5250_host(&self, name: String, host: &str, port: u16) -> Result<Host, String> {
+        let device = self.device.trim().to_uppercase();
+        if !device.is_empty() && !ssh::valid_device_name(&device) {
+            return Err(t!("host-bad-device", name = &name));
+        }
+        let mut entry = Host::new(name, host);
+        entry.port = port;
+        entry.protocol = Protocol::Tn5250;
+        entry.tls = self.tls;
+        entry.ccsid = Some(self.ccsid).filter(|&ccsid| ccsid != tn5250::codepage::DEFAULT_CCSID);
+        entry.wide = self.wide;
+        entry.device = Some(device).filter(|device| !device.is_empty());
+        entry.options.color = self.advanced.color.spec();
+        entry.options.theme = self.advanced.theme.clone();
+        Ok(entry)
+    }
+
+    /// Switch between SSH and 5250, the port along with it if it was the
+    /// other one's default.
+    fn set_protocol(&mut self, protocol: Protocol) {
+        if protocol == self.protocol {
+            return;
+        }
+        let port = self.port.trim();
+        self.port = match protocol {
+            Protocol::Tn5250 if port.is_empty() || port == "22" => tn5250_port(self.tls).to_string(),
+            Protocol::Ssh if port == tn5250::PORT.to_string() || port == tn5250::TLS_PORT.to_string() => "22".to_string(),
+            _ => self.port.clone(),
+        };
+        self.protocol = protocol;
+    }
+}
+
+fn tn5250_port(tls: bool) -> u16 {
+    if tls { tn5250::TLS_PORT } else { tn5250::PORT }
+}
+
+/// A code page as the form lists it: number and country.
+fn ccsid_label(ccsid: u16) -> String {
+    let country = match ccsid {
+        37 | 1140 => t!("ccsid-us"),
+        273 | 1141 => t!("ccsid-germany"),
+        277 | 1142 => t!("ccsid-denmark"),
+        278 | 1143 => t!("ccsid-sweden"),
+        280 | 1144 => t!("ccsid-italy"),
+        284 | 1145 => t!("ccsid-spain"),
+        285 | 1146 => t!("ccsid-uk"),
+        297 | 1147 => t!("ccsid-france"),
+        500 | 1148 => t!("ccsid-international"),
+        871 | 1149 => t!("ccsid-iceland"),
+        _ => String::new(),
+    };
+    if ccsid >= 1140 {
+        t!("ccsid-entry-euro", ccsid = ccsid, country = country)
+    } else {
+        t!("ccsid-entry", ccsid = ccsid, country = country)
     }
 }
 
@@ -681,14 +763,22 @@ fn lines(value: &str) -> Vec<String> {
 
 /// Address, plus the jump host if there is one.
 fn subtitle(host: &Host) -> String {
+    if host.is_tn5250() {
+        let tls = if host.tls { " · TLS" } else { "" };
+        return format!("{}:{}{tls}", host.host, host.port);
+    }
     match host.jump() {
         Some(jump) => t!("ssh-via", address = host.address(), jump = jump),
         None => host.address(),
     }
 }
 
-/// The default login's key, and how many more logins there are.
+/// The default login's key, and how many more logins there are; for an
+/// IBM i, that it is one.
 fn badge(host: &Host) -> Option<String> {
+    if host.is_tn5250() {
+        return Some(t!("host-tn5250-badge"));
+    }
     match (&host.key, host.logins.len()) {
         (Some(key), 0) => Some(key.clone()),
         (Some(key), more) => Some(format!("{key} +{more}")),
@@ -742,6 +832,13 @@ impl SshPanel {
 
     /// Open a tab to `host`, logged in with its login number `login`.
     fn connect(&mut self, data: &SshData, host: &Host, login: usize, actions: &mut Vec<SidebarAction>) {
+        if host.is_tn5250() {
+            match host.tn5250_target() {
+                Ok(target) => actions.push(SidebarAction::Connect5250(Box::new(target))),
+                Err(err) => self.report(Err(err)),
+            }
+            return;
+        }
         let Some(host) = host.with_login(login) else { return };
         match data.catalog.target(&host) {
             Ok(target) => actions.push(SidebarAction::Connect(Box::new(target))),
@@ -887,7 +984,10 @@ impl SshPanel {
                 edit = ui.button("✏").on_hover_text(t!("common-edit")).clicked();
                 ask_delete = ui.button("🗑").on_hover_text(t!("common-delete")).clicked();
             }
-            if ui.button(t!("known-hosts-button")).on_hover_text(t!("known-hosts-button-hint")).clicked() {
+            // An IBM i has no SSH host key.
+            if !host.is_tn5250()
+                && ui.button(t!("known-hosts-button")).on_hover_text(t!("known-hosts-button-hint")).clicked()
+            {
                 show_keys = true;
             }
         });
@@ -938,7 +1038,8 @@ impl SshPanel {
     fn editor_form(&mut self, ui: &mut Ui, data: &mut SshData) {
         let key_names: Vec<String> = data.catalog.keys.iter().map(|k| k.name.clone()).collect();
         let mut host_names: Vec<String> = Vec::new();
-        for host in data.catalog.saved.iter().chain(&data.catalog.config) {
+        // Only SSH hosts can be jumped through.
+        for host in data.catalog.saved.iter().chain(&data.catalog.config).filter(|host| !host.is_tn5250()) {
             if !host_names.contains(&host.name) {
                 host_names.push(host.name.clone());
             }
@@ -951,40 +1052,30 @@ impl SshPanel {
             ui.label(RichText::new(if editor.original.is_some() { t!("host-edit") } else { t!("host-new") }).strong());
             ui.add_space(2.0);
 
+            ui.horizontal_wrapped(|ui| {
+                let mut protocol = editor.protocol;
+                ui.selectable_value(&mut protocol, Protocol::Ssh, "SSH");
+                ui.selectable_value(&mut protocol, Protocol::Tn5250, t!("host-protocol-tn5250"))
+                    .on_hover_text(t!("host-protocol-tn5250-hint"));
+                editor.set_protocol(protocol);
+            });
+
             let host = text_field(ui, "Host", &mut editor.host, &t!("host-host-hint"));
             if editor.focus_pending {
                 host.request_focus();
                 editor.focus_pending = false;
             }
             text_field(ui, &t!("host-name-optional"), &mut editor.name, &t!("host-name-hint"));
-            text_field(ui, "Port", &mut editor.port, "22");
+            let tn5250 = editor.protocol == Protocol::Tn5250;
+            let port_hint = if tn5250 { tn5250_port(editor.tls).to_string() } else { "22".to_string() };
+            text_field(ui, "Port", &mut editor.port, &port_hint);
+            if tn5250 {
+                tn5250_ui(ui, editor, &self.theme_names);
+            }
 
-            ui.add_space(4.0);
-            logins_ui(ui, editor, &key_names);
-
-            ui.add_space(4.0);
-            ui.label(weak(t!("host-jump")));
-            let own_name = if editor.name.trim().is_empty() { editor.host.trim() } else { editor.name.trim() }.to_string();
-            let none = t!("host-jump-none");
-            let selected = if editor.jump.is_empty() { none.clone() } else { editor.jump.clone() };
-            ComboBox::from_id_salt(("ssh-host-jump", editor.id))
-                .width(ui.available_width())
-                .selected_text(selected)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut editor.jump, String::new(), none);
-                    if !editor.jump.is_empty() && !host_names.contains(&editor.jump) {
-                        let current = editor.jump.clone();
-                        ui.selectable_value(&mut editor.jump, current.clone(), current);
-                    }
-                    for name in host_names.iter().filter(|n| **n != own_name) {
-                        ui.selectable_value(&mut editor.jump, name.clone(), name);
-                    }
-                });
-
-            ui.add_space(4.0);
-            forwards_ui(ui, editor);
-            syncs_ui(ui, editor);
-            advanced_ui(ui, editor, &self.theme_names);
+            if !tn5250 {
+                ssh_ui(ui, editor, &key_names, &host_names, &self.theme_names);
+            }
 
             if let Some(err) = &editor.error {
                 ui.label(RichText::new(err).color(theme::colors().error));
@@ -1032,8 +1123,18 @@ impl SshPanel {
         // Catch unknown keys, bad jump specs, jump loops and invalid options
         // -- for every login -- before saving.
         let catalog = Catalog { saved: hosts.clone(), ..data.catalog.clone() };
-        for login in 0..entry.all_logins().len() {
-            catalog.target(&entry.with_login(login).expect("login exists"))?;
+        if entry.is_tn5250() {
+            entry.tn5250_target()?;
+            // A host others jump through has to stay SSH.
+            if let Some(jumping) = editor.original.and_then(|i| data.catalog.saved.get(i)).and_then(|old| {
+                hosts.iter().find(|h| h.jump().is_some_and(|j| j.split(',').any(|hop| hop.trim() == old.name)))
+            }) {
+                return Err(t!("ssh-is-jump-host", name = &entry.name, hosts = &jumping.name));
+            }
+        } else {
+            for login in 0..entry.all_logins().len() {
+                catalog.target(&entry.with_login(login).expect("login exists"))?;
+            }
         }
 
         let name = entry.name.clone();
@@ -1357,6 +1458,65 @@ fn advanced_ui(ui: &mut Ui, editor: &mut HostEditor, theme_names: &[String]) {
     });
 }
 
+/// The parts of the form only an SSH host has: logins, jump host,
+/// forwards, synced folders, the advanced options.
+fn ssh_ui(ui: &mut Ui, editor: &mut HostEditor, key_names: &[String], host_names: &[String], theme_names: &[String]) {
+    ui.add_space(4.0);
+    logins_ui(ui, editor, key_names);
+
+    ui.add_space(4.0);
+    ui.label(weak(t!("host-jump")));
+    let own_name = if editor.name.trim().is_empty() { editor.host.trim() } else { editor.name.trim() }.to_string();
+    let none = t!("host-jump-none");
+    let selected = if editor.jump.is_empty() { none.clone() } else { editor.jump.clone() };
+    ComboBox::from_id_salt(("ssh-host-jump", editor.id))
+        .width(ui.available_width())
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut editor.jump, String::new(), none);
+            if !editor.jump.is_empty() && !host_names.contains(&editor.jump) {
+                let current = editor.jump.clone();
+                ui.selectable_value(&mut editor.jump, current.clone(), current);
+            }
+            for name in host_names.iter().filter(|n| **n != own_name) {
+                ui.selectable_value(&mut editor.jump, name.clone(), name);
+            }
+        });
+
+    ui.add_space(4.0);
+    forwards_ui(ui, editor);
+    syncs_ui(ui, editor);
+    advanced_ui(ui, editor, theme_names);
+}
+
+/// The IBM i settings: TLS, code page, wide screens, device name, look.
+fn tn5250_ui(ui: &mut Ui, editor: &mut HostEditor, theme_names: &[String]) {
+    let tls = editor.tls;
+    ui.checkbox(&mut editor.tls, t!("host-tn5250-tls")).on_hover_text(t!("host-tn5250-tls-hint"));
+    if editor.tls != tls && editor.port.trim() == tn5250_port(tls).to_string() {
+        editor.port = tn5250_port(editor.tls).to_string();
+    }
+    option_label(ui, &t!("host-tn5250-ccsid"), "ccsid");
+    ComboBox::from_id_salt(("tn5250-ccsid", editor.id))
+        .width(ui.available_width())
+        .selected_text(ccsid_label(editor.ccsid))
+        .show_ui(ui, |ui| {
+            for ccsid in tn5250::codepage::CCSIDS {
+                ui.selectable_value(&mut editor.ccsid, ccsid, ccsid_label(ccsid));
+            }
+        });
+    ui.label(weak(t!("host-tn5250-ccsid-note")).size(11.0));
+    ui.checkbox(&mut editor.wide, t!("host-tn5250-wide")).on_hover_text(t!("host-tn5250-wide-hint"));
+    option_field(ui, &t!("host-tn5250-device"), "device", &mut editor.device, &t!("host-tn5250-device-hint"));
+    ui.add_space(4.0);
+    let id = editor.id;
+    let count = usize::from(editor.advanced.color != ColorChoice::None) + usize::from(editor.advanced.theme.is_some());
+    CollapsingHeader::new(t!("host-look", count = count))
+        .id_salt(("tn5250-look", id))
+        .default_open(count > 0)
+        .show(ui, |ui| look_ui(ui, &mut editor.advanced, id, theme_names));
+}
+
 /// Warning color and theme: Terminaal's own options.
 fn look_ui(ui: &mut Ui, a: &mut Advanced, id: u64, theme_names: &[String]) {
     ui.label(weak(t!("adv-color"))).on_hover_text(t!("adv-color-hint"));
@@ -1438,9 +1598,14 @@ mod tests {
         let mut saved = Host::new("a", "a.example");
         saved.key = Some("work".into());
         saved.logins = vec![Login { user: "root".into(), key: None }];
+        let mut ibm_i = Host::new("PUB400", "pub400.com");
+        ibm_i.protocol = Protocol::Tn5250;
+        ibm_i.port = 992;
+        ibm_i.tls = true;
+        ibm_i.ccsid = Some(273);
         let key = keys::Key { name: "work".into(), file: Some("/nonexistent/key".into()), agent_key: None, generated: false };
         SshData {
-            catalog: Catalog { saved: vec![saved], config: vec![config_host], keys: vec![key] },
+            catalog: Catalog { saved: vec![saved, ibm_i], config: vec![config_host], keys: vec![key] },
             hosts_error: Some("test".into()),
             keys_error: None,
             hosts_generation: 0,
@@ -1453,8 +1618,10 @@ mod tests {
         let mut data = data();
         let mut panel = SshPanel::new(&data);
         let mut actions = Vec::new();
-        let states: [(Option<Selection>, Option<HostEditor>); 5] = [
+        let states: [(Option<Selection>, Option<HostEditor>); 7] = [
             (Some(Selection::Saved(0)), None),
+            (Some(Selection::Saved(1)), None),
+            (None, Some(HostEditor::from_host(&data.catalog.saved[1].clone(), Some(1)))),
             (Some(Selection::Config(0)), None),
             (None, Some(HostEditor::new())),
             // Forwards and options set: both fold-outs open and lay out.
@@ -1532,6 +1699,52 @@ mod tests {
         assert_eq!(HostEditor::from_host(&cfg, None).to_host(&data).unwrap(), cfg);
         host.options.color = Some("#1a2b3c".into());
         assert_eq!(HostEditor::from_host(&host, None).to_host(&data).unwrap(), host);
+
+        let mut ibm_i = Host::new("ibm", "ibm.example");
+        ibm_i.protocol = Protocol::Tn5250;
+        ibm_i.port = 992;
+        ibm_i.tls = true;
+        ibm_i.ccsid = Some(1141);
+        ibm_i.wide = true;
+        ibm_i.device = Some("TERMINAAL1".into());
+        ibm_i.options.color = Some("green".into());
+        ibm_i.options.theme = Some("Nord".into());
+        assert_eq!(HostEditor::from_host(&ibm_i, None).to_host(&data).unwrap(), ibm_i);
+        // The default code page isn't written.
+        ibm_i.ccsid = Some(37);
+        assert_eq!(HostEditor::from_host(&ibm_i, None).to_host(&data).unwrap().ccsid, None);
+    }
+
+    #[test]
+    fn switching_to_5250_drops_the_ssh_settings_and_moves_the_port() {
+        let data = data();
+        let mut editor = HostEditor::from_host(&data.catalog.saved[0].clone(), None);
+        editor.name = "as400".into();
+        editor.set_protocol(Protocol::Tn5250);
+        assert_eq!(editor.port, "23");
+        editor.tls = true;
+        editor.port = "992".into();
+        editor.device = "bad name".into();
+        assert!(editor.to_host(&data).unwrap_err().contains("Gerätename"));
+        editor.device = "qpadev01".into();
+        let host = editor.to_host(&data).unwrap();
+        assert_eq!((host.port, host.tls, host.device.as_deref()), (992, true, Some("QPADEV01")));
+        // Logins and keys of the SSH form don't come along.
+        assert!(host.key.is_none() && host.logins.is_empty() && host.user.is_empty());
+        editor.set_protocol(Protocol::Ssh);
+        assert_eq!(editor.port, "22");
+    }
+
+    #[test]
+    fn connecting_to_an_ibm_i_host_opens_a_5250_tab() {
+        let data = data();
+        let mut panel = SshPanel::new(&data);
+        let mut actions = Vec::new();
+        panel.connect(&data, &data.catalog.saved[1].clone(), 0, &mut actions);
+        match actions.as_slice() {
+            [SidebarAction::Connect5250(target)] => assert_eq!((target.port, target.ccsid), (992, 273)),
+            _ => panic!("expected a 5250 connection"),
+        }
     }
 
     #[test]
@@ -1577,7 +1790,7 @@ mod tests {
         let cfg = data.catalog.config[0].clone();
         panel.editor = Some(HostEditor::from_host(&cfg, None));
         assert!(panel.commit(&mut data).unwrap_err().contains("unlesbar"));
-        assert_eq!(data.catalog.saved.len(), 1, "nothing was added");
+        assert_eq!(data.catalog.saved.len(), 2, "nothing was added");
     }
 
     /// The known_hosts view against a throwaway `UserKnownHostsFile`,
