@@ -35,7 +35,8 @@ disk.
 > **Disclaimer:** this project is coded mostly by Claude Code. I make all the
 > decisions, though – every feature was planned by me.
 
-<img width="2560" height="1383" alt="image" src="https://github.com/user-attachments/assets/87c33d1b-cdb1-48e6-9d67-4a9696e166de" />
+<img width="2560" height="1383" alt="image" src="https://github.com/user-attachments/assets/5e446793-c832-4950-8668-91b633a414f3" />
+
 
 <img width="2560" height="1383" alt="image" src="https://github.com/user-attachments/assets/f6559f71-1c05-4052-a547-79a4f5595181" />
 
