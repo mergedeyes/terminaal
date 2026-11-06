@@ -35,8 +35,11 @@ disk.
 > **Disclaimer:** this project is coded mostly by Claude Code. I make all the
 > decisions, though – every feature was planned by me.
 
-<img width="2557" height="1383" alt="Terminaal with local and SSH tabs and the sidebar" src="https://github.com/user-attachments/assets/95a72250-0e38-4be0-86cd-d9cbce21ce06" />
-<img width="2557" height="1383" alt="Terminaal with split panes" src="https://github.com/user-attachments/assets/5d820773-2745-474c-bb17-9327a6339164" />
+<img width="2560" height="1383" alt="image" src="https://github.com/user-attachments/assets/87c33d1b-cdb1-48e6-9d67-4a9696e166de" />
+
+<img width="2560" height="1383" alt="image" src="https://github.com/user-attachments/assets/f6559f71-1c05-4052-a547-79a4f5595181" />
+
+
 
 ## Contents
 
