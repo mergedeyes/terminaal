@@ -25,8 +25,6 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::fs::{FileExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -36,6 +34,7 @@ use super::edit::{EditAction, EditStatus, Edits};
 use super::protocol::{self, Attrs, Client, Entry, open};
 use super::sync::{SyncLink, SyncPair, SyncStatus, SyncTransfer, Syncs};
 use crate::i18n::t;
+use crate::platform::{self, Handle, Pollable};
 use crate::ssh::connection::Opener;
 
 /// Longest a transfer round takes before commands get a look in.
@@ -54,7 +53,7 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 pub struct Stream {
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub fd: RawFd,
+    pub fd: Handle,
 }
 
 /// Where a session's streams come from: a terminal's SSH connection
@@ -74,7 +73,7 @@ impl Channels for Opener {
 
     fn open_sftp(&self) -> io::Result<Stream> {
         let stream = Opener::open_sftp(self)?;
-        let fd = stream.as_raw_fd();
+        let fd = stream.handle();
         let writer = stream.try_clone()?;
         Ok(Stream { reader: Box::new(stream), writer: Box::new(writer), fd })
     }
@@ -254,7 +253,7 @@ impl Remote {
             let mut worker = Worker {
                 channels,
                 client: None,
-                fd: -1,
+                fd: platform::NO_HANDLE,
                 attached_to: 0,
                 refused: 0,
                 rx,
@@ -370,7 +369,7 @@ struct Worker {
     channels: Arc<dyn Channels>,
     client: Option<SftpClient>,
     /// The client's stream, watched for its end.
-    fd: RawFd,
+    fd: Handle,
     /// The connection the client runs on.
     attached_to: u64,
     /// The connection SFTP last failed to start on: not tried again until
@@ -494,10 +493,7 @@ impl Worker {
             connection if connection != self.attached_to => return self.lose(&t!("files-reconnected")),
             _ => {}
         }
-        let mut poll = libc::pollfd { fd: self.fd, events: libc::POLLIN | libc::POLLRDHUP, revents: 0 };
-        // SAFETY: one valid pollfd for the duration of the call; no wait.
-        let ready = unsafe { libc::poll(&mut poll, 1, 0) };
-        if ready > 0 && poll.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLRDHUP | libc::POLLNVAL) != 0 {
+        if platform::hung_up(self.fd) {
             self.lose(&t!("files-stream-closed"));
         }
     }
@@ -838,7 +834,7 @@ impl Worker {
         }
         let mut dirs = vec![(local.to_path_buf(), remote)];
         while let Some((local_dir, remote_dir)) = dirs.pop() {
-            let mode = std::fs::metadata(&local_dir).map_or(0o755, |meta| meta.permissions().mode());
+            let mode = std::fs::metadata(&local_dir).map_or(0o755, |meta| platform::mode(&meta));
             if let Err(err) = self.client()?.mkdir(&remote_dir, Attrs::mode(mode)) {
                 return self.report(Err(err));
             }
@@ -1016,7 +1012,7 @@ impl Worker {
                 let (_, offset, len) = run.in_flight.swap_remove(at);
                 match reply.data()? {
                     Some(data) => {
-                        run.file.write_all_at(&data, offset)?;
+                        platform::write_all_at(&run.file, &data, offset)?;
                         status.done += data.len() as u64;
                         let end = offset + data.len() as u64;
                         // The file grew meanwhile: keep reading to its end.
@@ -1045,7 +1041,7 @@ impl Worker {
                             if *created {
                                 let _ = client.remove(remote);
                             }
-                            let mode = meta.permissions().mode();
+                            let mode = platform::mode(&meta);
                             let flags = open::WRITE | open::CREATE | open::EXCLUSIVE;
                             (client.open(remote, flags, Attrs::mode(mode))?, 0)
                         }
@@ -1058,7 +1054,7 @@ impl Worker {
                 let run = run.as_mut().expect("just started");
                 let mut buf = vec![0u8; chunk as usize];
                 while run.in_flight.len() < protocol::PIPELINE && run.next < status.total {
-                    let n = run.file.read_at(&mut buf, run.next)?;
+                    let n = platform::read_at(&run.file, &mut buf, run.next)?;
                     if n == 0 {
                         // Shrank meanwhile.
                         status.total = run.next;
@@ -1159,8 +1155,9 @@ fn display(path: &Path) -> String {
     crate::ssh::display_path(path)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub mod tests {
+    use std::os::fd::AsRawFd;
     use std::process::{Child, Command as Process, Stdio};
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 

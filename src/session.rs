@@ -38,7 +38,6 @@
 
 use std::fs::File;
 use std::io;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -207,8 +206,7 @@ impl Lock {
                 return None;
             }
         };
-        // SAFETY: a valid descriptor, owned by `file` for the call.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if file.try_lock().is_err() {
             log::info!("another Terminaal owns the session; starting fresh");
             return None;
         }

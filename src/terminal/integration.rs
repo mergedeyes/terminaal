@@ -601,13 +601,28 @@ fn names(path: &Path) -> impl Iterator<Item = String> + '_ {
 /// OSC 7's `file://host/path`, percent-decoded. Other schemes and
 /// relative paths are ignored.
 fn parse_cwd(uri: &[u8]) -> Option<ShellEvent> {
-    use std::os::unix::ffi::OsStringExt;
-
     let rest = uri.strip_prefix(b"file://")?;
     let slash = rest.iter().position(|&b| b == b'/')?;
     let host = String::from_utf8_lossy(&rest[..slash]).into_owned();
     let path = percent_decode(&rest[slash..]);
-    Some(ShellEvent::Cwd { host, path: PathBuf::from(std::ffi::OsString::from_vec(path)) })
+    Some(ShellEvent::Cwd { host, path: local_path(path) })
+}
+
+/// A decoded OSC 7 path: bytes as they are on Unix.
+#[cfg(unix)]
+fn local_path(path: Vec<u8>) -> PathBuf {
+    use std::os::unix::ffi::OsStringExt;
+    PathBuf::from(std::ffi::OsString::from_vec(path))
+}
+
+/// On Windows UTF-8, and `/C:/Users` is `C:/Users`.
+#[cfg(windows)]
+fn local_path(path: Vec<u8>) -> PathBuf {
+    let path = String::from_utf8_lossy(&path).into_owned();
+    match path.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => PathBuf::from(&path[1..]),
+        _ => PathBuf::from(path),
+    }
 }
 
 fn percent_decode(bytes: &[u8]) -> Vec<u8> {

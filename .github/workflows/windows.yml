@@ -1,0 +1,33 @@
+# Keeps the Windows port building: lints Terminaal for Windows, compiles
+# its tests and builds a release exe, kept as an artifact to try out. The
+# tests aren't run here yet -- several of them expect a Unix system.
+name: Windows
+
+on:
+  pull_request:
+  push:
+    branches: [main, feature/windows-port]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
+
+      - name: Compile the tests
+        run: cargo test --no-run --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminaal-x86_64-windows
+          path: target/release/terminaal.exe

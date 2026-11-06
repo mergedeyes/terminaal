@@ -11,8 +11,6 @@
 
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
@@ -29,6 +27,7 @@ use super::render::Renderer;
 use super::screen::{Key, Packet, Screen};
 use super::telnet::{self, Telnet};
 use crate::i18n::t;
+use crate::platform::{self, Handle, LocalStream, POLLHUP, POLLIN, POLLOUT, Pollable};
 use crate::terminal::listener::EventProxyListener;
 
 type SharedTerm = Arc<FairMutex<Term<EventProxyListener>>>;
@@ -46,7 +45,7 @@ enum Msg {
 
 pub struct Tn5250Handle {
     tx: Sender<Msg>,
-    wake: UnixStream,
+    wake: LocalStream,
 }
 
 impl Tn5250Handle {
@@ -69,7 +68,7 @@ impl Tn5250Handle {
 /// Start connecting in the background; the pane shows how it goes.
 pub fn spawn(target: Tn5250Target, term: SharedTerm, listener: EventProxyListener, size: WindowSize) -> io::Result<Tn5250Handle> {
     let (tx, rx) = mpsc::channel();
-    let (wake_tx, wake_rx) = UnixStream::pair()?;
+    let (wake_tx, wake_rx) = platform::pair()?;
     wake_tx.set_nonblocking(true)?;
     wake_rx.set_nonblocking(true)?;
     let codepage = Codepage::new(target.ccsid).unwrap_or_else(|| {
@@ -111,10 +110,10 @@ enum Transport {
 }
 
 impl Transport {
-    fn fd(&self) -> RawFd {
+    fn handle(&self) -> Handle {
         match self {
-            Transport::Plain(stream) => stream.as_raw_fd(),
-            Transport::Tls(stream) => stream.get_ref().as_raw_fd(),
+            Transport::Plain(stream) => stream.handle(),
+            Transport::Tls(stream) => stream.get_ref().handle(),
         }
     }
 
@@ -140,7 +139,7 @@ struct Worker {
     listener: EventProxyListener,
     parser: Processor,
     rx: Receiver<Msg>,
-    wake: UnixStream,
+    wake: LocalStream,
     renderer: Renderer,
     /// The 5250 screen once the server sent one; it stays after the
     /// connection ends, under the notice.
@@ -356,21 +355,16 @@ impl Worker {
             if processed >= MAX_READ_PER_LOOP {
                 continue;
             }
-            let mut events = libc::POLLIN;
+            let mut events = POLLIN;
             if !outgoing.is_empty() {
-                events |= libc::POLLOUT;
+                events |= POLLOUT;
             }
-            let mut fds = [
-                libc::pollfd { fd: transport.fd(), events, revents: 0 },
-                libc::pollfd { fd: self.wake.as_raw_fd(), events: libc::POLLIN, revents: 0 },
-            ];
-            // SAFETY: two valid pollfds; both descriptors outlive the call.
-            let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
-            if ready < 0 && io::Error::last_os_error().kind() != ErrorKind::Interrupted {
-                return Stop::Failed(t!("conn-io-error", err = io::Error::last_os_error().to_string()));
-            }
+            let revents = match platform::wait(&[(transport.handle(), events), (self.wake.handle(), POLLIN)], None) {
+                Ok(revents) => revents,
+                Err(err) => return Stop::Failed(t!("conn-io-error", err = err.to_string())),
+            };
             // The app's end of the wakeup socket is gone: the tab closed.
-            if fds[1].revents & libc::POLLHUP != 0 {
+            if revents[1] & POLLHUP != 0 {
                 return Stop::TabClosed;
             }
         }

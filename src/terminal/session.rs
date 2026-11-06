@@ -10,6 +10,7 @@
 //! Everything in `render/` and `input.rs` only ever sees `term`,
 //! `send_input` and `resize`, so it works the same for all of them.
 
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,9 +67,11 @@ enum Backend {
         /// A duplicate of the PTY master: the event loop thread owns the
         /// original, and `tcgetpgrp` on this one says which program has
         /// the terminal ([`TerminalSession::foreground_program`]).
+        #[cfg(unix)]
         master: OwnedFd,
         /// The shell itself -- it leads its own process group, so a
         /// different foreground group means a program is running.
+        #[cfg(unix)]
         shell_pid: u32,
     },
     Ssh(SshHandle),
@@ -97,7 +100,9 @@ impl TerminalSession {
             ..tty::Options::default()
         };
         let pty = tty::new(&pty_options, window_size(size, cell_width, cell_height), 0)?;
+        #[cfg(unix)]
         let master = pty.file().try_clone()?.into();
+        #[cfg(unix)]
         let shell_pid = pty.child().id();
         let shell_events = listener.clone();
         let graphics = Graphics::new(options.images, (cell_width, cell_height));
@@ -109,7 +114,11 @@ impl TerminalSession {
         // of the process; we don't need the join handle for the MVP.
         let _ = pty_event_loop.spawn();
 
-        Ok(Self { term, graphics, backend: Backend::Local { notifier, master, shell_pid } })
+        #[cfg(unix)]
+        let backend = Backend::Local { notifier, master, shell_pid };
+        #[cfg(windows)]
+        let backend = Backend::Local { notifier };
+        Ok(Self { term, graphics, backend })
     }
 
     /// Connect to `target` over SSH. Returns right away -- connecting,
@@ -200,6 +209,7 @@ impl TerminalSession {
     /// (`btop`, `vim`, ...). `None` for SSH -- that process lives on the
     /// server -- and for a shell without job control, whose jobs stay in
     /// its own process group.
+    #[cfg(unix)]
     pub fn foreground_program(&self) -> Option<String> {
         let Backend::Local { master, shell_pid, .. } = &self.backend else { return None };
         // SAFETY: `master` is an open file descriptor we own.
@@ -210,6 +220,12 @@ impl TerminalSession {
         let comm = std::fs::read_to_string(format!("/proc/{group}/comm")).ok()?;
         let name = comm.trim();
         (!name.is_empty()).then(|| name.to_string())
+    }
+
+    /// Not yet on Windows: ConPTY has no foreground process group.
+    #[cfg(windows)]
+    pub fn foreground_program(&self) -> Option<String> {
+        None
     }
 
     /// An IBM i 5250 screen rather than a shell.

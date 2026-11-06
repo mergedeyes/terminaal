@@ -457,10 +457,10 @@ pub fn probe(output: &str) -> System {
 
 /// Whether `program` is an executable file in one of `PATH`'s folders.
 fn on_path(program: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
     let Some(path) = std::env::var_os("PATH") else { return false };
     std::env::split_paths(&path).any(|dir| {
-        std::fs::metadata(dir.join(program)).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        let program = dir.join(program);
+        std::fs::metadata(&program).is_ok_and(|meta| crate::platform::is_executable(&program, &meta))
     })
 }
 
@@ -470,8 +470,7 @@ fn on_path(program: &str) -> bool {
 pub fn local() -> System {
     static LOCAL: LazyLock<System> = LazyLock::new(|| {
         let text = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-        // SAFETY: geteuid only reads the process's own id and can't fail.
-        let root = unsafe { libc::geteuid() } == 0;
+        let root = crate::platform::is_root();
         System {
             family: from_os_release(&text),
             root,

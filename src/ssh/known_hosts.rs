@@ -14,9 +14,8 @@
 //! it that replaces the old one only once it's complete.
 
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -24,6 +23,7 @@ use ssh2::{CheckResult, KnownHostFileKind, Session};
 
 use super::connection::{base64, base64_decode};
 use super::{SshTarget, ssh_dir};
+use crate::platform;
 
 /// One line of `known_hosts` that's about the host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,13 +126,13 @@ pub fn remove(path: &Path, remove: &[Entry]) -> io::Result<()> {
         .flat_map(|(_, bytes)| bytes.iter().copied())
         .collect();
 
-    let mode = fs::metadata(&path)?.permissions().mode() & 0o7777;
+    let mode = platform::mode(&fs::metadata(&path)?) & 0o7777;
     let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     let temp = path.with_file_name(format!(".{name}.terminaal-{}", std::process::id()));
     let written = (|| {
-        let mut file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
+        let mut file = platform::create_private_file(&temp)?;
         file.write_all(&kept)?;
-        file.set_permissions(fs::Permissions::from_mode(mode))?;
+        platform::set_file_mode(&file, mode)?;
         file.sync_all()?;
         fs::rename(&temp, &path)
     })();
@@ -202,8 +202,10 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn removing_leaves_every_other_byte_alone() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = temp_dir("remove");
         let path = file(&dir, &sample());
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
@@ -234,6 +236,7 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_file_stays_a_symlink() {
         let dir = temp_dir("symlink");

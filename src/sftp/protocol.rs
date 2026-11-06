@@ -81,17 +81,22 @@ pub struct Attrs {
     pub atime_mtime: Option<(u32, u32)>,
 }
 
+/// The file type bits of `permissions`: POSIX's, whatever the client runs on.
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFREG: u32 = 0o100000;
+
 impl Attrs {
     pub fn is_dir(&self) -> bool {
-        self.file_type() == Some(libc::S_IFDIR)
+        self.file_type() == Some(S_IFDIR)
     }
 
     pub fn is_file(&self) -> bool {
-        self.file_type() == Some(libc::S_IFREG)
+        self.file_type() == Some(S_IFREG)
     }
 
     fn file_type(&self) -> Option<u32> {
-        self.permissions.map(|mode| mode & libc::S_IFMT)
+        self.permissions.map(|mode| mode & S_IFMT)
     }
 
     pub fn mtime(&self) -> Option<u32> {
@@ -735,6 +740,7 @@ pub mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn permission_denied_is_told_apart() {
         let Some((_server, mut client)) = connect() else { return };

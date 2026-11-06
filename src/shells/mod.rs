@@ -56,10 +56,12 @@ impl InstalledShell {
     }
 
     fn from_parts(path: PathBuf, canonical: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        // `pwsh`, not `pwsh.exe`.
+        #[cfg(windows)]
+        let name = path.file_stem();
+        #[cfg(unix)]
+        let name = path.file_name();
+        let name = name.map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
         Self { kind: ShellKind::from_name(&name), name, path, canonical }
     }
 
@@ -77,6 +79,7 @@ const NOT_INTERACTIVE: &[&str] = &["nologin", "false", "git-shell", "systemd-hom
 
 /// All interactive shells from `/etc/shells` that actually exist,
 /// deduplicated, with the ones Terminaal can manage listed first.
+#[cfg(unix)]
 pub fn detect() -> Vec<InstalledShell> {
     let listing = std::fs::read_to_string("/etc/shells").unwrap_or_else(|err| {
         log::warn!("failed to read /etc/shells: {err}");
@@ -88,8 +91,26 @@ pub fn detect() -> Vec<InstalledShell> {
     shells
 }
 
+/// Windows has no list of shells: the usual places of the ones that
+/// come with it or are commonly installed, those that exist.
+#[cfg(windows)]
+pub fn detect() -> Vec<InstalledShell> {
+    let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+    let system = var("SystemRoot").unwrap_or_else(|| PathBuf::from(r"C:\Windows")).join("System32");
+    let programs = var("ProgramFiles").unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+    let candidates = [
+        programs.join(r"PowerShell\7\pwsh.exe"),
+        system.join(r"WindowsPowerShell\v1.0\powershell.exe"),
+        system.join("cmd.exe"),
+        programs.join(r"Git\bin\bash.exe"),
+        system.join("wsl.exe"),
+    ];
+    candidates.into_iter().filter(|path| path.is_file()).map(InstalledShell::new).collect()
+}
+
 /// The shell new tabs use unless told otherwise: the configured one,
 /// else `$SHELL`, else `/bin/sh`.
+#[cfg(unix)]
 pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
     let path = configured
         .map(Path::to_path_buf)
@@ -111,6 +132,20 @@ pub fn find(arg: &str, installed: &[InstalledShell]) -> Option<InstalledShell> {
     installed.iter().find(|shell| shell.name == arg).cloned()
 }
 
+/// On Windows: the configured one, else the first PowerShell found,
+/// else `%COMSPEC%` (cmd).
+#[cfg(windows)]
+pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
+    let path = configured
+        .map(Path::to_path_buf)
+        .filter(|p| p.is_file())
+        .or_else(|| detect().into_iter().map(|shell| shell.path).find(|p| p.file_stem().is_some_and(|n| n != "cmd")))
+        .or_else(|| std::env::var_os("COMSPEC").map(PathBuf::from).filter(|p| p.is_file()))
+        .unwrap_or_else(|| PathBuf::from("cmd.exe"));
+    InstalledShell::new(path)
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 fn parse_etc_shells(text: &str) -> Vec<PathBuf> {
     text.lines()
         .map(str::trim)
@@ -121,6 +156,7 @@ fn parse_etc_shells(text: &str) -> Vec<PathBuf> {
 }
 
 /// Keeps the first-listed path of each shell.
+#[cfg_attr(windows, allow(dead_code))]
 fn dedup(shells: Vec<InstalledShell>) -> Vec<InstalledShell> {
     let mut out: Vec<InstalledShell> = Vec::new();
     for shell in shells {

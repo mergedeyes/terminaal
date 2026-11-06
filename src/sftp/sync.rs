@@ -35,8 +35,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{self, Read};
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -48,6 +46,7 @@ use super::edit::{ServerHash, Watcher, parse_hash};
 use super::protocol::{self, Attrs};
 use super::session::{Channels, Command, Fatal, SftpClient, file_name, join, parent};
 use crate::i18n::t;
+use crate::platform;
 
 /// Quiet time after a local change before a live pair syncs.
 const LIVE_SETTLE: Duration = Duration::from_secs(1);
@@ -58,8 +57,11 @@ const BUSY_RETRY: Duration = Duration::from_secs(30);
 /// While copying, the record is saved at most this often.
 const SAVE_EVERY: Duration = Duration::from_secs(5);
 /// What a live pair's folders are watched for.
+#[cfg(unix)]
 const WATCH_MASK: u32 =
     libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO | libc::IN_MOVED_FROM | libc::IN_DELETE | libc::IN_CREATE;
+#[cfg(windows)]
+const WATCH_MASK: u32 = 0;
 
 /// Hashes the files named on stdin (one per line) on the server: a line
 /// `terminaal-hash <hash>` per file, the hash `-` if there's none (no
@@ -283,7 +285,7 @@ pub fn scan_local(root: &Path, exclude: &[String]) -> io::Result<Scan> {
                 scan.nodes.insert(path.clone(), Node::Dir);
                 dirs.push(path);
             } else if meta.is_file() {
-                let mode = meta.permissions().mode() & 0o7777;
+                let mode = platform::mode(&meta) & 0o7777;
                 scan.nodes.insert(path, Node::File { size: meta.len(), mtime: secs(meta.modified()), mode });
             }
         }
@@ -729,12 +731,11 @@ fn lock(path: &Path) -> io::Result<Option<File>> {
         std::fs::create_dir_all(dir)?;
     }
     let file = File::options().create(true).truncate(false).write(true).open(path)?;
-    // SAFETY: a plain syscall on our descriptor.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let err = io::Error::last_os_error();
-        return if err.kind() == io::ErrorKind::WouldBlock { Ok(None) } else { Err(err) };
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(err)) => Err(err),
     }
-    Ok(Some(file))
 }
 
 /// Names a pair's record: login and both folders.
@@ -1073,7 +1074,7 @@ impl Syncs {
             }
             (Ok(()), Finish::Download { local, mode }, _) => {
                 if let Some(mode) = mode
-                    && let Err(err) = std::fs::set_permissions(local, std::fs::Permissions::from_mode(*mode & 0o777))
+                    && let Err(err) = platform::set_mode(local, *mode & 0o777)
                 {
                     log::info!("sync: can't set the mode of {}: {err}", local.display());
                 }
@@ -1382,7 +1383,7 @@ impl Exec<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::super::protocol::tests::scratch;
     use super::super::session::tests::{Session, session, wait_for};

@@ -25,12 +25,15 @@ use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
+#[cfg(unix)]
 use winit::platform::wayland::WindowAttributesExtWayland;
+#[cfg(unix)]
 use winit::platform::x11::WindowAttributesExtX11;
 use winit::window::{CursorIcon, Icon, UserAttentionType, Window, WindowId};
 
 /// Wayland app_id and X11 WM_CLASS; a desktop entry named
 /// `terminaal.desktop` gets matched to the window through it.
+#[cfg(unix)]
 const APP_ID: &str = "terminaal";
 
 /// Window icon for X11 (`_NET_WM_ICON`), RGBA. Wayland has no window-icon
@@ -5076,14 +5079,7 @@ fn login_of(target: &SshTarget) -> (String, u16, String) {
 
 /// This machine's host name, as shells put it into OSC 7.
 fn hostname() -> String {
-    let mut buf = [0u8; 256];
-    // SAFETY: `buf` is valid for `buf.len()` bytes; gethostname writes at
-    // most that many, NUL-terminated unless truncated.
-    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
-        return String::new();
-    }
-    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    String::from_utf8_lossy(&buf[..len]).into_owned()
+    crate::platform::hostname()
 }
 
 /// A desktop notification that the command in the tab titled `tab`
@@ -5103,9 +5099,8 @@ fn notify_silence(tab: &str, after: Duration) {
 }
 
 fn desktop_notification(title: String, body: String) {
-    let spawned = std::process::Command::new("notify-send")
-        .args(["--app-name=Terminaal", "--icon=terminaal", "--"])
-        .args([title, body])
+    let Some(mut command) = crate::platform::notify_command(title, body) else { return };
+    let spawned = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -5121,19 +5116,17 @@ fn desktop_notification(title: String, body: String) {
 /// executable file isn't opened -- that could run it -- but the folder
 /// it's in.
 fn open_link(target: &links::Target) {
-    use std::os::unix::fs::PermissionsExt;
     let arg = match target {
         links::Target::Uri(uri) => uri.clone().into(),
         links::Target::Path(path) => {
-            let executable = path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0);
+            let executable = path.metadata().is_ok_and(|meta| crate::platform::is_executable(path, &meta));
             match path.parent().filter(|_| executable) {
                 Some(dir) => dir.as_os_str().to_owned(),
                 None => path.as_os_str().to_owned(),
             }
         }
     };
-    let spawned = std::process::Command::new("xdg-open")
-        .arg(&arg)
+    let spawned = crate::platform::open_command(&arg)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -5315,7 +5308,9 @@ impl ApplicationHandler<UserEvent> for App {
         // Without an app_id (Wayland) / WM_CLASS (X11) the dock can't tell
         // which app the window belongs to: COSMIC matched it to an unrelated
         // desktop entry, and clicking that never restored a minimized window.
+        #[cfg(unix)]
         let attrs = WindowAttributesExtWayland::with_name(attrs, APP_ID, APP_ID);
+        #[cfg(unix)]
         let attrs = WindowAttributesExtX11::with_name(attrs, APP_ID, APP_ID);
         // Without a layer shell the drop-down window can only ask: on top,
         // along the top edge (X11 takes that, Wayland places it itself).

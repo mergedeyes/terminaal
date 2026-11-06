@@ -1,4 +1,5 @@
 mod app;
+#[cfg_attr(windows, path = "blur_windows.rs")]
 mod blur;
 mod commands;
 mod config;
@@ -6,6 +7,7 @@ mod gpu;
 mod i18n;
 mod input;
 mod panes;
+mod platform;
 mod quake;
 mod render;
 mod session;

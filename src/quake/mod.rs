@@ -10,19 +10,53 @@
 //! On Wayland it's a layer surface ([`layer`]); elsewhere a normal window
 //! that shows and hides.
 
+#[cfg(unix)]
 pub mod keys;
+#[cfg_attr(windows, path = "layer_windows.rs")]
 pub mod layer;
 
-use std::io::{self, Read, Write};
+use std::io;
+#[cfg(unix)]
+use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
+use winit::dpi::PhysicalPosition;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+use winit::keyboard::ModifiersState;
+
+use crate::input::KeyInput;
+
+/// What happened to the drop-down window, for `app.rs`. Never on
+/// Windows, which has no layer surfaces.
+#[derive(Debug)]
+#[cfg_attr(windows, allow(dead_code))]
+pub enum LayerEvent {
+    /// A new size in physical pixels, or a new scale.
+    Resized { width: u32, height: u32, scale: f64 },
+    /// The compositor took the surface away (its output went, say).
+    Closed,
+    Focused(bool),
+    Modifiers(ModifiersState),
+    Key(KeyInput),
+    /// In physical pixels.
+    PointerMoved(PhysicalPosition<f64>),
+    PointerLeft,
+    Button(MouseButton, ElementState),
+    Wheel(MouseScrollDelta),
+}
+
 /// What goes over the socket.
+#[cfg(unix)]
 const TOGGLE: &[u8] = b"toggle\n";
 
 /// `$XDG_RUNTIME_DIR/terminaal`, else a folder of this user's in the temp dir.
+#[cfg(unix)]
 pub fn runtime_dir() -> PathBuf {
     match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|dir| dir.is_absolute()) {
         Some(dir) => dir.join("terminaal"),
@@ -31,7 +65,14 @@ pub fn runtime_dir() -> PathBuf {
     }
 }
 
+/// The user's own temp folder.
+#[cfg(windows)]
+pub fn runtime_dir() -> PathBuf {
+    std::env::temp_dir().join("terminaal")
+}
+
 /// How `--quake` went.
+#[cfg_attr(windows, allow(dead_code))]
 pub enum Start {
     /// A drop-down Terminaal runs already and was told to toggle.
     Toggled,
@@ -40,6 +81,7 @@ pub enum Start {
 }
 
 /// Toggle the drop-down Terminaal in `dir`, or become it.
+#[cfg(unix)]
 pub fn start(dir: &Path) -> io::Result<Start> {
     std::fs::create_dir_all(dir)?;
     let socket = dir.join("quake.sock");
@@ -68,12 +110,32 @@ pub fn start(dir: &Path) -> io::Result<Start> {
     }
 }
 
+/// Not there yet on Windows: a global hotkey (`RegisterHotKey`) would
+/// do it without a second process.
+#[cfg(windows)]
+pub fn start(_dir: &Path) -> io::Result<Start> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 /// The drop-down Terminaal's end: holds the lock and the socket.
+#[cfg(unix)]
 pub struct Toggle {
     listener: UnixListener,
     _lock: std::fs::File,
 }
 
+/// Never made on Windows ([`start`]).
+#[cfg(windows)]
+pub enum Toggle {}
+
+#[cfg(windows)]
+impl Toggle {
+    pub fn listen(self, _toggled: impl Fn() + Send + 'static) {
+        match self {}
+    }
+}
+
+#[cfg(unix)]
 impl Toggle {
     /// Call `toggled` for every `--quake` from now on, from a thread.
     pub fn listen(self, toggled: impl Fn() + Send + 'static) {
@@ -94,7 +156,7 @@ impl Toggle {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::sync::mpsc;
 

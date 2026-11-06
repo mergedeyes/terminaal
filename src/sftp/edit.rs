@@ -30,14 +30,19 @@
 //!   the same check -- once the session is attached again. Only the pasted command passes through the
 //!   user's shell -- whatever it is -- the paths only ever through `sh`.
 
+#[cfg(unix)]
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::ffi::CString;
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, PoisonError};
+#[cfg(unix)]
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -45,6 +50,7 @@ use sha2::{Digest, Sha256};
 use super::protocol::{self, Attrs, Client, open};
 use super::session::{Channels, Command, Fatal, file_name, join, parent};
 use crate::i18n::t;
+use crate::platform;
 
 /// Quiet time after a local change before it's uploaded.
 const SETTLE: Duration = Duration::from_millis(300);
@@ -243,7 +249,7 @@ impl Edits {
     pub fn default_root(label: &str) -> PathBuf {
         let base = match std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()) {
             Some(dir) => PathBuf::from(dir).join("terminaal"),
-            None => std::env::temp_dir().join(format!("terminaal-{}", unsafe { libc::getuid() })),
+            None => platform::user_temp_dir(),
         };
         let label: String = label.chars().map(|c| if c.is_alphanumeric() || "@.-_".contains(c) { c } else { '_' }).collect();
         base.join("edit").join(format!("{label}-{}-{}", std::process::id(), unique()))
@@ -332,11 +338,11 @@ impl Edits {
     /// A fresh 0700 folder for one file's local copy.
     fn local_path(&self, remote: &str) -> Result<PathBuf, String> {
         let dir = self.root.join(unique());
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|err| err.to_string())?;
+        platform::create_private_dir(&dir).map_err(|err| err.to_string())?;
         // `recursive` leaves existing parents as they are: make sure no one
         // else can look in.
         for folder in [&self.root, &dir] {
-            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).map_err(|err| err.to_string())?;
+            platform::set_mode(folder, 0o700).map_err(|err| err.to_string())?;
         }
         Ok(dir.join(file_name(remote)))
     }
@@ -735,7 +741,7 @@ fn unique() -> String {
 
 fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    let mut file = platform::create_private_file(path)?;
     file.write_all(data)
 }
 
@@ -751,16 +757,8 @@ fn write_in_place(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// desktop's default application.
 fn launch_editor(editor: Option<&str>, path: &Path) {
     let mut command = match editor.map(str::trim).filter(|editor| !editor.is_empty()) {
-        Some(editor) => {
-            let mut command = std::process::Command::new("/bin/sh");
-            command.arg("-c").arg(format!("exec {editor} \"$1\"")).arg("sh").arg(path);
-            command
-        }
-        None => {
-            let mut command = std::process::Command::new("xdg-open");
-            command.arg(path);
-            command
-        }
+        Some(editor) => platform::editor_command(editor, path),
+        None => platform::open_command(path.as_os_str()),
     };
     let spawned = command
         .stdin(std::process::Stdio::null())
@@ -910,6 +908,7 @@ pub fn sudo_script(purpose: SudoFor, dir: &str, target: &str, message: &str, exp
 /// `changed` gets a file that was written (closed after writing) or renamed
 /// into a watched folder, until it returns `false`. Folder sync
 /// ([`super::sync`]) watches for more ([`Watcher::with`]).
+#[cfg(unix)]
 pub(super) struct Watcher {
     fd: Arc<OwnedFd>,
     dirs: Arc<Mutex<HashMap<i32, PathBuf>>>,
@@ -919,6 +918,7 @@ pub(super) struct Watcher {
     stop: std::os::unix::net::UnixStream,
 }
 
+#[cfg(unix)]
 impl Watcher {
     fn new(changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
         Self::with("edit-watch", libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO, changed)
@@ -990,6 +990,7 @@ impl Watcher {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Watcher {
     fn drop(&mut self) {
         use std::io::Write;
@@ -998,6 +999,7 @@ impl Drop for Watcher {
 }
 
 /// The watch descriptor and file name of each event with a name.
+#[cfg(unix)]
 fn parse_events(mut buf: &[u8]) -> Vec<(i32, std::ffi::OsString)> {
     const HEADER: usize = std::mem::size_of::<libc::inotify_event>();
     let mut events = Vec::new();
@@ -1018,8 +1020,33 @@ fn parse_events(mut buf: &[u8]) -> Vec<(i32, std::ffi::OsString)> {
     events
 }
 
-#[cfg(test)]
+/// Not yet on Windows (`ReadDirectoryChangesW`): local copies aren't
+/// watched, so saving one doesn't upload it.
+#[cfg(windows)]
+pub(super) enum Watcher {}
+
+#[cfg(windows)]
+impl Watcher {
+    fn new(_changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+
+    pub(super) fn with(_name: &str, _mask: u32, _changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+
+    pub(super) fn add(&self, _dir: &Path) -> std::io::Result<()> {
+        match *self {}
+    }
+
+    pub(super) fn remove(&self, _dir: &Path) {
+        match *self {}
+    }
+}
+
+#[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
     use std::process::Command as Process;
 
     use super::super::protocol::tests::scratch;

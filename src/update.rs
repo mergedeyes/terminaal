@@ -11,18 +11,23 @@
 //! release page to point to. Downloads go through [`Fetch`], so the tests
 //! don't need the network.
 
+#[cfg(unix)]
 use std::fs::{File, OpenOptions};
+#[cfg(unix)]
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
+#[cfg(unix)]
 use sha2::{Digest, Sha256};
 
 /// Where the releases are.
 pub const REPO: &str = "mergedeyes/terminaal";
 /// A binary bigger than this isn't ours.
+#[cfg(unix)]
 const MAX_BINARY: u64 = 512 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -32,8 +37,15 @@ pub fn current() -> Version {
 }
 
 /// The release asset with the binary for this machine.
+#[cfg(unix)]
 pub fn asset_name() -> String {
     format!("terminaal-{}-linux", std::env::consts::ARCH)
+}
+
+/// Not published yet: until it is, every release looks current.
+#[cfg(windows)]
+pub fn asset_name() -> String {
+    format!("terminaal-{}-windows.exe", std::env::consts::ARCH)
 }
 
 /// A release version, `x.y.z`; a leading `v` (the tag) is fine.
@@ -172,6 +184,7 @@ pub fn check(fetch: &impl Fetch, current: Version) -> Result<Option<Release>, St
 
 /// Why an update couldn't be put in place.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(windows, allow(dead_code))]
 pub enum InstallError {
     /// No writing next to the binary (installed by the system's package
     /// manager, say): that's who updates it.
@@ -181,6 +194,7 @@ pub enum InstallError {
 }
 
 /// The SHA-256 at the start of a checksum file (`sha256sum` format).
+#[cfg(unix)]
 fn parse_checksum(text: &str) -> Option<[u8; 32]> {
     let hex = text.split_whitespace().next()?;
     if hex.len() != 64 {
@@ -197,6 +211,7 @@ fn parse_checksum(text: &str) -> Option<[u8; 32]> {
 /// is written next to `exe` first and renamed over it, so `exe` is either
 /// the old or the new binary, never half of one; the running process
 /// keeps the old one open.
+#[cfg(unix)]
 pub fn install(fetch: &impl Fetch, binary: &Binary, exe: &Path) -> Result<(), InstallError> {
     let failed = |err: String| InstallError::Failed(err);
     let dir = exe.parent().ok_or_else(|| failed(format!("{} has no folder", exe.display())))?;
@@ -217,6 +232,7 @@ pub fn install(fetch: &impl Fetch, binary: &Binary, exe: &Path) -> Result<(), In
 
 /// Fill `file` (at `staged`) with the checked download, executable like
 /// `exe`.
+#[cfg(unix)]
 fn stage(fetch: &impl Fetch, binary: &Binary, exe: &Path, file: &mut File, staged: &Path) -> Result<(), String> {
     let missing = |url: &str| format!("{url} is gone");
     let checksum = fetch.get(&binary.checksum_url, 4096)?.ok_or_else(|| missing(&binary.checksum_url))?;
@@ -236,6 +252,7 @@ fn stage(fetch: &impl Fetch, binary: &Binary, exe: &Path, file: &mut File, stage
 
 /// Start `exe` once this process has ended (within ten seconds): it then
 /// gets the session, whose lock this one still holds until it's gone.
+#[cfg(unix)]
 pub fn restart(exe: &Path) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
     let script = r#"i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done; exec "$0""#;
@@ -252,7 +269,19 @@ pub fn restart(exe: &Path) -> std::io::Result<()> {
         .map(drop)
 }
 
-#[cfg(test)]
+/// Not yet on Windows: a running program can't be replaced there, only
+/// renamed out of the way.
+#[cfg(windows)]
+pub fn install(_fetch: &impl Fetch, _binary: &Binary, _exe: &Path) -> Result<(), InstallError> {
+    Err(InstallError::Failed("updating isn't supported on Windows yet".into()))
+}
+
+#[cfg(windows)]
+pub fn restart(_exe: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
