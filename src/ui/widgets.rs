@@ -1,6 +1,6 @@
 //! Small egui building blocks shared by the sidebar sections.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use egui::{Align2, CornerRadius, FontId, Rect, RichText, Sense, Ui, pos2, vec2};
 
@@ -60,11 +60,11 @@ impl Status {
     }
 }
 
-/// `/home/jan/x` → `~/x`, for display.
+/// `/home/jan/x` → `~/x` (Windows: `~\x`), for display.
 pub fn tilde(path: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::platform::home_dir();
     match home.as_deref().and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) => format!("~/{}", rest.display()),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
         None => path.display().to_string(),
     }
 }

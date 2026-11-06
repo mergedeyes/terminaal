@@ -58,8 +58,23 @@ impl Language {
     }
 
     /// German for a German locale, English for everything else.
+    #[cfg(unix)]
     pub fn from_locale() -> Self {
         from_locale_vars(|name| std::env::var(name).ok())
+    }
+
+    /// The locale variables if one is set (MSYS, say), else the user's
+    /// display language.
+    #[cfg(windows)]
+    pub fn from_locale() -> Self {
+        let get = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+        if ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"].into_iter().any(|name| get(name).is_some()) {
+            return from_locale_vars(get);
+        }
+        // SAFETY: no arguments, can't fail.
+        let language = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+        // The primary language is the low 10 bits; 0x07 is LANG_GERMAN.
+        if language & 0x3ff == 0x07 { Self::German } else { Self::English }
     }
 
     fn index(self) -> usize {

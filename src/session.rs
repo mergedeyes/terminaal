@@ -163,11 +163,10 @@ impl Session {
     }
 }
 
-/// `$XDG_STATE_HOME/terminaal`, else `~/.local/state/terminaal`.
+/// `$XDG_STATE_HOME/terminaal`, else `~/.local/state/terminaal`
+/// (Windows: `%LOCALAPPDATA%\terminaal`).
 pub fn dir() -> Option<PathBuf> {
-    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|dir| dir.is_absolute());
-    let state = state.or_else(|| Some(PathBuf::from(std::env::var_os("HOME")?).join(".local/state")))?;
-    Some(state.join("terminaal"))
+    crate::platform::state_dir()
 }
 
 /// The host a saved SSH terminal logs in to: `host`'s login as `user`, or

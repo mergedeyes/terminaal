@@ -159,6 +159,11 @@ impl CommandsPanel {
         }
 
         match target.system {
+            // The built-in commands are Unix ones; a local Windows shell
+            // (PowerShell, cmd) has none of them.
+            _ if cfg!(windows) && target.host.is_none() => {
+                ui.label(weak(t!("cmd-windows-local")));
+            }
             // An SSH session that hasn't got to the probe yet.
             None => {
                 ui.label(weak(t!("cmd-system-probing")));

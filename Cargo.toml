@@ -63,9 +63,9 @@ wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 xkbcommon = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-# WSAPoll for the workers' sockets, local time, the Recycle Bin
-# (platform::windows); the version the tree already has.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Time", "Win32_UI_Shell"] }
+# WSAPoll for the workers' sockets, local time, the Recycle Bin, the UI
+# language (platform::windows, i18n); the version the tree already has.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_System_Time", "Win32_UI_Shell"] }
 
 # Text shaping/rasterization is the hot path in the render loop
 # (see the [timing] discussion) and ~10x slower unoptimized. These

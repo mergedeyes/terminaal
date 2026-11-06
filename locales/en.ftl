@@ -458,6 +458,7 @@ cmd-system-detect = The system is detected automatically again.
 cmd-system-probing = Detecting the system…
 cmd-system-unknown = System not recognized – the package commands stay hidden. You can set it in the settings under “Shell”.
 cmd-no-tab = No terminal tab open – commands need a shell.
+cmd-windows-local = On Windows the built-in commands are only there in SSH tabs – locally they'd be Unix commands that PowerShell and cmd don't know.
 cmd-run-hint = Runs right away: { $line }
 cmd-type-hint = Types into the prompt: { $line }
 cmd-new-tab-hint = Middle-click: in a new tab

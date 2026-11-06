@@ -154,7 +154,7 @@ pub struct FilesPanel {
 
 impl FilesPanel {
     pub fn new() -> Self {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        let home = crate::platform::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let mut panel = Self {
             local_dir: home.clone(),
             local_entries: Ok(Vec::new()),

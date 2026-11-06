@@ -438,11 +438,15 @@ fn parse_jump(spec: &str) -> Result<Host, String> {
 }
 
 pub fn local_user() -> String {
-    std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "root".into())
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        // Windows'.
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "root".into())
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from)
+    crate::platform::home_dir().filter(|h| !h.as_os_str().is_empty())
 }
 
 pub fn expand_tilde(path: &str) -> PathBuf {

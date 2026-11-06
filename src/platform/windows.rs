@@ -156,6 +156,24 @@ pub fn hostname() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_default()
 }
 
+/// The user's profile folder (`%USERPROFILE%`); `HOME` is rarely set on
+/// Windows. Windows' OpenSSH keeps `.ssh` there too.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE").filter(|dir| !dir.is_empty()).map(PathBuf::from)
+}
+
+/// Terminaal's settings, hosts, keys, snippets, themes:
+/// `%APPDATA%\terminaal`, roaming with the profile.
+pub fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").filter(|dir| !dir.is_empty()).map(|dir| PathBuf::from(dir).join("terminaal"))
+}
+
+/// What Terminaal keeps between runs on this machine (session, sync
+/// records): `%LOCALAPPDATA%\terminaal`.
+pub fn state_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").filter(|dir| !dir.is_empty()).map(|dir| PathBuf::from(dir).join("terminaal"))
+}
+
 /// A folder of Terminaal's in the temp dir, which is the user's own on
 /// Windows (`%LOCALAPPDATA%\Temp`).
 pub fn user_temp_dir() -> PathBuf {

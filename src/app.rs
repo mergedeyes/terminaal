@@ -509,7 +509,7 @@ fn pane_title(
         },
         (None, Some(title), _) => title.to_string(),
         (None, None, Some((host, path))) => {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let home = crate::platform::home_dir();
             integration::short_path(host, path, home.as_deref(), local_host)
         }
         (None, None, None) => default.to_string(),

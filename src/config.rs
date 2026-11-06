@@ -235,10 +235,10 @@ impl Default for Config {
 }
 
 impl Config {
-    /// `~/.config/terminaal`: the config, and the saved SSH hosts next to it.
+    /// `~/.config/terminaal` (Windows: `%APPDATA%\terminaal`): the
+    /// config, and the saved SSH hosts next to it.
     pub fn dir() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME")?;
-        Some(PathBuf::from(home).join(".config/terminaal"))
+        crate::platform::config_dir()
     }
 
     fn path() -> Option<PathBuf> {

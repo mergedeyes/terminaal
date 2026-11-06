@@ -135,7 +135,7 @@ pub(crate) fn trim_url<T>(term: &Term<T>, cells: RangeInclusive<Point>) -> (Rang
 /// `name` as an existing file or folder: `~/` expanded, relative to `cwd`.
 pub(crate) fn resolve(name: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     let path = match name.strip_prefix("~/").or(if name == "~" { Some("") } else { None }) {
-        Some(rest) => PathBuf::from(std::env::var_os("HOME")?).join(rest),
+        Some(rest) => crate::platform::home_dir()?.join(rest),
         None if name.starts_with('/') => PathBuf::from(name),
         None => cwd?.join(name),
     };

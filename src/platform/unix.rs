@@ -120,6 +120,25 @@ pub fn hostname() -> String {
     String::from_utf8_lossy(&buf[..len]).into_owned()
 }
 
+/// The user's home folder: `$HOME`.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Terminaal's settings, hosts, keys, snippets, themes:
+/// `~/.config/terminaal`.
+pub fn config_dir() -> Option<PathBuf> {
+    Some(home_dir()?.join(".config/terminaal"))
+}
+
+/// What Terminaal keeps between runs (session, sync records):
+/// `$XDG_STATE_HOME/terminaal`, else `~/.local/state/terminaal`.
+pub fn state_dir() -> Option<PathBuf> {
+    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|dir| dir.is_absolute());
+    let state = state.or_else(|| Some(home_dir()?.join(".local/state")))?;
+    Some(state.join("terminaal"))
+}
+
 /// A folder of this user's own in the temp dir (when there's no
 /// `$XDG_RUNTIME_DIR`).
 pub fn user_temp_dir() -> PathBuf {

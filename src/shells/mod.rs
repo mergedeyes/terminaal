@@ -168,7 +168,7 @@ fn dedup(shells: Vec<InstalledShell>) -> Vec<InstalledShell> {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from)
+    crate::platform::home_dir().filter(|h| !h.as_os_str().is_empty())
 }
 
 fn xdg_config_home() -> Option<PathBuf> {

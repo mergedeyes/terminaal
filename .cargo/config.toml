@@ -1,0 +1,6 @@
+# The C runtime linked into the exe (/MT): without it Windows wants
+# VCRUNTIME140.dll, which only comes with the Visual C++ Redistributable --
+# a fresh Windows doesn't have it. The C parts (libssh2, zlib) follow, as
+# the cc crate reads the target feature.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
