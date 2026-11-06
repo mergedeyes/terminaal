@@ -76,6 +76,17 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Time",
     "Win32_UI_Shell",
 ] }
+# OpenSSL for libssh2, built from source (feature `windows-openssl`).
+openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
+
+[features]
+default = ["windows-openssl"]
+# On Windows, libssh2 on OpenSSL rather than Windows' own CNG, which has no
+# Ed25519 -- neither for keys nor host keys. Building OpenSSL takes Perl
+# (Strawberry, not Git's) and nmake; `--no-default-features` builds without
+# it, for a quick try. Changes nothing elsewhere: Linux links the system's
+# OpenSSL anyway, the vendored one is only in the Windows table above.
+windows-openssl = ["dep:openssl-sys", "ssh2/openssl-on-win32"]
 
 # Text shaping/rasterization is the hot path in the render loop
 # (see the [timing] discussion) and ~10x slower unoptimized. These

@@ -139,6 +139,11 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(state.join("terminaal"))
 }
 
+/// Whether there's an SSH agent to ask: `$SSH_AUTH_SOCK` is set.
+pub fn agent_available() -> bool {
+    std::env::var_os("SSH_AUTH_SOCK").is_some()
+}
+
 /// A folder of this user's own in the temp dir (when there's no
 /// `$XDG_RUNTIME_DIR`).
 pub fn user_temp_dir() -> PathBuf {

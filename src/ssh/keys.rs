@@ -158,7 +158,7 @@ pub fn delete_files(files: &[PathBuf]) -> Result<(), String> {
 /// The keys in the SSH agent (`$SSH_AUTH_SOCK`), to add one to the store.
 /// Only lists them -- nothing gets signed, so the agent doesn't ask.
 pub fn agent_identities() -> Result<Vec<KeyInfo>, String> {
-    if std::env::var_os("SSH_AUTH_SOCK").is_none() {
+    if !crate::platform::agent_available() {
         return Err(t!("keystore-no-agent"));
     }
     let fail = |err: ssh2::Error| t!("keystore-agent-unreachable", err = err.to_string());

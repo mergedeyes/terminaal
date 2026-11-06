@@ -174,6 +174,13 @@ pub fn state_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").filter(|dir| !dir.is_empty()).map(|dir| PathBuf::from(dir).join("terminaal"))
 }
 
+/// Always worth asking: without `SSH_AUTH_SOCK` libssh2 looks for
+/// Pageant and Windows' OpenSSH agent (`\\.\pipe\openssh-ssh-agent`)
+/// itself.
+pub fn agent_available() -> bool {
+    true
+}
+
 /// A folder of Terminaal's in the temp dir, which is the user's own on
 /// Windows (`%LOCALAPPDATA%\Temp`).
 pub fn user_temp_dir() -> PathBuf {

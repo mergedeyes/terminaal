@@ -12,6 +12,10 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # OpenSSL for libssh2 is built from source (feature `windows-openssl`);
+      # its Configure needs a full Perl, which Git's isn't.
+      OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
     steps:
       - uses: actions/checkout@v4
 

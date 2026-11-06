@@ -916,7 +916,7 @@ impl Worker {
     fn try_agent(&mut self, session: &Session, user: &str, plan: &AuthPlan) -> (bool, usize) {
         let socket = match &plan.agent {
             AgentSocket::Off => return (false, 0),
-            AgentSocket::Env if std::env::var_os("SSH_AUTH_SOCK").is_none() => return (false, 0),
+            AgentSocket::Env if !crate::platform::agent_available() => return (false, 0),
             AgentSocket::Env => None,
             AgentSocket::Path(path) => Some(path),
         };
