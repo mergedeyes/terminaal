@@ -2,11 +2,13 @@
 //! grid, cursor, VT parser state) plus whatever feeds it bytes:
 //!
 //! - a local PTY running a shell, pumped by alacritty_terminal's own
-//!   event loop, or
-//! - an SSH channel, pumped by our worker thread in `ssh::connection`.
+//!   event loop,
+//! - an SSH channel, pumped by our worker thread in `ssh::connection`, or
+//! - an IBM i 5250 emulator (`tn5250`), which draws its screen into the
+//!   `Term` and takes the keys the pane sends.
 //!
 //! Everything in `render/` and `input.rs` only ever sees `term`,
-//! `send_input` and `resize`, so it works the same for both.
+//! `send_input` and `resize`, so it works the same for all of them.
 
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
@@ -27,6 +29,7 @@ use crate::ssh::forward::ForwardStatus;
 use crate::terminal::filtered_pty::FilteredPty;
 use crate::terminal::graphics::{Graphics, SharedGraphics};
 use crate::terminal::listener::EventProxyListener;
+use crate::tn5250::{self, Tn5250Handle, Tn5250Target};
 
 /// Terminal grid size, in cells. Implements `Dimensions` so it can be
 /// handed straight to `Term::new` / `Term::resize`.
@@ -69,6 +72,7 @@ enum Backend {
         shell_pid: u32,
     },
     Ssh(SshHandle),
+    Tn5250(Tn5250Handle),
 }
 
 impl TerminalSession {
@@ -125,12 +129,30 @@ impl TerminalSession {
         Ok(Self { term, graphics, backend: Backend::Ssh(handle) })
     }
 
+    /// Connect to an IBM i over TN5250. Returns right away, like SSH.
+    pub fn connect_tn5250(
+        listener: EventProxyListener,
+        target: Tn5250Target,
+        size: GridSize,
+        cell_width: f32,
+        cell_height: f32,
+        options: TermOptions,
+    ) -> std::io::Result<Self> {
+        // No images or clipboard from a 5250 screen; it draws itself.
+        let options = TermOptions { images: false, clipboard_write: false, ..options };
+        let term = new_term(&listener, size, options);
+        let graphics = Graphics::new(false, (cell_width, cell_height));
+        let handle = tn5250::spawn(target, term.clone(), listener, window_size(size, cell_width, cell_height))?;
+        Ok(Self { term, graphics, backend: Backend::Tn5250(handle) })
+    }
+
     /// Send raw bytes (already encoded by `input.rs`, or a reply to a
     /// PTY-write/color/size request from `app.rs`) to the shell.
     pub fn send_input(&self, bytes: Vec<u8>) {
         match &self.backend {
             Backend::Local { notifier, .. } => notifier.notify(bytes),
             Backend::Ssh(handle) => handle.send_input(bytes),
+            Backend::Tn5250(handle) => handle.send_input(bytes),
         }
     }
 
@@ -144,6 +166,7 @@ impl TerminalSession {
         match &mut self.backend {
             Backend::Local { notifier, .. } => notifier.on_resize(window_size),
             Backend::Ssh(handle) => handle.resize(window_size),
+            Backend::Tn5250(handle) => handle.resize(window_size),
         }
     }
 
@@ -151,7 +174,7 @@ impl TerminalSession {
     /// a local shell.
     pub fn forwards(&self) -> Vec<ForwardStatus> {
         match &self.backend {
-            Backend::Local { .. } => Vec::new(),
+            Backend::Local { .. } | Backend::Tn5250(_) => Vec::new(),
             Backend::Ssh(handle) => handle.forwards(),
         }
     }
@@ -167,7 +190,7 @@ impl TerminalSession {
     /// local shell.
     pub fn opener(&self) -> Option<crate::ssh::connection::Opener> {
         match &self.backend {
-            Backend::Local { .. } => None,
+            Backend::Local { .. } | Backend::Tn5250(_) => None,
             Backend::Ssh(handle) => Some(handle.opener()),
         }
     }
@@ -189,6 +212,11 @@ impl TerminalSession {
         (!name.is_empty()).then(|| name.to_string())
     }
 
+    /// An IBM i 5250 screen rather than a shell.
+    pub fn is_tn5250(&self) -> bool {
+        matches!(self.backend, Backend::Tn5250(_))
+    }
+
     /// A local shell rather than an SSH connection.
     pub fn is_local(&self) -> bool {
         matches!(self.backend, Backend::Local { .. })
@@ -201,6 +229,8 @@ impl TerminalSession {
         match &self.backend {
             Backend::Local { .. } => Target { system: Some(commands::local()), ..Target::default() },
             Backend::Ssh(handle) => handle.target(),
+            // An IBM i has none of the built-in commands' systems.
+            Backend::Tn5250(_) => Target::default(),
         }
     }
 

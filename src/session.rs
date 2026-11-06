@@ -33,6 +33,8 @@
 //! host = "web1"
 //! user = "admin"
 //! ```
+//!
+//! An IBM i pane is `kind = "tn5250"` with just `host`.
 
 use std::fs::File;
 use std::io;
@@ -90,6 +92,11 @@ pub enum SavedPane {
         /// The host's name in the sidebar.
         host: String,
         user: String,
+    },
+    /// An IBM i 5250 screen: signing on happens there, so only the host.
+    Tn5250 {
+        /// The host's name in the sidebar.
+        host: String,
     },
 }
 
@@ -234,6 +241,12 @@ mod tests {
                 },
                 SavedTab::Settings,
                 SavedTab::Files { host: "web1".into(), user: "admin".into(), dir: "/srv".into() },
+                SavedTab::Terminals {
+                    layout: Node::Leaf(0),
+                    focus: 0,
+                    zoomed: false,
+                    panes: vec![SavedPane::Tn5250 { host: "PUB400".into() }],
+                },
             ],
         }
     }
@@ -251,6 +264,7 @@ mod tests {
         layout.set_ratio(0, 0.333);
         assert_eq!(read, expected, "{text}");
         assert!(!text.contains("cwd = \"\""), "unset fields stay out: {text}");
+        assert!(text.contains("kind = \"tn5250\"\nhost = \"PUB400\""), "{text}");
     }
 
     #[test]
@@ -271,12 +285,15 @@ mod tests {
         let guide = include_str!("../docs/guides/sessions.md");
         let example = guide.split("```toml\n").nth(1).and_then(|rest| rest.split("```").next()).expect("example");
         let session = Session::parse(example).unwrap();
-        assert_eq!(session.tabs.len(), 3);
+        assert_eq!(session.tabs.len(), 4);
         let SavedTab::Terminals { layout, focus, panes, .. } = &session.tabs[0] else { panic!() };
         assert!(SavedTab::checked_layout(layout, panes.len()).is_some());
         assert_eq!(*focus, 1);
-        assert_eq!(session.tabs[1], SavedTab::Files { host: "web1".into(), user: "admin".into(), dir: "/var/log".into() });
-        assert_eq!(session.tabs[2], SavedTab::Settings);
+        let SavedTab::Terminals { layout, panes, .. } = &session.tabs[1] else { panic!() };
+        assert!(SavedTab::checked_layout(layout, panes.len()).is_some());
+        assert_eq!(panes[..], [SavedPane::Tn5250 { host: "PUB400".into() }]);
+        assert_eq!(session.tabs[2], SavedTab::Files { host: "web1".into(), user: "admin".into(), dir: "/var/log".into() });
+        assert_eq!(session.tabs[3], SavedTab::Settings);
     }
 
     #[test]

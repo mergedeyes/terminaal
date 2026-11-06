@@ -204,6 +204,31 @@ e.g. `tmux new -A -s main`.
 The server must allow it (`AllowAgentForwarding`), and the local agent socket must
 exist – the tab prints a line when either fails.
 
+## IBM i (5250)
+
+**Umlauts, `@`, `#` or brackets come out wrong.**
+The host's **Code page (CCSID)** doesn't match the system's language. Pick the
+one for your language – 273 or 1141 for German, for example; see
+[Code pages](guides/ibm-i-5250.md#code-pages).
+
+**"TLS connection to … failed".**
+The server doesn't speak TLS on that port (plain telnet is 23, TLS usually 992),
+or its certificate isn't trusted by your system.
+
+**The right or bottom of the screen is cut off.**
+A 5250 screen is 24 × 80 (27 × 132 when wide) and doesn't shrink. Make the pane
+bigger, hide the sidebar (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>), or
+make the font smaller (<kbd>Ctrl</kbd>+<kbd>-</kbd>).
+
+**Keys do nothing and the status line says `X SYSTEM`.**
+The server hasn't answered yet; wait for the screen. `X II` means a key wasn't
+allowed – the number says why; any key or <kbd>Ctrl</kbd>+<kbd>R</kbd> clears it.
+
+**Field− or Field Exit don't work.**
+Keypad <kbd>−</kbd> and <kbd>Ctrl</kbd>+<kbd>Enter</kbd> need the kitty keyboard
+protocol (**Settings → Terminal → Keyboard**). Without it use
+<kbd>Ctrl</kbd>+<kbd>K</kbd> for Field Exit.
+
 ## Files
 
 **My hosts/keys/snippets disappeared, or saving says the file is unreadable.**

@@ -9,6 +9,7 @@ same splits, and the tab you were in comes up in front.
 | --- | --- |
 | Local shell | The same shell, in the working directory it was last in |
 | SSH terminal | A new connection to the same host with the same login |
+| IBM i (5250) | A new connection to the same host, at its sign-on screen |
 | Split panes | The same layout, divider positions and focused pane; a maximized pane stays maximized |
 | Settings | The settings tab |
 | Files (SFTP) | The files tab over the restored terminal to that host, in the folder it showed |
@@ -20,7 +21,8 @@ starts in the folder it started in last time.
 SSH terminals connect again as if you had opened them from the sidebar.
 Passphrase and password prompts come up in their tabs, and changes you made
 to the host in the meantime apply. If a host was deleted or renamed, its
-terminal is left out. A files tab without its terminal is left out too.
+terminal is left out. A files tab without its terminal is left out too. An
+[IBM i tab](ibm-i-5250.md) comes back at its sign-on screen.
 
 What doesn't come back:
 
@@ -94,6 +96,14 @@ cwd = "/home/me/src"    # optional
 kind = "ssh"
 host = "web1"           # the host's name in the sidebar
 user = "admin"
+
+[[tab]]
+kind = "terminals"
+layout = 0
+
+[[tab.panes]]
+kind = "tn5250"         # an IBM i screen: just the host's name
+host = "PUB400"
 
 [[tab]]
 kind = "files"

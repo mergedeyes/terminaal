@@ -8,7 +8,7 @@ and none holds a password or passphrase.
 | File | What's in it | Who writes it |
 | --- | --- | --- |
 | [`config.toml`](#configtoml) | Options and shortcuts | You and the settings tab |
-| [`hosts.toml`](#hoststoml) | Saved SSH hosts | The SSH section (you may edit it) |
+| [`hosts.toml`](#hoststoml) | Saved SSH and IBM i hosts | The SSH section (you may edit it) |
 | [`keys.toml`](#keystoml) | Named SSH keys | The Keys section (you may edit it) |
 | [`snippets.toml`](#snippetstoml) | Your own commands | "Your commands" (you may edit it) |
 | `themes/*.toml` | Your color themes | You – see [Appearance](appearance.md) |
@@ -104,7 +104,10 @@ for the action names and key syntax.
 ## hosts.toml
 
 One `[[host]]` table per saved host. The keys of the per-host options are the
-`ssh_config` keywords in `snake_case`.
+`ssh_config` keywords in `snake_case`. An IBM i host
+(`protocol = "tn5250"`, see [IBM i green screens](ibm-i-5250.md)) uses only
+`name`, `host`, `port`, `color`, `theme` and its own keys `tls`, `ccsid`, `wide`
+and `device`.
 
 ```toml
 [[host]]
@@ -158,6 +161,17 @@ remote = "/srv/www"           # absolute, or relative to the login's home
 direction = "both"            # both, upload, download
 live = true                   # in the background, on every local change
 exclude = ["node_modules", "*.log"]
+
+# An IBM i 5250 screen instead of SSH
+[[host]]
+name = "PUB400"
+host = "pub400.com"
+port = 992                    # 23 for plain telnet
+protocol = "tn5250"           # Terminaal's own: ssh (default) or tn5250
+tls = true                    # telnet over TLS
+ccsid = 273                   # the screen's code page (default 37)
+wide = false                  # offer 27×132 screens too
+# device = "MYDEV01"          # display device to ask for; default: the server picks
 # delete_remote = true        # deletions may go to the server (upload/both)
 # delete_local = true         # … or come from it (download/both)
 ```

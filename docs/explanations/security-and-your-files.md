@@ -144,6 +144,18 @@ the releases controls the updates, as with most programs that update themselves.
 Off by default, as in OpenSSH. When on, anyone with root on that server can use
 your agent while you're connected – enable it only for servers you trust.
 
+## IBM i (5250)
+
+- **Plain telnet is unencrypted.** On port 23 your sign-on, password included,
+  crosses the network in the clear. Turn on **Encrypted (TLS)** (port 992)
+  where the server offers it; the certificate is checked against your system's.
+- **Nothing is stored:** you sign on on the server's screen, and Terminaal tells
+  the server only the terminal type, the code page and – if you set one – the
+  device name, never a user or password.
+- **What the server sends is checked:** addresses, field lengths and records
+  have limits, and a screen can't set your clipboard, show images or start
+  anything. Data it can't use is answered with an error instead.
+
 ## Tests
 
 Terminaal's tests never touch your real `~/.ssh` or config: UI tests run with

@@ -16,6 +16,7 @@ mod snippets;
 mod ssh;
 mod terminal;
 mod theme;
+mod tn5250;
 mod ui;
 mod update;
 mod window;
@@ -63,6 +64,8 @@ pub struct Cli {
     /// Open the first tab as this SSH connection instead of a local shell
     /// (`--connect`).
     pub connect: Option<Box<ssh::SshTarget>>,
+    /// ... or as this IBM i 5250 screen, when the host named is one.
+    pub ibm_i: Option<Box<tn5250::Tn5250Target>>,
     /// `-s`: the first tab's shell, instead of the configured default.
     pub shell: Option<InstalledShell>,
     /// `-c`: one line for the shell to run instead of starting an
@@ -79,7 +82,7 @@ impl Cli {
     /// nor save one -- the tabs are what the command line asked for, not
     /// what was open last time.
     pub fn one_off(&self) -> bool {
-        self.connect.is_some() || self.shell.is_some() || self.command.is_some()
+        self.connect.is_some() || self.ibm_i.is_some() || self.shell.is_some() || self.command.is_some()
     }
 }
 
@@ -199,14 +202,18 @@ fn resolve(flags: Flags) -> Result<Started, String> {
             })?)
         }
     };
-    let connect = match &flags.connect {
-        None => None,
-        Some(name) => Some(Box::new(connect_target(name, flags.command.as_deref())?)),
-    };
+    let (mut connect, mut ibm_i) = (None, None);
+    match &flags.connect {
+        None => {}
+        Some(name) => match connect_target(name, flags.command.as_deref())? {
+            Remote::Ssh(target) => connect = Some(target),
+            Remote::Tn5250(target) => ibm_i = Some(target),
+        },
+    }
     // Over SSH the line is what the server's shell runs (RemoteCommand);
     // locally it's what the first tab's shell runs.
-    let command = flags.command.filter(|_| connect.is_none());
-    Ok(Started::Run(Cli { connect, shell, command, hold: flags.hold }))
+    let command = flags.command.filter(|_| flags.connect.is_none());
+    Ok(Started::Run(Cli { connect, ibm_i, shell, command, hold: flags.hold }))
 }
 
 fn list_shells() {
@@ -215,9 +222,15 @@ fn list_shells() {
     }
 }
 
+enum Remote {
+    Ssh(Box<ssh::SshTarget>),
+    Tn5250(Box<tn5250::Tn5250Target>),
+}
+
 /// The saved -- or `~/.ssh/config` -- host called `name`, optionally
-/// `user@host`; `command` becomes its `RemoteCommand`.
-fn connect_target(name: &str, command: Option<&str>) -> Result<ssh::SshTarget, String> {
+/// `user@host`; `command` becomes its `RemoteCommand`. An IBM i host has
+/// no users here (signing on happens on its screen) and runs no command.
+fn connect_target(name: &str, command: Option<&str>) -> Result<Remote, String> {
     let catalog = ssh::Catalog::load()?;
     let (user, host_name) = match catalog.find(name) {
         Some(_) => (None, name),
@@ -229,6 +242,12 @@ fn connect_target(name: &str, command: Option<&str>) -> Result<ssh::SshTarget, S
     let host = catalog
         .find(host_name)
         .ok_or_else(|| t!("cli-unknown-host", host = host_name))?;
+    if host.is_tn5250() {
+        if command.is_some() {
+            return Err(t!("cli-command-not-for-5250", host = host_name));
+        }
+        return host.tn5250_target().map(|target| Remote::Tn5250(Box::new(target)));
+    }
     let host = match user {
         None => host.clone(),
         Some(user) => match host.login_index(user) {
@@ -240,7 +259,7 @@ fn connect_target(name: &str, command: Option<&str>) -> Result<ssh::SshTarget, S
     if let Some(line) = command {
         target.settings.remote_command = Some(line.to_string());
     }
-    Ok(target)
+    Ok(Remote::Ssh(Box::new(target)))
 }
 
 #[cfg(test)]

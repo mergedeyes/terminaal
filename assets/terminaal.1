@@ -34,7 +34,13 @@ or one tab with the default shell.
 .SH OPTIONS
 .TP
 .BI \-\-connect " " [ USER @] HOST
-Open the first tab as an SSH connection instead of a local shell.
+Open the first tab as an SSH connection instead of a local shell \(em or,
+for an IBM i host saved with
+.BR "protocol = \(dqtn5250\(dq" ,
+as its 5250 screen (no
+.IR USER ,
+no
+.BR \-c ).
 .I HOST
 is the name of a host saved in
 .I hosts.toml

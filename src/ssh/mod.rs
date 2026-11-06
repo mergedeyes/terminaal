@@ -11,6 +11,10 @@
 //! A host can have several logins (user + key); the first one is the
 //! default. Everything else a host can be configured with lives in
 //! [`options`].
+//!
+//! A saved host can also be an IBM i reached over TN5250 (`protocol =
+//! "tn5250"`): then only name, address, port, color/theme and the 5250
+//! settings count, and [`Host::tn5250_target`] stands in for the catalog.
 
 mod agent_forward;
 pub mod connection;
@@ -27,6 +31,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::i18n::t;
 use crate::sftp::sync::SyncPair;
+use crate::tn5250::{self, Tn5250Target};
 use options::{AddressFamily, HostKeyCheck, Options, Settings};
 
 /// `Include` nesting limit (OpenSSH uses 16 as well).
@@ -34,6 +39,22 @@ const MAX_INCLUDE_DEPTH: usize = 16;
 /// ProxyJump nesting limit -- also what stops a jump host that
 /// (indirectly) jumps via itself.
 const MAX_JUMP_DEPTH: usize = 8;
+
+/// How a host is reached.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    #[default]
+    Ssh,
+    /// An IBM i 5250 screen over telnet ([`crate::tn5250`]).
+    Tn5250,
+}
+
+impl Protocol {
+    fn is_ssh(&self) -> bool {
+        *self == Protocol::Ssh
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Host {
@@ -43,6 +64,21 @@ pub struct Host {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// SSH, or an IBM i (`tn5250`); Terminaal's own.
+    #[serde(default, skip_serializing_if = "Protocol::is_ssh")]
+    pub protocol: Protocol,
+    /// 5250: telnet over TLS (port 992).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tls: bool,
+    /// 5250: the screen's EBCDIC code page; unset: 37.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ccsid: Option<u16>,
+    /// 5250: 27×132 screens as well as 24×80.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wide: bool,
+    /// 5250: the device name to ask for; unset: the server picks one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
     /// Login name; empty means the local user name, like `ssh` does.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user: String,
@@ -126,6 +162,11 @@ impl Host {
             name: name.into(),
             host: host.into(),
             port: 22,
+            protocol: Protocol::Ssh,
+            tls: false,
+            ccsid: None,
+            wide: false,
+            device: None,
             user: String::new(),
             key: None,
             identities: Vec::new(),
@@ -187,6 +228,47 @@ impl Host {
     pub fn jump(&self) -> Option<&str> {
         self.proxy_jump.as_deref().map(str::trim).filter(|j| !j.is_empty() && !j.eq_ignore_ascii_case("none"))
     }
+
+    pub fn is_tn5250(&self) -> bool {
+        self.protocol == Protocol::Tn5250
+    }
+
+    /// Where a 5250 host connects to, checked: a code page there's a table
+    /// for, a device name IBM i takes, a valid color.
+    pub fn tn5250_target(&self) -> Result<Tn5250Target, String> {
+        let ccsid = self.ccsid.unwrap_or(tn5250::codepage::DEFAULT_CCSID);
+        if !tn5250::codepage::CCSIDS.contains(&ccsid) {
+            return Err(t!("host-bad-ccsid", name = &self.name, ccsid = ccsid));
+        }
+        let device = self.device.as_deref().map(str::trim).filter(|device| !device.is_empty());
+        if let Some(device) = device
+            && !valid_device_name(device)
+        {
+            return Err(t!("host-bad-device", name = &self.name));
+        }
+        let settings = self.options.settings(&|value: &str| value.to_string()).map_err(|err| format!("{}: {err}", self.name))?;
+        Ok(Tn5250Target {
+            label: self.name.clone(),
+            name: self.name.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            tls: self.tls,
+            ccsid,
+            wide: self.wide,
+            device: device.map(str::to_uppercase),
+            color: settings.color,
+            theme: settings.theme,
+        })
+    }
+}
+
+/// An IBM i object name: up to 10 of A-Z, 0-9, `#`, `$`, `@`, `_`, not
+/// starting with a digit or `_`.
+pub fn valid_device_name(name: &str) -> bool {
+    let valid = |c: char| c.is_ascii_alphanumeric() || matches!(c, '#' | '$' | '@' | '_');
+    (1..=10).contains(&name.len())
+        && name.chars().all(valid)
+        && name.chars().next().is_some_and(|c| !c.is_ascii_digit() && c != '_')
 }
 
 /// Everything a connection needs, resolved.
@@ -260,6 +342,9 @@ impl Catalog {
     }
 
     fn resolve(&self, host: &Host, depth: usize) -> Result<SshTarget, String> {
+        if host.is_tn5250() {
+            return Err(t!("catalog-not-ssh", name = &host.name));
+        }
         let user = if host.user.is_empty() { local_user() } else { host.user.clone() };
         let label = if host.port == 22 { format!("{user}@{}", host.host) } else { format!("{user}@{}:{}", host.host, host.port) };
         let expand = |value: &str| expand_tokens(value, &host.name, &host.host, &user, host.port);
@@ -798,7 +883,7 @@ mod tests {
     #[test]
     fn reads_the_hosts_example_in_the_reference() {
         let hosts = toml::from_str::<HostsFile>(reference_example("[[host]]")).unwrap().hosts;
-        assert_eq!(hosts.iter().map(|host| host.name.as_str()).collect::<Vec<_>>(), ["web1", "db1"]);
+        assert_eq!(hosts.iter().map(|host| host.name.as_str()).collect::<Vec<_>>(), ["web1", "db1", "PUB400"]);
         assert_eq!(hosts[0].logins.len(), 1);
         let db = &hosts[1];
         assert_eq!(db.proxy_jump.as_deref(), Some("web1"));
@@ -808,6 +893,8 @@ mod tests {
         for host in &hosts {
             host.options.settings(&|text| text.to_string()).unwrap();
         }
+        let ibm_i = hosts[2].tn5250_target().unwrap();
+        assert_eq!((ibm_i.port, ibm_i.tls, ibm_i.ccsid), (992, true, 273));
     }
 
     #[test]
@@ -1013,6 +1100,43 @@ Host *
         // Defaults aren't written.
         assert_eq!(text.matches("compression").count(), 1, "{text}");
         assert_eq!(toml::from_str::<HostsFile>(&text).unwrap().hosts, hosts);
+    }
+
+    #[test]
+    fn ibm_i_hosts_round_trip_and_resolve_to_5250_targets() {
+        let text = "[[host]]\nname = \"PUB400\"\nhost = \"pub400.com\"\nport = 992\nprotocol = \"tn5250\"\ntls = true\nccsid = 1141\nwide = true\ndevice = \"myDev1\"\ncolor = \"blue\"\n";
+        let hosts = toml::from_str::<HostsFile>(text).unwrap().hosts;
+        let host = &hosts[0];
+        assert!(host.is_tn5250());
+        let written = toml::to_string_pretty(&HostsFile { hosts: hosts.clone() }).unwrap();
+        assert_eq!(toml::from_str::<HostsFile>(&written).unwrap().hosts, hosts);
+        // SSH hosts don't grow the new keys.
+        let plain = toml::to_string_pretty(&HostsFile { hosts: vec![Host::new("a", "a.example")] }).unwrap();
+        assert!(!plain.contains("protocol") && !plain.contains("tls") && !plain.contains("ccsid"), "{plain}");
+
+        let target = host.tn5250_target().unwrap();
+        assert_eq!((target.host.as_str(), target.port, target.tls, target.ccsid, target.wide), ("pub400.com", 992, true, 1141, true));
+        assert_eq!(target.device.as_deref(), Some("MYDEV1"));
+        assert!(target.color.is_some());
+        // Neither a target for SSH nor a jump host.
+        let catalog = Catalog { saved: hosts.clone(), config: Vec::new(), keys: Vec::new() };
+        assert!(catalog.target(host).unwrap_err().contains("IBM-i-Host"));
+        let mut via = Host::new("via", "via.example");
+        via.proxy_jump = Some("PUB400".into());
+        assert!(catalog.target(&via).is_err());
+
+        let mut bad = host.clone();
+        bad.ccsid = Some(930);
+        assert!(bad.tn5250_target().unwrap_err().contains("930"));
+        bad.ccsid = None;
+        assert_eq!(bad.tn5250_target().unwrap().ccsid, 37);
+        for device in ["1ABC", "_A", "TOOLONGNAME", "A B"] {
+            bad.device = Some(device.into());
+            assert!(bad.tn5250_target().is_err(), "{device}");
+        }
+        for device in ["QPADEV0001", "A#$@_1"] {
+            assert!(valid_device_name(device), "{device}");
+        }
     }
 
     #[test]

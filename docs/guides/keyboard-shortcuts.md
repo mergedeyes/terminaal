@@ -98,5 +98,9 @@ tab_9 = []
   from <kbd>Tab</kbd> or <kbd>Esc</kbd> from <kbd>Alt</kbd>+<kbd>[</kbd>, and see
   keys being let go. A key bound to a Terminaal shortcut never reaches the
   program.
+- **IBM i (5250) tabs** turn keys into 5250 keys – <kbd>Esc</kbd> is
+  Attention, <kbd>Ctrl</kbd>+<kbd>R</kbd> Reset, <kbd>Shift</kbd>+<kbd>F1</kbd>
+  F13 and so on; see [the list](ibm-i-5250.md#keys). Terminaal's own shortcuts
+  still come first.
 - **Font zoom** isn't saved: it resets when Terminaal quits, or when you set a new
   size in the settings.

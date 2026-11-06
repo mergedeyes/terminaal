@@ -241,15 +241,30 @@ pub fn build_frame<T: EventListener>(
             });
         }
 
+        // Underlined by the program (SGR 4 and its kinds -- curly, dotted
+        // and dashed drawn straight, double as two lines), or as the link
+        // under the mouse or a hint.
+        let thickness = (cell_h / 16.0).round().max(1.0);
+        let underline = |quads: &mut Vec<QuadInstance>, lift: f32, color| {
+            quads.push(QuadInstance {
+                offset: [origin_x + col as f32 * cell_w, origin_y + (row + 1) as f32 * cell_h - thickness - lift],
+                size: [cell_w, thickness],
+                color: to_linear(color, 1.0),
+            });
+        };
         if search.link.is_some_and(|link| link.contains(&point))
             || (label.is_none() && search.hints.iter().any(|hint| hint.contains(&point)))
         {
-            let thickness = (cell_h / 16.0).round().max(1.0);
-            quads.push(QuadInstance {
-                offset: [origin_x + col as f32 * cell_w, origin_y + (row + 1) as f32 * cell_h - thickness],
-                size: [cell_w, thickness],
-                color: to_linear(fg, 1.0),
-            });
+            underline(quads, 0.0, fg);
+        } else if cell.flags.intersects(Flags::ALL_UNDERLINES) && !cell.flags.contains(Flags::HIDDEN) {
+            let color = match cell.underline_color() {
+                Some(color) if !selected && !matched => palette.resolve(color, content.colors),
+                _ => fg,
+            };
+            underline(quads, 0.0, color);
+            if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
+                underline(quads, 2.0 * thickness, color);
+            }
         }
 
         let ch = match label {
@@ -502,6 +517,40 @@ mod tests {
             assert!(cursor_quads(2, style).is_empty(), "{style:?}");
         }
         assert!(cursor_quads(0, CursorStyle::Hidden).is_empty());
+    }
+
+    /// Quads for `output` in a 20×2 terminal of 10×20 px cells, no cursor.
+    fn quads_for(output: &str) -> Vec<QuadInstance> {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::Processor;
+
+        use crate::terminal::GridSize;
+
+        let size = GridSize { columns: 20, screen_lines: 2 };
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new().advance(&mut term, output.as_bytes());
+        let palette = Palette::new(&crate::theme::Themes::builtin().get(None).terminal);
+        let geometry = GridGeometry { origin_x: 0.0, origin_y: 0.0, cell: CellMetrics { width: 10.0, height: 20.0 } };
+        let mut quads = Vec::new();
+        build_frame(&term, None, Highlights::default(), CursorStyle::Hidden, &palette, &mut quads, geometry);
+        quads
+    }
+
+    #[test]
+    fn underlined_text_gets_a_line_under_each_cell() {
+        assert!(quads_for("plain").is_empty());
+        // Blanks too: 5250 input fields are underlined runs of blanks.
+        let single = quads_for("\x1b[4mab  \x1b[0mc");
+        assert_eq!(single.len(), 4);
+        let thickness = (20.0f32 / 16.0).round();
+        for (col, quad) in single.iter().enumerate() {
+            assert_eq!(quad.offset, [col as f32 * 10.0, 20.0 - thickness]);
+            assert_eq!(quad.size, [10.0, thickness]);
+        }
+        assert_eq!(quads_for("\x1b[4:2mab").len(), 4, "double: two lines per cell");
+        assert_eq!(quads_for("\x1b[4:3mab").len(), 2, "curly: drawn straight");
+        assert!(quads_for("\x1b[4;8mab").is_empty(), "hidden text shows no line");
     }
 
     #[test]

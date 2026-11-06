@@ -24,6 +24,7 @@ use crate::shells::managed::{self, Entry, EntryKind};
 use crate::shells::{self, InstalledShell, ShellKind};
 use crate::shortcuts::{Action, KeyCombo};
 use crate::ssh::SshTarget;
+use crate::tn5250::Tn5250Target;
 use crate::ssh::forward::ForwardStatus;
 use crate::ui::keys_panel::KeysPanel;
 use crate::ui::ssh_panel::{SshData, SshPanel};
@@ -38,6 +39,8 @@ pub enum SidebarAction {
     /// Open a new tab connected to this host over SSH. Boxed: a target
     /// with all its settings dwarfs the other variants.
     Connect(Box<SshTarget>),
+    /// ... or to this IBM i, as a 5250 screen.
+    Connect5250(Box<Tn5250Target>),
     /// Switch the UI language -- `None`: follow the locale -- and persist
     /// that in the config.
     SetLanguage(Option<Language>),
