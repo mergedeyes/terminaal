@@ -782,6 +782,8 @@ struct AppState {
     focused: bool,
     /// This is the drop-down Terminaal (`--quake`).
     dropdown: bool,
+    /// The window was maximized when last looked at (`note_maximized`).
+    window_maximized: bool,
     /// Keys held down whose press went to terminals: the key and where it
     /// is, and the panes that got it (see `release_key`).
     pressed_keys: Vec<((Key, KeyLocation), Vec<usize>)>,
@@ -946,6 +948,7 @@ impl AppState {
             hostname: hostname(),
             focused: true,
             dropdown: quake,
+            window_maximized: config.maximized,
             pressed_keys: Vec::new(),
             prompt_labels: Labels::default(),
             links: links::Finder::default(),
@@ -4018,6 +4021,28 @@ impl AppState {
         self.window.request_redraw();
     }
 
+    /// Windows: note in `config.toml` (`maximized`) when the window got
+    /// maximized or restored, right away -- so the next start opens it
+    /// that way even if Terminaal doesn't end cleanly. Not for the
+    /// drop-down window. On Linux the desktop places the window.
+    fn note_maximized(&mut self) {
+        if !cfg!(windows) || self.dropdown {
+            return;
+        }
+        let Some(maximized) = self.window.winit().map(|window| window.is_maximized()) else { return };
+        // Only a change counts: a tick in the settings stays until the
+        // window itself is maximized or restored.
+        if maximized == self.window_maximized {
+            return;
+        }
+        self.window_maximized = maximized;
+        if maximized != self.config.maximized
+            && let Err(err) = self.config.save(Setting::Maximized(maximized))
+        {
+            log::warn!("failed to note the maximized window in config.toml: {err}");
+        }
+    }
+
     fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -4517,6 +4542,7 @@ impl AppState {
             | Setting::ScrollSelectFactor(_)
             | Setting::Scrollbar(_)
             | Setting::WindowSize { .. }
+            | Setting::Maximized(_)
             | Setting::Sidebar(_)
             | Setting::Splash(_)
             | Setting::CommandsRun(_)
@@ -5370,7 +5396,9 @@ impl ApplicationHandler<UserEvent> for App {
             // anyway -- a window with an alpha visual crashed Xwayland
             // (abort in Mesa's libgallium, COSMIC), taking every X11 app
             // down with it.
-            .with_window_icon(window_icon());
+            .with_window_icon(window_icon())
+            // Windows: as it was when last closed (`maximized`).
+            .with_maximized(cfg!(windows) && quake.is_none() && self.config.maximized);
         // Without an app_id (Wayland) / WM_CLASS (X11) the dock can't tell
         // which app the window belongs to: COSMIC matched it to an unrelated
         // desktop entry, and clicking that never restored a minimized window.
@@ -5525,7 +5553,10 @@ impl ApplicationHandler<UserEvent> for App {
                 state.save_session();
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => state.resize(size.width, size.height),
+            WindowEvent::Resized(size) => {
+                state.resize(size.width, size.height);
+                state.note_maximized();
+            }
             WindowEvent::Focused(focused) => {
                 state.focused = focused;
                 // The drop-down window as a plain window (no layer shell).

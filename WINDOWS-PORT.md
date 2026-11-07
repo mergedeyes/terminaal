@@ -80,7 +80,7 @@ All closed in code (2026-11-07); what's left is checking them on real Windows (W
 | # | Item |
 |---|---|
 | 21 | README: Windows install, requirements (Windows 10 1809+ for ConPTY), what differs, known limitations |
-| 22 | Guides: configuration (`quake_hotkey`, Windows paths), drop-down window (hotkey, Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY), architecture (`src/platform/`) |
+| 22 | Guides: configuration (`quake_hotkey`, `maximized`, Windows paths), drop-down window (hotkey, Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY), architecture (`src/platform/`) |
 | 23 | CLAUDE.md: Windows parts in "Aktueller Stand", module list, known problems |
 | 24 | Keep merging `terminaal/main` into the branch; **every new Linux feature adds a row here** — parity is a moving target |
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |

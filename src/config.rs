@@ -65,6 +65,9 @@ pub struct Config {
     /// Default window size (logical pixels).
     pub default_width: f64,
     pub default_height: f64,
+    /// Windows: open the window maximized. Noted whenever the window is
+    /// maximized or restored, so it starts the way it was left.
+    pub maximized: bool,
     /// Whether the cursor should blink at all.
     pub cursor_blink: bool,
     /// Blink half-period in milliseconds (time visible == time hidden).
@@ -209,6 +212,7 @@ impl Default for Config {
             scrollbar: true,
             default_width: 1000.0,
             default_height: 650.0,
+            maximized: false,
             cursor_blink: true,
             cursor_blink_interval_ms: 600,
             notifications: true,
@@ -498,6 +502,7 @@ impl Config {
             Setting::SelectPathSegments(on) => self.select_path_segments = on,
             Setting::Scrollbar(on) => self.scrollbar = on,
             Setting::WindowSize { width, height } => (self.default_width, self.default_height) = (width, height),
+            Setting::Maximized(on) => self.maximized = on,
             Setting::CursorBlink(on) => self.cursor_blink = on,
             Setting::CursorBlinkInterval(ms) => self.cursor_blink_interval_ms = ms,
             Setting::Notifications(on) => self.notifications = on,
@@ -568,6 +573,8 @@ pub enum Setting {
     Scrollbar(bool),
     /// Window size at start; both keys at once.
     WindowSize { width: f64, height: f64 },
+    /// Windows: start maximized.
+    Maximized(bool),
     CursorBlink(bool),
     CursorBlinkInterval(u64),
     /// Seconds a command has to run to be notified about; 0: never.
@@ -620,6 +627,7 @@ impl Setting {
                 set_value(doc, "default_width", float(width.round()));
                 set_value(doc, "default_height", float(height.round()));
             }
+            Self::Maximized(on) => set_value(doc, "maximized", on),
             Self::CursorBlink(on) => set_value(doc, "cursor_blink", on),
             Self::CursorBlinkInterval(ms) => set_value(doc, "cursor_blink_interval_ms", int(ms)),
             Self::Notifications(on) => set_value(doc, "notifications", on),
@@ -783,6 +791,7 @@ mod tests {
             Setting::CommandsWarned(true),
             Setting::PasteWarning(false),
             Setting::RestoreSession(false),
+            Setting::Maximized(true),
             Setting::UpdateCheck(false),
             Setting::QuakeHeight(40.4),
             Setting::QuakeHideOnUnfocus(false),
@@ -819,6 +828,8 @@ mod tests {
         assert!(!config.paste_warning);
         assert!(config.commands_warned);
         assert!(!config.restore_session);
+        assert!(config.maximized);
+        assert!(!Config::default().maximized);
         assert!(!config.update_check);
         assert_eq!(config.quake_height(), 40.0);
         assert!(!config.quake_hide_on_unfocus);

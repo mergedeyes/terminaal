@@ -368,6 +368,13 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
         moved = Some(true);
     }
     change(actions, moved, Setting::WindowSize { width, height });
+    // Only Windows lets a program open its window maximized; on Linux the
+    // desktop decides.
+    if cfg!(windows) {
+        let moved = checkbox(ui, t!("settings-maximized"), "maximized", config.maximized);
+        change(actions, moved.map(|_| true), Setting::Maximized(moved.unwrap_or(config.maximized)));
+        ui.label(weak(t!("settings-maximized-note")).size(11.0));
+    }
     ui.label(weak(t!("settings-startup-note")).size(11.0));
 
     ui.add_space(SECTION_GAP);
