@@ -11,7 +11,7 @@ visual polish last.
 
 Status as of 2026-11-07 (evening): W1 closed in code, first manual tests in a
 Windows 11 VM under way; W2 (setup, exe resources, release assets, updates
-through the setup) in code, waiting for the first CI setup and a VM pass.
+through the setup) in code, setup built by CI, waiting for a VM pass.
 Branch up to date with `terminaal/main` at `25ddcdb`.
 
 ## Progress log
@@ -24,6 +24,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`). All three confirmed in the VM |
 | 2026-11-07 | CI with the cache: under 3 minutes. Decided for W2: a real installer (see W2) |
 | 2026-11-07 | **W2 in code:** Inno Setup script (per user by default, all users optional, Start menu shortcut with AppUserModelID, Apps entry, drop-down window at sign-in, settings kept on uninstall unless asked), exe icon + version info via `build.rs` (also under cargo xwin), installed copies update by running the new setup silently, CI artifact + release assets. `TERMINAAL_UPDATE_URL` takes `file:///` for update tests in the VM. Setup compiled only in CI so far (running Inno Setup under Wine locally was blocked) |
+| 2026-11-07 | W2's first CI run green in 4:20 min: 319 tests on real Windows, the setup compiles without warnings in 8 s (10 MB, LZMA2). Setup, exe and an update test release (`~/Downloads/terminaal-update/`, tag v99.0.0) ready for the VM |
 
 ### How builds get into the VM
 
@@ -113,7 +114,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 | # | Item | Plan |
 |---|---|---|
-| 17 | Wine runs | All but one test pass under Wine (318 of 319 after W2); `glyphs_stay_on_their_cells` fails only because a bare prefix has no fonts — install a font into the throwaway prefix (or skip there). CI on real Windows: all passed before W2 (313); W2's run is still to come |
+| 17 | Wine runs | All but one test pass under Wine (318 of 319 after W2); `glyphs_stay_on_their_cells` fails only because a bare prefix has no fonts — install a font into the throwaway prefix (or skip there). CI on real Windows: all 319 pass (2026-11-07, with W2) |
 | 18 | SFTP / sync / edit end-to-end tests | Today `cfg(unix)` (need `sftp-server`). Run them on Windows against Win32-OpenSSH's `sftp-server.exe` (downloaded in CI), plus the `ReadDirectoryChangesW` watcher tests |
 | 19 | Windows unit tests | Done: agent pipe, process tree, Unix sockets, OSC 9;9, MSYS/Cygwin folders, console titles, exit code labels, update through the setup (staging the checked setup, its arguments, a copy outside the install is standalone, download per OS and install type, setup script/workflow/program in step). Open: hotkey key mapping, default font choice; finding an install in the registry (only in the VM — a test would write to the real HKCU) |
 | 20 | Manual pass in the VM | Checklist below, for every release candidate of the branch. Started 2026-11-07 (Windows 11 Insider): ticked items below |
