@@ -10,8 +10,10 @@ Order follows the project's own: functionality first, then install/UX, then
 visual polish last.
 
 Status as of 2026-11-07 (evening): W1 closed in code, first manual tests in a
-Windows 11 VM under way; W2 (setup, exe resources, release assets, updates
-through the setup) in code, setup built by CI, waiting for a VM pass.
+Windows 11 VM under way. **W2 done in the VM** for the setup (Program Files
+default and per user), updates through the setup and uninstall; left in W2:
+a few small checks (exe icon/details, taskbar grouping, toast sender, bare-exe
+update, setup options) and the first real release run. Next up: **W3 (look)**.
 Branch up to date with `terminaal/main` at `25ddcdb`.
 
 ## Progress log
@@ -24,6 +26,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`). All three confirmed in the VM |
 | 2026-11-07 | CI with the cache: under 3 minutes. Decided for W2: a real installer (see W2) |
 | 2026-11-07 | **W2 in code:** Inno Setup script (per user by default, all users optional, Start menu shortcut with AppUserModelID, Apps entry, drop-down window at sign-in, settings kept on uninstall unless asked), exe icon + version info via `build.rs` (also under cargo xwin), installed copies update by running the new setup silently, CI artifact + release assets. `TERMINAAL_UPDATE_URL` takes `file:///` for update tests in the VM. Setup compiled only in CI so far (running Inno Setup under Wine locally was blocked) |
+| 2026-11-07 | VM: the Program Files setup (CI run 42386830255) works: install for all users with UAC, update through the silent setup with UAC, uninstall. **W2 closed in the VM** apart from the small checks in the W2 table |
 | 2026-11-07 | VM: the first CI setup (per user) installed and updated itself through the setup from the `file:///` test release without a hitch. No SmartScreen prompt — expected, files from the `Z:` share carry no Mark of the Web; a browser download from GitHub will still get the warning |
 | 2026-11-07 | First VM look at the setup: it defaulted to `%LOCALAPPDATA%\Programs`. Changed: **Program Files for all users by default** (UAC), "only for me" stays offered on the first page |
 | 2026-11-07 | W2's first CI run green in 4:20 min: 319 tests on real Windows, the setup compiles without warnings in 8 s (10 MB, LZMA2). Setup, exe and an update test release (`~/Downloads/terminaal-update/`, tag v99.0.0) ready for the VM |
@@ -94,9 +97,9 @@ in-place swap.
 | # | Item | State |
 |---|---|---|
 | 9 | Exe icon + version info | Code: `build.rs` + `embed-resource`, checked in the cross build (`llvm-readobj`: icon group, `VERSIONINFO` 0.3.1). VM: open (Explorer icon, Properties → Details) |
-| 10 | Installer (counterpart of `install.sh`) | Code: `installer/terminaal.iss`, built by CI (artifact `terminaal-x86_64-windows-setup`). VM: open (install per user and for all users, Start menu, taskbar grouping, toast sender, Apps entry, drop-down at sign-in, uninstall with/without settings) |
-| 11 | Release assets | Code: `release.yml` publishes setup + `.sha256` next to the bare exe + `.sha256`; `update::Installation::asset` picks the setup for installed copies, the bare exe otherwise, only ever for its own OS (test `each_system_picks_only_its_own_download`). First real run with the next `v*` tag |
-| 12 | Updater location | Code: installed copies update through the setup (all users — the default — with a UAC prompt at each update, also when it runs on closing Terminaal; per user without prompt); bare copies swap in place; a hand copy in Program Files gets `update-not-writable-windows`. Tests: staging the checked setup, setup arguments (Wine). VM: open (update from a `file:///` release on `Z:`, Apps entry afterwards, decline UAC) |
+| 10 | Installer (counterpart of `install.sh`) | Done: `installer/terminaal.iss`, built by CI (artifact `terminaal-x86_64-windows-setup`). VM: install for all users (default) and per user, Start menu, Apps entry, uninstall confirmed. VM, still open: taskbar grouping with a pinned entry, toast sender "Terminaal", desktop shortcut and drop-down window at sign-in options |
+| 11 | Release assets | Code (open: first real run with a `v*` tag): `release.yml` publishes setup + `.sha256` next to the bare exe + `.sha256`; `update::Installation::asset` picks the setup for installed copies, the bare exe otherwise, only ever for its own OS (test `each_system_picks_only_its_own_download`). First real run with the next `v*` tag |
+| 12 | Updater location | Done (VM: per user without prompt, Program Files with UAC; bare-exe swap outside the install still to try): installed copies update through the setup (all users — the default — with a UAC prompt at each update, also when it runs on closing Terminaal; per user without prompt); bare copies swap in place; a hand copy in Program Files gets `update-not-writable-windows`. Tests: staging the checked setup, setup arguments (Wine). VM: open (update from a `file:///` release on `Z:`, Apps entry afterwards, decline UAC) |
 
 Not done: code signing (see Open decisions) — SmartScreen warns about the
 setup as about the bare exe. RM closing a running main window doesn't save
@@ -141,6 +144,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
 - Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards)
 - [x] Setup "only for me" (first CI setup, then still the default): no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Apps entry for this user only
+- [x] Setup default (all users) and update of it with UAC (2026-11-07, reported working)
 - [x] Update of the per-user install with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: offered, setup downloaded, installed silently, Terminaal back
 - Update details with the same test release: installed copy offers it, downloads the setup, "Restart now" asks UAC, installs silently and starts again (drop-down window comes back); "Later" + close installs too (UAC after closing); declining UAC keeps the old version; a per-user install updates without a prompt; bare exe outside still swaps in place
 - Uninstall from Settings → Apps: program and shortcuts gone; settings question (No keeps `%APPDATA%\terminaal`, Yes removes both folders)
