@@ -382,6 +382,9 @@ struct Pane {
     hold: bool,
     /// The status its program exited with, for that notice.
     exit_code: Option<i32>,
+    /// When its program started: one that fails within [`QUICK_FAILURE`]
+    /// keeps the pane as `--hold` does (`kept_after_exit`).
+    started: Instant,
     /// Takes part in the broadcast: input typed into one such terminal
     /// goes to all of them.
     broadcast: bool,
@@ -463,6 +466,18 @@ impl PaneActivity {
 
 /// How long output after a start or resize is ignored for activity.
 const ACTIVITY_GRACE: Duration = Duration::from_millis(1500);
+
+/// A program that fails this soon after its start keeps its pane open, so
+/// the reason it printed can be read (a shell that can't start, `wsl.exe`
+/// without a distribution, a host's failing `RemoteCommand`).
+const QUICK_FAILURE: Duration = Duration::from_secs(5);
+
+/// Whether a pane stays once its program ended: always with `--hold`,
+/// else when it ended with an error within [`QUICK_FAILURE`] of starting.
+/// A clean exit (`exit`, Ctrl+D) closes it however soon.
+fn kept_after_exit(hold: bool, ran_for: Duration, code: Option<i32>) -> bool {
+    hold || (ran_for < QUICK_FAILURE && code.is_some_and(|code| code != 0))
+}
 
 /// How long output has to hold still before a local pane looks up which
 /// program owns its PTY ([`AppState::check_programs`]).
@@ -571,8 +586,10 @@ impl Pane {
     /// `--hold`: whatever the pane ran has ended, but the pane stays --
     /// print how it ended where its output stopped, so a command that
     /// failed in a launcher-started window can still be read.
+    /// A pane kept because its program failed right away says so instead.
     fn hold_notice(&mut self) {
         let text = match self.exit_code {
+            Some(code) if !self.hold => t!("pane-failed-at-start", code = code),
             Some(code) => t!("cli-hold-exit-code", code = code),
             None => t!("cli-hold-exit"),
         };
@@ -1117,6 +1134,7 @@ impl AppState {
             scrollbar_until: None,
             hold: run.hold,
             exit_code: None,
+            started: Instant::now(),
             broadcast: false,
             clipboard_allowed: false,
             look,
@@ -5637,9 +5655,12 @@ impl ApplicationHandler<UserEvent> for App {
             // The shell exited (Ctrl+D, `exit`, the process dying, ...).
             // Closes that one pane, its tab with the last one; quits only
             // once that was the last tab.
-            TermEvent::Exit if pane.hold => {
-                pane.hold = false;
+            // Kept (`--hold`, or it failed right away): it says how it
+            // ended where its output stopped. Once.
+            TermEvent::Exit if kept_after_exit(pane.hold, pane.started.elapsed(), pane.exit_code) => {
                 pane.hold_notice();
+                pane.hold = false;
+                pane.exit_code = None;
                 state.window.request_redraw();
                 return;
             }
@@ -5656,8 +5677,9 @@ impl ApplicationHandler<UserEvent> for App {
                 state.note_activity(at);
             }
             TermEvent::Bell => state.ring_bell(at),
-            // Comes right before `Exit`, and only for a local shell:
-            // the status `hold_notice` shows.
+            // Comes right before `Exit` (locally, and over SSH when the
+            // server tells in time): the status `hold_notice` shows and
+            // `kept_after_exit` goes by.
             TermEvent::ChildExit(status) => pane.exit_code = status.code(),
             TermEvent::MouseCursorDirty => {}
         }
@@ -5671,6 +5693,20 @@ impl ApplicationHandler<UserEvent> for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn panes_whose_program_fails_right_away_stay() {
+        use super::{QUICK_FAILURE, kept_after_exit};
+        use std::time::Duration;
+        let soon = Duration::from_secs(1);
+        assert!(kept_after_exit(false, soon, Some(1)));
+        assert!(kept_after_exit(false, soon, Some(127)), "a shell that isn't there");
+        assert!(!kept_after_exit(false, soon, Some(0)), "a clean exit closes however soon");
+        assert!(!kept_after_exit(false, soon, None), "no status, no reason to stay");
+        assert!(!kept_after_exit(false, QUICK_FAILURE, Some(1)), "a failure later closes");
+        assert!(kept_after_exit(true, Duration::from_secs(3600), Some(0)), "--hold keeps it always");
+        assert!(kept_after_exit(true, soon, None));
+    }
+
     #[test]
     fn clicks_on_the_same_cell_in_quick_succession_count_up() {
         use super::{Click, MULTI_CLICK_INTERVAL};
