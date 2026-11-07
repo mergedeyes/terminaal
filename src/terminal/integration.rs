@@ -632,8 +632,23 @@ fn local_path(path: Vec<u8>) -> PathBuf {
     let path = String::from_utf8_lossy(&path).into_owned();
     match path.as_bytes() {
         [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => PathBuf::from(&path[1..]),
-        _ => PathBuf::from(path),
+        _ => PathBuf::from(windows_path(&path).unwrap_or(path)),
     }
+}
+
+/// A drive as Git Bash (MSYS: `/c/Users`) or Cygwin (`/cygdrive/c/Users`)
+/// writes it, the Windows way (`C:\Users`); `None` for anything else
+/// (`/usr/bin` is somewhere inside Git's folder).
+#[cfg_attr(unix, allow(dead_code))]
+fn windows_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/cygdrive").unwrap_or(path).strip_prefix('/')?;
+    let mut chars = rest.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    let tail = chars.as_str();
+    if !(tail.is_empty() || tail.starts_with('/')) {
+        return None;
+    }
+    Some(format!("{}:\\{}", drive.to_ascii_uppercase(), tail.trim_start_matches('/').replace('/', "\\")))
 }
 
 fn percent_decode(bytes: &[u8]) -> Vec<u8> {
@@ -836,6 +851,22 @@ mod tests {
         assert_eq!(events, [ShellEvent::Cwd { host: String::new(), path: PathBuf::from("C:\\Users\\Jan Ä") }]);
         assert_eq!(run(&[b"\x1b]9;9;\"D:\\\"\x07"]).1, [ShellEvent::Cwd { host: String::new(), path: "D:\\".into() }]);
         assert!(run(&[b"\x1b]9;9;\x07", b"\x1b]9;4;1;50\x07"]).1.is_empty(), "empty, or another OSC 9");
+    }
+
+    #[test]
+    fn msys_and_cygwin_drives_are_windows_paths() {
+        assert_eq!(windows_path("/c/Users/jan/src").as_deref(), Some(r"C:\Users\jan\src"));
+        assert_eq!(windows_path("/d").as_deref(), Some(r"D:\"));
+        assert_eq!(windows_path("/cygdrive/e/x y").as_deref(), Some(r"E:\x y"));
+        for other in ["/usr/bin", "/home/jan", "/", "relative", "/1/x"] {
+            assert_eq!(windows_path(other), None, "{other}");
+        }
+        // Git Bash's OSC 7, as a Windows tab gets it.
+        #[cfg(windows)]
+        assert_eq!(
+            run(&[b"\x1b]7;file://pc/c/Users/j%20n\x07"]).1,
+            [ShellEvent::Cwd { host: "pc".into(), path: PathBuf::from(r"C:\Users\j n") }]
+        );
     }
 
     #[test]

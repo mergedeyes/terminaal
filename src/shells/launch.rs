@@ -142,8 +142,15 @@ fi
 
 fn bash(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
     let rc = integration_dir()?.join("bashrc");
-    write_if_changed(&rc, &BASHRC.replace("@FILE@", &quote_posix(&file.to_string_lossy())))?;
-    Ok(Launch { args: vec!["--rcfile".into(), rc.to_string_lossy().into_owned()], ..Launch::plain(shell) })
+    write_if_changed(&rc, &BASHRC.replace("@FILE@", &quote_posix(&posix_path(file))))?;
+    Ok(Launch { args: vec!["--rcfile".into(), posix_path(&rc)], ..Launch::plain(shell) })
+}
+
+/// A path as bash takes it: on Windows (Git Bash, MSYS2) with `/` --
+/// `C:/Users/…` is understood everywhere, backslashes not always.
+fn posix_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    if cfg!(windows) { path.replace('\\', "/") } else { path.into_owned() }
 }
 
 const ZSHENV: &str = r##"# Von Terminaal erzeugt: gibt an deine eigene .zshenv weiter.
