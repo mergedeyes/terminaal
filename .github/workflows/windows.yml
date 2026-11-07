@@ -9,6 +9,11 @@ on:
     branches: [main, feature/windows-port]
   workflow_dispatch:
 
+# A newer push to the same branch makes a running build pointless.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
@@ -21,6 +26,14 @@ jobs:
 
       - name: Rust
         run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      # The dependencies, OpenSSL among them, compiled once and kept
+      # (key: Cargo.lock and the toolchain); without it every run built
+      # all of them twice, dev and release, ~25 minutes. Kept even when a
+      # step fails, so a red run doesn't throw the work away.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Clippy
         run: cargo clippy --all-targets --locked
