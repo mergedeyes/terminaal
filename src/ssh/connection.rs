@@ -604,18 +604,24 @@ impl Worker {
         }
         let previous = session.timeout();
         session.set_timeout(PROBE_TIMEOUT_MS);
-        let output = (|| -> Result<String, io::Error> {
+        let run = |command: &str| -> Result<String, io::Error> {
             let mut channel = session.channel_session()?;
-            channel.exec(commands::PROBE)?;
+            channel.exec(command)?;
             let mut output = String::new();
             channel.read_to_string(&mut output)?;
             let _ = channel.close();
             Ok(output)
-        })();
+        };
+        let system = run(commands::PROBE).map(|output| commands::probe(&output)).map(|system| {
+            if system.family != commands::Family::Unknown {
+                return system;
+            }
+            // Nothing a Unix shell would say: maybe a Windows server.
+            run(commands::WINDOWS_PROBE).ok().and_then(|output| commands::windows_probe(&output)).unwrap_or(system)
+        });
         session.set_timeout(previous);
-        match output {
-            Ok(output) => {
-                let system = commands::probe(&output);
+        match system {
+            Ok(system) => {
                 log::debug!("{}: system is {:?} (root: {})", self.target.label, system.family, system.root);
                 *self.system.lock().unwrap_or_else(PoisonError::into_inner) = Some(system);
             }

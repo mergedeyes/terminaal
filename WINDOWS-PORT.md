@@ -20,7 +20,7 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | Local terminal | ConPTY; shell-integration filter inside ConPTY reads; shells found: pwsh 7 (and preview), Windows PowerShell, cmd, Git Bash (machine or per-user), Nushell, WSL, plus `pwsh`/`nu` anywhere on the `PATH` (default: first non-cmd) |
 | Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications). Git Bash: the bash integration with `/` paths for `--rcfile` and the managed file; MSYS (`/c/…`) and Cygwin (`/cygdrive/c/…`) folders from OSC 7 become `C:\…`; the launcher's `usr\bin\bash` child counts as the shell. Untested in a real Git Bash. cmd: `PROMPT` set at launch wraps the user's own prompt (else `$P$G`) in OSC 133 A/B and sends the folder as OSC 9;9, which the filter now reads (all platforms); no C/D (cmd has no pre-exec hook): no durations, exit codes, notifications, output marks. Only through tests so far, not in a real cmd |
 | Sidebar | Aliases, functions and lines for PowerShell (profile-loaded file of Terminaal's own) |
-| Built-in commands | Systems `windows` (PowerShell) and `windows-cmd`: winget updates, disks, folder sizes, memory, processes, uptime, failed services, log errors, ports, addresses; usable for SSH hosts via `system` |
+| Built-in commands | Systems `windows` (PowerShell) and `windows-cmd`: winget updates, disks, folder sizes, memory, processes, uptime, failed services, log errors, ports, addresses; usable for SSH hosts via `system`, and recognized by themselves: when the Unix probe finds nothing, `echo %OS% $PSVersionTable` tells cmd (`windows-cmd`) from PowerShell (`windows`) — Linux builds get this too. Not yet against a real Windows OpenSSH server |
 | SSH | Agent auth (Pageant, Windows OpenSSH agent pipe), Ed25519 keys, ProxyCommand via `cmd /C`. Agent forwarding to named pipes (`ssh::agent_pipe`): Windows' OpenSSH agent when `SSH_AUTH_SOCK` is unset (also 1Password, Bitwarden, KeePassXC), any pipe in `IdentityAgent`/`ForwardAgent` (Pageant: the path `pageant --openssh-config` writes); a thread relays message by message between the pipe and a socket pair. Tested against a fake agent on a real pipe (Wine); not yet against a real server |
 | SFTP | Edit-and-sync-back and live folder sync with `ReadDirectoryChangesW`; excludes with `\` paths |
 | Unix-socket forwards | `AF_UNIX` (Windows 10 1803+) through `platform::UnixListener`/`UnixStream` (own WinSock wrapper, polled with `WSAPoll`): local forwards listening on a socket, targets that are sockets, stale sockets replaced (reparse tag `IO_REPARSE_TAG_AF_UNIX`), only our own file removed (NTFS file index); `C:\…` paths in forwards. Wine has no `AF_UNIX` (tests skip there); **needs a run on real Windows** (CI or VM) |
@@ -33,9 +33,10 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 ## W1 — Functional gaps (blocking the merge)
 
+All closed in code (2026-11-07); what's left is checking them on real Windows (W4). WSL moved to the follow-ups.
+
 | # | Gap | Linux has | Plan |
 |---|---|---|---|
-| 8 | Built-in commands over SSH to Windows | Probe recognizes the system | Probe falls back to recognizing a Windows server (cmd/PowerShell answer) → `windows-cmd`/`windows`, instead of needing `system` in the host. Benefits Linux too |
 
 ## W2 — Install, release, updates
 

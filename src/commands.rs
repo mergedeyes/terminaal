@@ -485,6 +485,25 @@ pub fn catalog(system: System, assume_yes: bool) -> Vec<Command> {
 /// `sh`, quoted so fish passes it on untouched.
 pub const PROBE: &str = "id -u; uname -s; sh -c 'printf tools:; for t in flatpak paru yay; do command -v $t >/dev/null 2>&1 && printf \" %s\" $t; done; echo'; cat /etc/os-release 2>/dev/null";
 
+/// Asked when [`PROBE`] told nothing: a Windows server, whose OpenSSH
+/// starts cmd (which takes `;` for part of a word, so nothing of
+/// `PROBE` runs) or PowerShell. cmd expands `%OS%` and leaves
+/// `$PSVersionTable` alone, PowerShell the other way round.
+pub const WINDOWS_PROBE: &str = "echo %OS% $PSVersionTable";
+
+/// Read [`WINDOWS_PROBE`]'s output: Windows with commands for the shell
+/// that answered, or `None` (anything else, a Unix shell's `%OS%`).
+pub fn windows_probe(output: &str) -> Option<System> {
+    let family = if output.contains("Windows_NT") && output.contains("$PSVersionTable") {
+        Family::WindowsCmd
+    } else if output.contains("PSVersion") {
+        Family::Windows
+    } else {
+        return None;
+    };
+    Some(System { family, ..System::default() })
+}
+
 /// Read [`PROBE`]'s output: the first line is the user id, the second the
 /// kernel, then `tools:` with the installed tools, the rest `os-release`.
 pub fn probe(output: &str) -> System {
@@ -565,7 +584,7 @@ pub fn from_os_release(text: &str) -> Family {
 
 #[cfg(test)]
 mod tests {
-    use super::{AurHelper, Builtin, Family, System, catalog, from_os_release, probe};
+    use super::{AurHelper, Builtin, Family, System, catalog, from_os_release, probe, windows_probe};
 
     #[test]
     fn reads_os_release() {
@@ -589,6 +608,19 @@ mod tests {
         assert_eq!(probe("501\nDarwin\n").family, Family::MacOs);
         assert_eq!(probe("0\nFreeBSD\n"), System { family: Family::FreeBsd, root: true, ..System::default() });
         assert_eq!(probe(""), System::default());
+    }
+
+    #[test]
+    fn windows_servers_are_told_by_their_shell() {
+        // cmd: `%OS%` expanded, the variable not.
+        let cmd = windows_probe("Windows_NT $PSVersionTable\r\n").unwrap();
+        assert_eq!(cmd, System { family: Family::WindowsCmd, ..System::default() });
+        // PowerShell: `%OS%` as it is, then the version table.
+        let powershell = "%OS%\r\n\r\nName                           Value\r\n----                           -----\r\nPSVersion                      5.1.19041.4648\r\n";
+        assert_eq!(windows_probe(powershell).unwrap().family, Family::Windows);
+        // A Unix shell (or nothing).
+        assert_eq!(windows_probe("%OS%\n"), None);
+        assert_eq!(windows_probe(""), None);
     }
 
     #[test]
