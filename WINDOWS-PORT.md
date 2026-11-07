@@ -30,13 +30,14 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 - Full build (with OpenSSL, so Ed25519 works): CI artifact `terminaal-x86_64-windows` → `~/Downloads/terminaal.exe`. Only CI can build it (OpenSSL needs Perl + nmake)
 - Setup: CI artifact `terminaal-x86_64-windows-setup` → `~/Downloads/terminaal-x86_64-windows-setup.exe`
 - Quick local build (no OpenSSL, no Ed25519): `cargo xwin build --release --target x86_64-pc-windows-msvc --no-default-features` → `~/Downloads/terminaal-no-openssl.exe`
-- The VM sees `~/Downloads` read-only through virtiofs (WinFsp), usually as `Z:`; copy the exe out before starting it
+- Update test release: `~/Downloads/terminaal-update/` with `latest.json` (assets as `file:///Z:/terminaal-update/…`), started with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`
+- The VM sees `~/Downloads` read-only through virtiofs (WinFsp), usually as `Z:`; copy the exe or setup out before starting it
 
 ## Done
 
 | Area | What works on Windows |
 |---|---|
-| Build & CI | `src/platform/` holds the OS differences (stream pairs: loopback TCP + `WSAPoll`; locks; permissions; links via `explorer.exe`; trash = Recycle Bin; local time). CI on `windows-latest` for the branch (and PRs, not `main` pushes until the merge): clippy, tests, release exe as artifact; dependencies cached (`Swatinem/rust-cache`): a run went from ~29 min to under 3 (clippy 35 s, tests 28 s, release build 52 s); a new `Cargo.lock` or Rust release fills the cache once more. A newer push cancels a running one. Release workflow builds a Windows exe on `v*` tags only |
+| Build & CI | `src/platform/` holds the OS differences (stream pairs: loopback TCP + `WSAPoll`; locks; permissions; links via `explorer.exe`; trash = Recycle Bin; local time). CI on `windows-latest` for the branch (and PRs, not `main` pushes until the merge): clippy, tests, release exe and setup as artifacts; dependencies cached (`Swatinem/rust-cache`): a run went from ~29 min to under 3 (clippy 35 s, tests 28 s, release build 52 s); a new `Cargo.lock` or Rust release fills the cache once more. A newer push cancels a running one. Release workflow builds the Windows exe and setup on `v*` tags only |
 | Startup | Window program without a console; `--help`/`--version`/errors/`RUST_LOG` go to the parent console (`AttachConsole`). Settings in `%APPDATA%\terminaal`, state in `%LOCALAPPDATA%\terminaal`. German UI from the Windows locale |
 | Local terminal | ConPTY; shell-integration filter inside ConPTY reads; shells found: pwsh 7 (and preview), Windows PowerShell, cmd, Git Bash (machine or per-user), Nushell, WSL, plus `pwsh`/`nu` anywhere on the `PATH` (default: first non-cmd) |
 | Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications). Git Bash: the bash integration with `/` paths for `--rcfile` and the managed file; MSYS (`/c/…`) and Cygwin (`/cygdrive/c/…`) folders from OSC 7 become `C:\…`; the launcher's `usr\bin\bash` child counts as the shell. Untested in a real Git Bash. cmd: `PROMPT` set at launch wraps the user's own prompt (else `$P$G`) in OSC 133 A/B and sends the folder as OSC 9;9, which the filter now reads (all platforms); no C/D (cmd has no pre-exec hook): no durations, exit codes, notifications, output marks. Only through tests so far, not in a real cmd |
@@ -78,7 +79,8 @@ that puts Terminaal in the Start menu and under Settings → Apps (with
 uninstall), not a script or `terminaal --install`. Settled the same day:
 **Inno Setup** (a `setup.exe`; both Inno Setup 6.7.1 and WiX 3.14 are on
 `windows-latest`, Inno makes per-user installs, the AppUserModelID and custom
-questions simple and its compiler runs under Wine), **per user by default with
+questions simple; its compiler would run under Wine, but installing it there
+was blocked, so only CI compiles the setup), **per user by default with
 all users optional**, and **updates of installed copies run the new setup
 silently** (the common practice, VS Code's user setup does the same: the
 setup keeps its own Apps entry, files and uninstall log in step, and only an
@@ -111,9 +113,9 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 | # | Item | Plan |
 |---|---|---|
-| 17 | Wine runs | All but one test pass under Wine; `glyphs_stay_on_their_cells` fails only because a bare prefix has no fonts — install a font into the throwaway prefix (or skip there). CI on real Windows: all 313 pass |
+| 17 | Wine runs | All but one test pass under Wine (318 of 319 after W2); `glyphs_stay_on_their_cells` fails only because a bare prefix has no fonts — install a font into the throwaway prefix (or skip there). CI on real Windows: all passed before W2 (313); W2's run is still to come |
 | 18 | SFTP / sync / edit end-to-end tests | Today `cfg(unix)` (need `sftp-server`). Run them on Windows against Win32-OpenSSH's `sftp-server.exe` (downloaded in CI), plus the `ReadDirectoryChangesW` watcher tests |
-| 19 | Windows unit tests | Done: agent pipe, process tree, Unix sockets, OSC 9;9, MSYS/Cygwin folders, console titles, exit code labels. Open: hotkey key mapping, default font choice |
+| 19 | Windows unit tests | Done: agent pipe, process tree, Unix sockets, OSC 9;9, MSYS/Cygwin folders, console titles, exit code labels, update through the setup (staging the checked setup, its arguments, a copy outside the install is standalone, download per OS and install type, setup script/workflow/program in step). Open: hotkey key mapping, default font choice; finding an install in the registry (only in the VM — a test would write to the real HKCU) |
 | 20 | Manual pass in the VM | Checklist below, for every release candidate of the branch. Started 2026-11-07 (Windows 11 Insider): ticked items below |
 
 ### Manual checklist (Windows VM)
@@ -143,8 +145,8 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 | # | Item |
 |---|---|
-| 21 | README: Windows install, requirements (Windows 10 1809+ for ConPTY), what differs, known limitations |
-| 22 | Guides: configuration (`quake_hotkey`, `maximized`, Windows paths), drop-down window (hotkey, Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY), architecture (`src/platform/`) |
+| 21 | README: Windows install with the setup (per user / all users, SmartScreen "More info → Run anyway", the bare exe as a portable alternative), requirements (Windows 10 1809+ for ConPTY), what differs, known limitations |
+| 22 | Guides: getting started / installation (setup, uninstall and the settings question, updates through the setup), configuration (`quake_hotkey`, `maximized`, Windows paths), drop-down window (hotkey, the setup's sign-in option or Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY, update setup log in `%TEMP%\terminaal\update`), architecture (`src/platform/`, `build.rs`, `installer/`). RELEASING.md already lists the Windows assets and the `file:///` update test |
 | 23 | CLAUDE.md: Windows parts in "Aktueller Stand", module list, known problems |
 | 24 | Keep merging `terminaal/main` into the branch; **every new Linux feature adds a row here** — parity is a moving target |
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |
@@ -153,6 +155,8 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 - **WSL integration** (moved out of W1 on 2026-11-07: Linux has no counterpart, so it isn't parity; WSL tabs already work as plain terminals, and fish ≥ 4 or Nushell inside send OSC 7/133 themselves). Would be: one entry per distro (`wsl -l -q`, UTF-16) — needs shells with arguments in config/session/`-s`; the distro's login shell with Terminaal's startup file (path via `wslpath`); folders `/mnt/c/…` ↔ `C:\…` and `\\wsl.localhost\<distro>\…`. Can't be tested under Wine or in a VM without nested virtualization
 - MSYS2/Cygwin shells (their bash needs the login environment, which `--rcfile` skips); `pwsh` installed from the Store (an app execution alias that `is_file` doesn't see)
+- Save the session when the Restart Manager closes a running Terminaal (setup over a running window): needs `WM_QUERYENDSESSION`/`WM_ENDSESSION`, which winit doesn't pass on (a window subclass would)
+- winget manifest pointing at the setup (also a way around SmartScreen for winget users)
 - Pageant found by itself for forwarding (its pipe name is derived from the user name and `CryptProtectMemory`), so `ForwardAgent yes` works with it without the `--openssh-config` path
 
 ## Not ported, by design
