@@ -175,6 +175,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 ## Follow-ups (not blocking)
 
+- A shell that ends with an error within 5 s of starting keeps its tab open with the exit status (as `--hold`), so its message can be read — seen with `wsl.exe` in the VM; a Linux feature too, on the main roadmap (CLAUDE.md, phase 15)
 - **WSL integration** (moved out of W1 on 2026-11-07: Linux has no counterpart, so it isn't parity; WSL tabs already work as plain terminals, and fish ≥ 4 or Nushell inside send OSC 7/133 themselves). Would be: one entry per distro (`wsl -l -q`, UTF-16) — needs shells with arguments in config/session/`-s`; the distro's login shell with Terminaal's startup file (path via `wslpath`); folders `/mnt/c/…` ↔ `C:\…` and `\\wsl.localhost\<distro>\…`. Can't be tested under Wine or in a VM without nested virtualization
 - MSYS2/Cygwin shells (their bash needs the login environment, which `--rcfile` skips); `pwsh` installed from the Store (an app execution alias that `is_file` doesn't see)
 - Save the session when the Restart Manager closes a running Terminaal (setup over a running window): needs `WM_QUERYENDSESSION`/`WM_ENDSESSION`, which winit doesn't pass on (a window subclass would)
