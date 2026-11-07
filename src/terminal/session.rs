@@ -69,9 +69,9 @@ enum Backend {
         /// the terminal ([`TerminalSession::foreground_program`]).
         #[cfg(unix)]
         master: OwnedFd,
-        /// The shell itself -- it leads its own process group, so a
-        /// different foreground group means a program is running.
-        #[cfg(unix)]
+        /// The shell itself -- on Unix it leads its own process group, so
+        /// a different foreground group means a program is running; on
+        /// Windows its child processes are what it runs.
         shell_pid: u32,
     },
     Ssh(SshHandle),
@@ -104,6 +104,8 @@ impl TerminalSession {
         let master = pty.file().try_clone()?.into();
         #[cfg(unix)]
         let shell_pid = pty.child().id();
+        #[cfg(windows)]
+        let shell_pid = pty.child_watcher().pid().map_or(0, std::num::NonZeroU32::get);
         let shell_events = listener.clone();
         let graphics = Graphics::new(options.images, (cell_width, cell_height));
         let pty = FilteredPty::new(pty, graphics.clone(), move |event| shell_events.send_shell(event))?;
@@ -117,7 +119,7 @@ impl TerminalSession {
         #[cfg(unix)]
         let backend = Backend::Local { notifier, master, shell_pid };
         #[cfg(windows)]
-        let backend = Backend::Local { notifier };
+        let backend = Backend::Local { notifier, shell_pid };
         Ok(Self { term, graphics, backend })
     }
 
@@ -222,10 +224,12 @@ impl TerminalSession {
         (!name.is_empty()).then(|| name.to_string())
     }
 
-    /// Not yet on Windows: ConPTY has no foreground process group.
+    /// On Windows: the newest program the shell started (ConPTY has no
+    /// foreground process group), see [`crate::platform::running_program`].
     #[cfg(windows)]
     pub fn foreground_program(&self) -> Option<String> {
-        None
+        let Backend::Local { shell_pid, .. } = &self.backend else { return None };
+        (*shell_pid != 0).then(|| crate::platform::running_program(*shell_pid)).flatten()
     }
 
     /// An IBM i 5250 screen rather than a shell.

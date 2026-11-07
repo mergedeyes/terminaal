@@ -17,6 +17,9 @@ use windows_sys::Win32::UI::Shell::{
     FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, SHFILEOPSTRUCTW, SHFileOperationW,
 };
 
+#[path = "process_windows.rs"]
+mod process;
+pub use process::running_program;
 #[path = "unix_socket_windows.rs"]
 mod unix_socket;
 pub use unix_socket::{UnixListener, UnixStream};

@@ -24,6 +24,7 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | SSH | Agent auth (Pageant, Windows OpenSSH agent pipe), Ed25519 keys, ProxyCommand via `cmd /C`. Agent forwarding to named pipes (`ssh::agent_pipe`): Windows' OpenSSH agent when `SSH_AUTH_SOCK` is unset (also 1Password, Bitwarden, KeePassXC), any pipe in `IdentityAgent`/`ForwardAgent` (Pageant: the path `pageant --openssh-config` writes); a thread relays message by message between the pipe and a socket pair. Tested against a fake agent on a real pipe (Wine); not yet against a real server |
 | SFTP | Edit-and-sync-back and live folder sync with `ReadDirectoryChangesW`; excludes with `\` paths |
 | Unix-socket forwards | `AF_UNIX` (Windows 10 1803+) through `platform::UnixListener`/`UnixStream` (own WinSock wrapper, polled with `WSAPoll`): local forwards listening on a socket, targets that are sockets, stale sockets replaced (reparse tag `IO_REPARSE_TAG_AF_UNIX`), only our own file removed (NTFS file index); `C:\…` paths in forwards. Wine has no `AF_UNIX` (tests skip there); **needs a run on real Windows** (CI or VM) |
+| Program in the tab title | `platform::running_program`: the shell's newest child process by creation time (Toolhelp32 snapshot), console hosts and `wslhost` skipped, children older than their parent ignored (reused PIDs), a child named like the shell taken as the shell behind a launcher (Git Bash). Same 250 ms poll as on Linux. Programs inside WSL stay invisible (they're Linux processes); PowerShell background jobs would show as `pwsh` |
 | Links & hints | File paths with drive letters (`C:\…`), runnable extensions open their folder instead |
 | Notifications, updates | Toast notifications; in-place update (running exe renamed to `.old`, cleaned up next start; restart via hidden PowerShell) |
 | Command line | `-c` with cmd, `-s` with a Windows path |
@@ -34,7 +35,6 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 | # | Gap | Linux has | Plan |
 |---|---|---|---|
-| 3 | **Running program in the tab title** | Foreground process group via `tcgetpgrp` | ConPTY has no process groups. Take the shell's PID (`ChildExitWatcher::pid`), find its newest live descendant with a Toolhelp32 snapshot (skip `conhost`/`OpenConsole`), name from the exe. Same 250 ms poll after output settles |
 | 4 | **Shell integration for cmd** | bash/zsh/fish scripts | `PROMPT` can emit escapes: `$e]133;D$e\$e]133;A$e\…$e]133;B$e\`; cwd via `$e]9;9;$P$e\` (ConEmu/Windows Terminal) — teach the filter OSC 9;9 as a raw-path OSC 7. No `C` (cmd has no pre-exec hook): no durations/notifications, exit code not available — document |
 | 5 | **Git Bash** | bash integration + managed `~/.bash_terminaal` | Verify the bash launcher under Git Bash (`--rcfile` with a Windows path), convert MSYS cwd (`/c/Users/…`) to `C:\Users\…` for new tabs and links |
 | 6 | **WSL** | — (Linux runs shells natively) | `wsl.exe` tab with integration: start the distro's login shell with Terminaal's startup file (path via `wslpath`), cwd `/mnt/c/…` ↔ `C:\…`, `\\wsl$\<distro>\…` for Linux paths; one entry per installed distro (`wsl -l -q`) |
