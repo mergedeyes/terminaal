@@ -19,7 +19,8 @@ Windows 11 VM under way. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-06 | Port started: builds for Windows, platform layer, ConPTY, PowerShell integration, SSH agent + Ed25519, SFTP watching, notifications, updates, release exe in CI |
 | 2026-11-07 | Roadmap written. Drop-down window with global shortcut, default font. **W1 closed in code:** agent forwarding to named pipes, Unix-socket forwards, program in the tab title, cmd integration, Git Bash, more shells, Windows SSH servers recognized (WSL moved to follow-ups) |
 | 2026-11-07 | CI on the branch green on real Windows (313 tests); dependency cache added to the Windows workflow |
-| 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`) |
+| 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`). All three confirmed in the VM |
+| 2026-11-07 | CI with the cache: under 3 minutes. Decided for W2: a real installer (see W2) |
 
 ### How builds get into the VM
 
@@ -31,7 +32,7 @@ Windows 11 VM under way. Branch up to date with `terminaal/main` at `25ddcdb`.
 
 | Area | What works on Windows |
 |---|---|
-| Build & CI | `src/platform/` holds the OS differences (stream pairs: loopback TCP + `WSAPoll`; locks; permissions; links via `explorer.exe`; trash = Recycle Bin; local time). CI on `windows-latest` for the branch (and PRs, not `main` pushes until the merge): clippy, tests, release exe as artifact; dependencies cached (`Swatinem/rust-cache`, was ~28 min a run — saving to be measured on the next run), a newer push cancels a running one. Release workflow builds a Windows exe on `v*` tags only |
+| Build & CI | `src/platform/` holds the OS differences (stream pairs: loopback TCP + `WSAPoll`; locks; permissions; links via `explorer.exe`; trash = Recycle Bin; local time). CI on `windows-latest` for the branch (and PRs, not `main` pushes until the merge): clippy, tests, release exe as artifact; dependencies cached (`Swatinem/rust-cache`): a run went from ~29 min to under 3 (clippy 35 s, tests 28 s, release build 52 s); a new `Cargo.lock` or Rust release fills the cache once more. A newer push cancels a running one. Release workflow builds a Windows exe on `v*` tags only |
 | Startup | Window program without a console; `--help`/`--version`/errors/`RUST_LOG` go to the parent console (`AttachConsole`). Settings in `%APPDATA%\terminaal`, state in `%LOCALAPPDATA%\terminaal`. German UI from the Windows locale |
 | Local terminal | ConPTY; shell-integration filter inside ConPTY reads; shells found: pwsh 7 (and preview), Windows PowerShell, cmd, Git Bash (machine or per-user), Nushell, WSL, plus `pwsh`/`nu` anywhere on the `PATH` (default: first non-cmd) |
 | Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications). Git Bash: the bash integration with `/` paths for `--rcfile` and the managed file; MSYS (`/c/…`) and Cygwin (`/cygdrive/c/…`) folders from OSC 7 become `C:\…`; the launcher's `usr\bin\bash` child counts as the shell. Untested in a real Git Bash. cmd: `PROMPT` set at launch wraps the user's own prompt (else `$P$G`) in OSC 133 A/B and sends the folder as OSC 9;9, which the filter now reads (all platforms); no C/D (cmd has no pre-exec hook): no durations, exit codes, notifications, output marks. Only through tests so far, not in a real cmd |
@@ -66,11 +67,18 @@ All closed in code (2026-11-07); what's left is checking them on real Windows (W
 
 ## W2 — Install, release, updates
 
+**Decided 2026-11-07: a real installer**, like other Windows programs — a setup
+that puts Terminaal in the Start menu and under Settings → Apps (with
+uninstall), not a script or `terminaal --install`. Still to settle with the
+user: the tool (Inno Setup `setup.exe` vs. WiX/MSI), per-user (no admin) vs.
+machine-wide, and how in-place updates and the installer's registration
+(version shown under Apps) stay in step.
+
 | # | Item | Plan |
 |---|---|---|
 | 9 | Exe icon + version info | Resource via `build.rs` (`embed-resource`); must also build in the `cargo xwin` cross-check. Window icon is already set at runtime |
-| 10 | Install / uninstall (counterpart of `install.sh`) | Per-user, no admin: `%LOCALAPPDATA%\Programs\Terminaal\terminaal.exe`, Start-menu shortcut with AppUserModelID (taskbar grouping, toast sender), optional Startup entry for the drop-down window; uninstall removes them. Form: `install.ps1` in a release zip, or `terminaal --install/--uninstall` |
-| 11 | Release assets | zip (exe, install script, docs) + `.sha256`; the bare exe + `.sha256` for updates. Check the update check picks the asset for the running OS only |
+| 10 | Installer (counterpart of `install.sh`) | A real setup built in CI: per-user by default (`%LOCALAPPDATA%\Programs\Terminaal`, no admin), Start-menu shortcut with AppUserModelID (taskbar grouping, toast sender), entry under Settings → Apps with uninstall, optional Startup entry for the drop-down window. Uninstall removes the program and its shortcuts, never the user's settings unless asked |
+| 11 | Release assets | The setup + `.sha256`; the bare exe + `.sha256` for in-place updates. Check the update check picks the asset for the running OS only |
 | 12 | Updater location | Update into the install folder (writable per-user); `NotWritable` path tested for a Program Files install |
 
 ## W3 — Look (last, as on Linux)
@@ -96,8 +104,8 @@ All closed in code (2026-11-07); what's left is checking them on real Windows (W
 - [x] Starts on a fresh Windows 11, German UI
 - [x] PowerShell 5.1 tab: prompt marks, durations (`5,2 s`), `✘` exit codes
 - [x] Sidebar: shells (powershell, cmd, wsl), PowerShell aliases/functions/lines, built-in commands for Windows (winget)
-- [x] Title after winget (fixed), hex exit codes (fixed) — fixes to be confirmed in the VM
-- [ ] Start maximized (new), splash, settings saved/kept, English
+- [x] Title after winget, hex exit codes, start maximized (fixed and confirmed)
+- [ ] Splash, settings saved/kept, English
 - Typing incl. AltGr characters (`@ { [ ] } \ | ~`) on a German layout, dead keys, Ctrl/Alt shortcuts, Kitty keyboard in Neovim
 - PowerShell, pwsh, cmd, Git Bash, WSL tabs; prompt marks, exit codes, new tab in the same folder, `-c`, `-s`, `--hold`
 - Splits, tabs (drag), search, vi mode, hints, links (URL, `C:\` path), selection/copy/paste, paste warning, OSC 52, images (kitty `icat` over SSH)
@@ -139,4 +147,4 @@ All closed in code (2026-11-07); what's left is checking them on real Windows (W
 
 - **Code signing:** unsigned exes trigger SmartScreen ("Windows protected your PC") on download. Signing costs money/yearly; alternative is documenting "More info → Run anyway" and a winget manifest later.
 - **System theme (W3 #16):** required for parity, or is COSMIC-sync Linux-only?
-- **Installer form (W2 #10):** script in a zip vs. `terminaal --install` vs. MSI/winget.
+- **Installer tool (W2 #10):** decided: a real installer. Open: Inno Setup vs. WiX/MSI, per-user vs. machine-wide, updates vs. the installer's registration.
