@@ -12,8 +12,8 @@ update at its next start ([Updates](docs/guides/updates.md)).
    suffix (`1.0.0-rc1`) are never offered as updates.
 2. **Bump it** in `Cargo.toml` (`version = "0.2.0"`), then `cargo build` so
    `Cargo.lock` follows, and run `cargo test` and `cargo clippy --all-targets`.
-   The workflow doesn't run the tests (some need tools only your machine has,
-   like `/usr/lib/ssh/sftp-server`).
+   The workflow runs them again on Linux and Windows, but finding a failure
+   there costs a new tag.
 3. **Commit and merge** that into `main` as usual (a PR "Release 0.2.0").
 4. **Tag and push the tag** from an up-to-date `main`:
 
@@ -25,8 +25,11 @@ update at its next start ([Updates](docs/guides/updates.md)).
 
    The tag must be `v` plus exactly the version in `Cargo.toml`; otherwise the
    workflow stops before building.
-5. **Watch it** under *Actions* on GitHub (about ten minutes). It publishes the
-   release with notes generated from the merged pull requests – their titles are
+5. **Watch it** under *Actions* on GitHub. It lints and tests Linux and Windows
+   (the SFTP tests against a real `sftp-server` on both), builds both, and only
+   when all of that passed publishes the release – about 40 minutes, most of it
+   compiling for Windows. It publishes the release with notes generated from the
+   merged pull requests – their titles are
    what users see in the update dialog, so give PRs readable titles. Edit the
    notes on the release page afterwards if you like.
 

@@ -12,9 +12,10 @@
 #                                         install and what installed
 #                                         copies update through
 #
-# The Windows job adds its files to the release once the Linux one made it;
-# if it fails, the release is there without them (and Windows installs
-# simply see no newer version).
+# Nothing is published unless everything passed: both systems are linted
+# and tested first (the SFTP tests against a real sftp-server each:
+# OpenSSH's on Linux, Git for Windows' on Windows), then built; only then
+# does the last job create the release with all files at once.
 #
 # Built on the oldest supported Ubuntu, so the binary runs wherever that
 # glibc or a newer one is (practically every current distribution). It needs
@@ -29,7 +30,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  linux:
     runs-on: ubuntu-22.04
     env:
       NAME: terminaal-x86_64-linux
@@ -44,14 +45,25 @@ jobs:
             exit 1
           fi
 
-      - name: Build dependencies
+      # Build dependencies, plus for the tests: OpenSSH's sftp-server and
+      # ssh-keygen, a monospace font, the xkb keymaps.
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libssl-dev zlib1g-dev libxkbcommon-dev libwayland-dev imagemagick
+            pkg-config libssl-dev zlib1g-dev libxkbcommon-dev libwayland-dev imagemagick \
+            openssh-sftp-server openssh-client fonts-dejavu-core xkb-data
 
       - name: Rust
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
 
       - name: Build
         run: cargo build --release --locked
@@ -70,17 +82,12 @@ jobs:
           sha256sum "$NAME" > "$NAME.sha256"
           sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
 
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "Terminaal ${GITHUB_REF_NAME#v}" \
-            --generate-notes \
-            --verify-tag
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/
 
   windows:
-    needs: release
     runs-on: windows-latest
     env:
       NAME: terminaal-x86_64-windows.exe
@@ -92,7 +99,30 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Rust
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      # The SFTP, edit and sync tests against a real server: Git for
+      # Windows' sftp-server (MSYS: it sees C:\x as /c/x), with its sh and
+      # sha256sum for the server's commands. Without these variables the
+      # tests skip (the step above).
+      - name: SFTP tests
+        shell: pwsh
+        run: |
+          $git = "$env:ProgramFiles\Git"
+          $env:TERMINAAL_TEST_SFTP_SERVER = "$git\usr\lib\ssh\sftp-server.exe"
+          $env:TERMINAAL_TEST_SH = "$git\usr\bin\sh.exe"
+          foreach ($tool in $env:TERMINAAL_TEST_SFTP_SERVER, $env:TERMINAAL_TEST_SH) {
+            if (-not (Test-Path $tool)) { Write-Error "missing $tool"; exit 1 }
+          }
+          cargo test --locked sftp::
 
       - name: Build
         run: cargo build --release --locked
@@ -116,8 +146,29 @@ jobs:
           sha256sum "$NAME" > "$NAME.sha256"
           sha256sum "$SETUP" > "$SETUP.sha256"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/
+
+  # Only when both systems passed: one release with every file.
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Terminaal ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            --verify-tag

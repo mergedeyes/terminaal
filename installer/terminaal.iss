@@ -1,6 +1,6 @@
 ﻿; Terminaal's Windows setup, for Inno Setup 6 (preinstalled on GitHub's
-; windows-latest runners). Built by CI (.github/workflows/windows.yml and
-; release.yml):
+; windows-latest runners). Built by CI (.github/workflows/release.yml, on
+; a version tag):
 ;
 ;   ISCC /DAppVersion=0.3.1 /DSourceExe=C:\...\terminaal.exe /DOutputDir=C:\...\dist installer\terminaal.iss
 ;
