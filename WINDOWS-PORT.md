@@ -17,7 +17,7 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 |---|---|
 | Build & CI | `src/platform/` holds the OS differences (stream pairs: loopback TCP + `WSAPoll`; locks; permissions; links via `explorer.exe`; trash = Recycle Bin; local time). CI on `windows-latest`: clippy, tests, release exe as artifact. Release workflow builds a Windows exe |
 | Startup | Window program without a console; `--help`/`--version`/errors/`RUST_LOG` go to the parent console (`AttachConsole`). Settings in `%APPDATA%\terminaal`, state in `%LOCALAPPDATA%\terminaal`. German UI from the Windows locale |
-| Local terminal | ConPTY; shell-integration filter inside ConPTY reads; shells found: pwsh 7, Windows PowerShell, cmd, Git Bash, WSL (default: first non-cmd) |
+| Local terminal | ConPTY; shell-integration filter inside ConPTY reads; shells found: pwsh 7 (and preview), Windows PowerShell, cmd, Git Bash (machine or per-user), Nushell, WSL, plus `pwsh`/`nu` anywhere on the `PATH` (default: first non-cmd) |
 | Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications). Git Bash: the bash integration with `/` paths for `--rcfile` and the managed file; MSYS (`/c/…`) and Cygwin (`/cygdrive/c/…`) folders from OSC 7 become `C:\…`; the launcher's `usr\bin\bash` child counts as the shell. Untested in a real Git Bash. cmd: `PROMPT` set at launch wraps the user's own prompt (else `$P$G`) in OSC 133 A/B and sends the folder as OSC 9;9, which the filter now reads (all platforms); no C/D (cmd has no pre-exec hook): no durations, exit codes, notifications, output marks. Only through tests so far, not in a real cmd |
 | Sidebar | Aliases, functions and lines for PowerShell (profile-loaded file of Terminaal's own) |
 | Built-in commands | Systems `windows` (PowerShell) and `windows-cmd`: winget updates, disks, folder sizes, memory, processes, uptime, failed services, log errors, ports, addresses; usable for SSH hosts via `system` |
@@ -35,8 +35,6 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 | # | Gap | Linux has | Plan |
 |---|---|---|---|
-| 6 | **WSL** | — (Linux runs shells natively) | `wsl.exe` tab with integration: start the distro's login shell with Terminaal's startup file (path via `wslpath`), cwd `/mnt/c/…` ↔ `C:\…`, `\\wsl$\<distro>\…` for Linux paths; one entry per installed distro (`wsl -l -q`) |
-| 7 | Shell detection breadth | `/etc/shells` lists everything | Also per-user Git (`%LOCALAPPDATA%\Programs\Git`), pwsh preview, MSYS2, Cygwin, Nushell; `-s` lists them |
 | 8 | Built-in commands over SSH to Windows | Probe recognizes the system | Probe falls back to recognizing a Windows server (cmd/PowerShell answer) → `windows-cmd`/`windows`, instead of needing `system` in the host. Benefits Linux too |
 
 ## W2 — Install, release, updates
@@ -90,6 +88,9 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |
 
 ## Follow-ups (not blocking)
+
+- **WSL integration** (moved out of W1 on 2026-11-07: Linux has no counterpart, so it isn't parity; WSL tabs already work as plain terminals, and fish ≥ 4 or Nushell inside send OSC 7/133 themselves). Would be: one entry per distro (`wsl -l -q`, UTF-16) — needs shells with arguments in config/session/`-s`; the distro's login shell with Terminaal's startup file (path via `wslpath`); folders `/mnt/c/…` ↔ `C:\…` and `\\wsl.localhost\<distro>\…`. Can't be tested under Wine or in a VM without nested virtualization
+- MSYS2/Cygwin shells (their bash needs the login environment, which `--rcfile` skips); `pwsh` installed from the Store (an app execution alias that `is_file` doesn't see)
 
 - Pageant found by itself for forwarding (its pipe name is derived from the user name and `CryptProtectMemory`), so `ForwardAgent yes` works with it without the `--openssh-config` path
 

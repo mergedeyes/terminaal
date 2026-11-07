@@ -96,20 +96,32 @@ pub fn detect() -> Vec<InstalledShell> {
 }
 
 /// Windows has no list of shells: the usual places of the ones that
-/// come with it or are commonly installed, those that exist.
+/// come with it or are commonly installed, then PowerShell 7 and Nushell
+/// wherever else the `PATH` has them (scoop, portable installs) -- those
+/// that exist, each once.
 #[cfg(windows)]
 pub fn detect() -> Vec<InstalledShell> {
     let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
     let system = var("SystemRoot").unwrap_or_else(|| PathBuf::from(r"C:\Windows")).join("System32");
     let programs = var("ProgramFiles").unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
-    let candidates = [
+    let mut candidates = vec![
         programs.join(r"PowerShell\7\pwsh.exe"),
+        programs.join(r"PowerShell\7-preview\pwsh.exe"),
         system.join(r"WindowsPowerShell\v1.0\powershell.exe"),
         system.join("cmd.exe"),
         programs.join(r"Git\bin\bash.exe"),
+        programs.join(r"nu\bin\nu.exe"),
         system.join("wsl.exe"),
     ];
-    candidates.into_iter().filter(|path| path.is_file()).map(InstalledShell::new).collect()
+    // Git installed for this user only.
+    if let Some(local) = var("LOCALAPPDATA") {
+        candidates.insert(5, local.join(r"Programs\Git\bin\bash.exe"));
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        candidates.extend(["pwsh.exe", "nu.exe"].map(|name| dir.join(name)));
+    }
+    dedup(candidates.into_iter().filter(|path| path.is_file()).map(InstalledShell::new).collect())
 }
 
 /// The shell new tabs use unless told otherwise: the configured one,
@@ -160,7 +172,6 @@ fn parse_etc_shells(text: &str) -> Vec<PathBuf> {
 }
 
 /// Keeps the first-listed path of each shell.
-#[cfg_attr(windows, allow(dead_code))]
 fn dedup(shells: Vec<InstalledShell>) -> Vec<InstalledShell> {
     let mut out: Vec<InstalledShell> = Vec::new();
     for shell in shells {
