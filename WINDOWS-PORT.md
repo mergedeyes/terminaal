@@ -35,9 +35,6 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 All closed in code (2026-11-07); what's left is checking them on real Windows (W4). WSL moved to the follow-ups.
 
-| # | Gap | Linux has | Plan |
-|---|---|---|---|
-
 ## W2 — Install, release, updates
 
 | # | Item | Plan |
