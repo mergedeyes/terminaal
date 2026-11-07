@@ -1,4 +1,4 @@
-# Keeps the Windows port building: lints Terminaal for Windows, runs its
+# Keeps the Windows build working: lints Terminaal for Windows, runs its
 # tests (those that need Unix are left out by cfg) and builds a release
 # exe and the setup around it, both kept as artifacts to try out; then
 # the SFTP tests against a real sftp-server.
@@ -7,7 +7,7 @@ name: Windows
 on:
   pull_request:
   push:
-    branches: [main, feature/windows-port]
+    branches: [main]
   workflow_dispatch:
 
 # A newer push to the same branch makes a running build pointless.
