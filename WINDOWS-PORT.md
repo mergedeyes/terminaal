@@ -45,6 +45,7 @@ date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | VM: splash, settings kept, exe icon and details, the look (title bar, theme "Windows", translucency), setup default and options, updates through the setup, uninstall confirmed. **W2 closed** apart from the first real `v*` release; **W3 closed** apart from blur (needs real hardware) |
 | 2026-11-07 | Rust 1.99's clippy lint `chunks_exact_to_as_chunks` fixed on `fix/clippy-chunks` (from `main`, with a test for the RGB/grey conversions) and merged here: clippy clean on both targets again |
 | 2026-11-07 | **W4 #17 done**: all 354 tests pass under Wine (the font test only needed a font in the prefix). Code signing decided: as is for now. `feature/keep-failed-tab` merged into `main` |
+| 2026-11-07 | Merge prepared: `main` merged in (with `keep-failed-tab`), docs reread for Windows paths, CLAUDE.md integrated (#23), merge plan and PR draft below |
 
 ### How builds get into the VM
 
@@ -176,10 +177,39 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 | # | Item |
 |---|---|
 | 21 | **Done (2026-11-07)**: README – status line, Windows install paragraph (setup / plain exe, SmartScreen), Windows limitations under Known limitations, Windows in Roadmap → Done, link in Documentation |
-| 22 | **Done (2026-11-07)**: new `docs/guides/windows.md` (install, updates, uninstall, folders, shells and integration, SSH agents, drop-down shortcut, look, notifications, troubleshooting), index entry; Windows parts in getting started, configuration (`maximized`, `quake_hotkey`, `%APPDATA%`), updates (assets, setup updates), drop-down window, appearance, shell integration, SSH hosts (pipes as `IdentityAgent`), troubleshooting, architecture (module map). To reread against the code before the merge |
-| 23 | Partly (2026-11-07): CLAUDE.md has a marked section on the port (modules, rendering, where the details are). Before the merge: Windows into "Aktueller Stand", module list, known problems |
+| 22 | **Done (2026-11-07)**: new `docs/guides/windows.md` (install, updates, uninstall, folders, shells and integration, SSH agents, drop-down shortcut, look, notifications, troubleshooting), index entry; Windows parts in getting started, configuration (`maximized`, `quake_hotkey`, `%APPDATA%`), updates (assets, setup updates), drop-down window, appearance, shell integration, SSH hosts (pipes as `IdentityAgent`), troubleshooting, architecture (module map). Reread against the code 2026-11-07: Windows paths added to sessions, files and SFTP, security; the drop-down shortcut in the shortcut guide |
+| 23 | **Done (2026-11-07)**: CLAUDE.md has the Windows facts in their sections (Aktueller Stand, modules, options, Entwicklung, known problems, roadmap phase 19 with the follow-ups), each marked "(Windows-Port)" until the merge, plus a short note at the top |
 | 24 | Keep merging `terminaal/main` into the branch; **every new Linux feature adds a row here** — parity is a moving target |
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |
+
+## Merge plan
+
+1. The rest of the VM checklist above (SSH, SFTP in the app, the remaining
+   terminal features, DPI, notifications, WSL's message); fixes on this branch,
+   or on their own branch from `main` when Linux has the bug too.
+2. Merge `terminaal/main` once more; `cargo clippy --all-targets` and `cargo
+   test` on Linux, `cargo xwin clippy …`, the tests under Wine, CI green (incl.
+   the SFTP step).
+3. Delete this file — its content lives in `docs/guides/windows.md`, README,
+   and CLAUDE.md (roadmap phase 19 has the follow-ups). In CLAUDE.md drop the
+   "(Windows-Port)" markers and the note at the top.
+4. PR to `main` (draft below), merge.
+5. Release: version in `Cargo.toml` (0.3.1 now; a minor bump, 0.4.0, fits a new
+   platform), PR "Release 0.4.0", tag `v0.4.0` only after the user's OK. Check
+   that the release has the Windows setup and exe with their `.sha256` (#11),
+   and that an installed copy finds the update.
+
+PR draft — title (it becomes the release note): **Terminaal for Windows**
+
+> Terminaal now runs on Windows 10 (1809) and newer: a setup for all users or
+> just you, updates through it, PowerShell/cmd/Git Bash integration, SSH agents
+> on named pipes (Windows OpenSSH, 1Password, Pageant), the drop-down window
+> with its own global shortcut, a Windows theme, a see-through window with
+> Acrylic blur. `src/platform/` holds what differs from Unix; Linux is
+> unchanged apart from fixes found on the way. Docs: `docs/guides/windows.md`.
+> Checked: CI on real Windows (all tests, SFTP against a real server), a
+> Windows 11 VM (list in the description); not checked: blur on real hardware,
+> a Windows OpenSSH server.
 
 ## Follow-ups (not blocking)
 

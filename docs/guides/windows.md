@@ -52,6 +52,7 @@ say so). Your SSH keys in `%USERPROFILE%\.ssh` stay either way.
 | --- | --- |
 | `config.toml`, `hosts.toml`, `keys.toml`, `snippets.toml`, `themes\` | `%APPDATA%\terminaal` |
 | The saved session, folder-sync records | `%LOCALAPPDATA%\terminaal` |
+| Local copies of server files you edit, downloaded updates | `%TEMP%\terminaal` – private to you through your user profile's permissions |
 | SSH keys, `known_hosts`, `config` | `%USERPROFILE%\.ssh` |
 
 Wherever the other pages say `~/.config/terminaal`, read `%APPDATA%\terminaal`.

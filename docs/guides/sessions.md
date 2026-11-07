@@ -70,7 +70,7 @@ session. From then on Terminaal starts with one tab.
 ## The file
 
 The session is stored in `~/.local/state/terminaal/session.toml` (or
-`$XDG_STATE_HOME/terminaal/`). It holds shell paths, directories, and host
+`$XDG_STATE_HOME/terminaal/`; on Windows `%LOCALAPPDATA%\terminaal`). It holds shell paths, directories, and host
 names with user names. Nothing secret is in it.
 
 You can edit or delete it while Terminaal isn't running. If the file can't be
