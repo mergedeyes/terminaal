@@ -57,6 +57,20 @@ impl TextRendererState {
         family: Option<&str>,
     ) -> Self {
         let mut font_system = FontSystem::new();
+        // cosmic-text's default monospace font (Noto Sans Mono) isn't part
+        // of Windows; take Windows' own.
+        #[cfg(windows)]
+        {
+            let installed = |family: &str| {
+                let families = [fontdb::Family::Name(family)];
+                font_system.db().query(&fontdb::Query { families: &families, ..fontdb::Query::default() }).is_some()
+            };
+            if !installed(font_system.db().family_name(&fontdb::Family::Monospace))
+                && let Some(family) = WINDOWS_MONOSPACE.iter().find(|family| installed(family))
+            {
+                font_system.db_mut().set_monospace_family(*family);
+            }
+        }
         let swash_cache = SwashCache::new();
         let cache = Cache::new(device);
         let viewport = Viewport::new(device, &cache);
@@ -136,6 +150,11 @@ impl TextRendererState {
         self.font_system.db().query(&fontdb::Query { families: &families, ..fontdb::Query::default() })
     }
 }
+
+/// The console font on Windows when none is chosen, the first installed:
+/// Windows Terminal's, then the older ones every Windows has.
+#[cfg(windows)]
+const WINDOWS_MONOSPACE: &[&str] = &["Cascadia Mono", "Consolas", "Lucida Console", "Courier New"];
 
 /// Text metrics for a physical font size, rounded to whole pixels.
 ///
