@@ -280,6 +280,7 @@ settings-ui-opacity = Interface opacity
 settings-ui-opacity-reset = Theme default ({ $value } %)
 settings-blur = Blur what's behind (frosted)
 settings-blur-unsupported = Blur needs a compositor with ext-background-effect (such as COSMIC); on KDE it works anyway.
+settings-blur-unsupported-windows = Blur needs Windows 11 22H2 or newer.
 settings-transparency-unsupported = The graphics driver or compositor offers no see-through windows.
 settings-transparency-x11 = On X11 the window stays opaque; see-through needs Wayland.
 settings-themes-folder = Your own themes: TOML files in { $path }, in Alacritty's format (its themes work as they are), optionally with [ui] for the interface. After changes, click "Reload".

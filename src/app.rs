@@ -4405,6 +4405,11 @@ impl AppState {
         self.search_bar = SearchBar::new(self.theme.ui);
         crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.ui_opacity());
         self.sidebar.set_theme_names(self.themes.all().iter().map(|theme| theme.name.clone()).collect());
+        // The title bar goes with the theme, not with Windows' mode.
+        #[cfg(windows)]
+        if let Some(window) = self.window.winit() {
+            crate::blur::set_dark_title_bar(window, self.theme.ui.is_dark());
+        }
         // A host's theme may have changed with the others.
         let looks: Vec<Vec<PaneLook>> = self
             .tabs
@@ -5448,6 +5453,20 @@ impl ApplicationHandler<UserEvent> for App {
             winit::platform::windows::WindowAttributesExtWindows::with_skip_taskbar(attrs, true)
         } else {
             attrs
+        };
+        // Frames through DirectComposition (`gpu::composition`) need a
+        // window without the redirection bitmap GDI would draw into: it
+        // lies over the composition visual, and see-through frames would
+        // show it instead of the desktop. And a theme of winit's own, so
+        // it leaves the title bar to `apply_theme`: winit 0.30 sets the
+        // system's mode again on every WM_SETTINGCHANGE unless the window
+        // was made with one (`set_theme` doesn't count).
+        #[cfg(windows)]
+        let attrs = {
+            let dark = Themes::load().get(self.config.theme.as_deref()).ui.is_dark();
+            let theme = if dark { winit::window::Theme::Dark } else { winit::window::Theme::Light };
+            winit::platform::windows::WindowAttributesExtWindows::with_no_redirection_bitmap(attrs, crate::gpu::composition())
+                .with_theme(Some(theme))
         };
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
         let window = AppWindow::Winit(window);

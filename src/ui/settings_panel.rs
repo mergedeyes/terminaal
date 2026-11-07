@@ -735,7 +735,7 @@ fn transparency(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarActio
     if !support.supported {
         note(ui, t!("settings-transparency-unsupported"));
     } else if !support.blur {
-        note(ui, t!("settings-blur-unsupported"));
+        note(ui, if cfg!(windows) { t!("settings-blur-unsupported-windows") } else { t!("settings-blur-unsupported") });
     }
     if support.x11 {
         note(ui, t!("settings-transparency-x11"));

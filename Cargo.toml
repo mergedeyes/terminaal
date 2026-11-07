@@ -68,11 +68,14 @@ xkbcommon = "0.8"
 # live sync (sftp::watch_windows), SSH agents' named pipes
 # (ssh::agent_pipe), the program running in a tab
 # (platform::windows::process), the setup's entry under Settings → Apps
-# and the AppUserModelID (update, platform::windows); the version the tree
-# already has.
+# and the AppUserModelID (update, platform::windows), DWM's backdrop and
+# dark title bar plus the Windows build (blur_windows); the version the
+# tree already has.
 windows-sys = { version = "0.61", features = [
+    "Wdk_System_SystemServices",
     "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Graphics_Dwm",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Storage_FileSystem",
@@ -81,8 +84,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Registry",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_Time",
+    "Win32_UI_Controls",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

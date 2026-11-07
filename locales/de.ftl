@@ -280,6 +280,7 @@ settings-ui-opacity = Deckkraft der Oberfläche
 settings-ui-opacity-reset = Vorgabe des Themes ({ $value } %)
 settings-blur = Dahinter unscharf („milchig“)
 settings-blur-unsupported = Unschärfe braucht einen Compositor mit ext-background-effect (etwa COSMIC); unter KDE wirkt sie auch so.
+settings-blur-unsupported-windows = Unschärfe gibt es erst ab Windows 11 22H2.
 settings-transparency-unsupported = Grafiktreiber oder Compositor bieten keine durchscheinenden Fenster an.
 settings-transparency-x11 = Unter X11 bleibt das Fenster undurchsichtig; durchscheinend geht es nur unter Wayland.
 settings-themes-folder = Eigene Themes: TOML-Dateien in { $path }, im Format von Alacritty (dessen Themes passen unverändert), optional mit [ui] für die Oberfläche. Nach Änderungen „Erneut laden“.
