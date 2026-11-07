@@ -37,6 +37,7 @@ them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | VM: transparency effects were on after all, yet Windows' own Acrylic (desktop context menu) and Mica (Explorer) are solid there too: DWM doesn't blur on software rendering. Blur stays unverified until a machine with a GPU; the effects-off fix stays (right for that case) |
 | 2026-11-07 | Confirmed: Windows' own Acrylic needs graphics hardware acceleration. So with a software adapter (`DeviceType::Cpu`, WARP) Terminaal offers no blur either — blur on would only turn the window solid — and the settings say why (`settings-blur-software-windows`) |
 | 2026-11-07 | VM: the drop-down window typed a `t` when shown with Ctrl+Alt+T — winit's synthetic presses for keys held on focus. Fixed: only real key events reach the terminal (also helps X11 on Linux) |
+| 2026-11-07 | VM checklist: typing, shells (not WSL: the tab closes at once, likely no nested virtualization), splits, links, 5250, drop-down window, session restore work. W4 #18 in code: SFTP/edit/sync tests on Windows against Git for Windows' `sftp-server` in CI |
 
 ### How builds get into the VM
 
@@ -129,7 +130,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 | # | Item | Plan |
 |---|---|---|
 | 17 | Wine runs | All but one test pass under Wine (318 of 319 after W2); `glyphs_stay_on_their_cells` fails only because a bare prefix has no fonts — install a font into the throwaway prefix (or skip there). CI on real Windows: all 319 pass (2026-11-07, with W2) |
-| 18 | SFTP / sync / edit end-to-end tests | Today `cfg(unix)` (need `sftp-server`). Run them on Windows against Win32-OpenSSH's `sftp-server.exe` (downloaded in CI), plus the `ReadDirectoryChangesW` watcher tests |
+| 18 | SFTP / sync / edit end-to-end tests | Code (2026-11-07), CI result open: the test modules run on Windows (pure tests under Wine too: 351 of 352 pass, found three test-only Unix assumptions). The server is Git for Windows' MSYS `sftp-server.exe` with its `sh`/`sha256sum` (`TERMINAAL_TEST_SFTP_SERVER`/`TERMINAAL_TEST_SH`, set only by CI's last step "SFTP end-to-end tests"); `remote_path` maps `C:\x` → `/c/x`; the server's pipe is relayed into a socket (Windows polls only sockets). Unix-only still: sudo (fake `sudo` takes away Unix modes), permission denied, a symlink in a removed tree, Unix modes. Not against Win32-OpenSSH (paths `/C:/…`, no `sh` for the commands); running Git's server under Wine locally was blocked, so only CI can run them |
 | 19 | Windows unit tests | Done: agent pipe, process tree, Unix sockets, OSC 9;9, MSYS/Cygwin folders, console titles, exit code labels, update through the setup (staging the checked setup, its arguments, a copy outside the install is standalone, download per OS and install type, setup script/workflow/program in step). Open: hotkey key mapping, default font choice; finding an install in the registry (only in the VM — a test would write to the real HKCU) |
 | 20 | Manual pass in the VM | Checklist below, for every release candidate of the branch. Started 2026-11-07 (Windows 11 Insider): ticked items below |
 
@@ -140,14 +141,17 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - [x] Sidebar: shells (powershell, cmd, wsl), PowerShell aliases/functions/lines, built-in commands for Windows (winget)
 - [x] Title after winget, hex exit codes, start maximized (fixed and confirmed)
 - [ ] Splash, settings saved/kept, English
-- Typing incl. AltGr characters (`@ { [ ] } \ | ~`) on a German layout, dead keys, Ctrl/Alt shortcuts, Kitty keyboard in Neovim
-- PowerShell, pwsh, cmd, Git Bash, WSL tabs; prompt marks, exit codes, new tab in the same folder, `-c`, `-s`, `--hold`
-- Splits, tabs (drag), search, vi mode, hints, links (URL, `C:\` path), selection/copy/paste, paste warning, OSC 52, images (kitty `icat` over SSH)
+- [x] Typing incl. AltGr characters (`@ { [ ] } \ | ~`) on a German layout, dead keys, Ctrl/Alt shortcuts, Kitty keyboard in Neovim (2026-11-07: "typing works")
+- [x] PowerShell, pwsh, cmd, Git Bash tabs; prompt marks, exit codes, new tab in the same folder, `-c`, `-s`, `--hold` (2026-11-07: "shells work")
+- [ ] WSL tab: after installing WSL the tab opens and closes at once (2026-11-07) — most likely WSL 2 can't start without nested virtualization in the QEMU VM; to see its message: `terminaal -s wsl --hold`
+- [x] Splits, links (2026-11-07)
+- Tabs (drag), search, vi mode, hints, selection/copy/paste, paste warning, OSC 52, images (kitty `icat` over SSH)
 - Scrollbar, mouse wheel in less/htop over SSH, DPI 100/125/150 %, monitor change
 - SSH: password, key, agent (Windows OpenSSH agent, Pageant, 1Password), jump host, ProxyCommand, forwards incl. SOCKS, reconnect after network loss, host-key dialog/removal
 - SFTP tab, transfers, edit with sync-back, folder sync (live), Recycle Bin delete, drag & drop upload
-- 5250 against PUB400 (telnet + TLS through schannel)
-- Session restore, second instance, drop-down window (command, hotkey, focus loss, height)
+- [x] 5250 against PUB400 (telnet + TLS through schannel) (2026-11-07)
+- [x] Session restore, drop-down window (2026-11-07; the hotkey typed a `t` in the window, fixed in 645a32c, to confirm)
+- Second instance, drop-down window details (focus loss, height)
 - Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name)
 - Look (W3): title bar dark with a dark theme and light with a light one, switching live (theme picker, also with the window inactive); opacity slider and the panels' opacity live, 100 % fully opaque; blur on/off live (Acrylic, solid while inactive); theme "Windows" follows Windows' mode and accent colour live; all of it after a DPI change (100 → 150 %), maximized, and in the drop-down window
 - Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows

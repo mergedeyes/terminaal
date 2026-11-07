@@ -1386,9 +1386,9 @@ impl Exec<'_> {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
-    use super::super::protocol::tests::scratch;
+    use super::super::protocol::tests::{remote_path, scratch};
     use super::super::session::tests::{Session, session, wait_for};
     use super::super::session::{Connection, Remote, State};
     use super::*;
@@ -1416,7 +1416,7 @@ mod tests {
     }
 
     fn pair_of(local: &Path, remote: &Path) -> SyncPair {
-        SyncPair { local: local.to_str().unwrap().into(), remote: remote.to_str().unwrap().into(), ..SyncPair::default() }
+        SyncPair { local: local.to_str().unwrap().into(), remote: remote_path(remote), ..SyncPair::default() }
     }
 
     fn start(name: &str) -> Option<(Remote, PathBuf, PathBuf, PathBuf)> {
@@ -1540,7 +1540,7 @@ mod tests {
         // Held elsewhere: busy, nothing copied.
         // Where `session` keeps the records.
         let records = std::env::temp_dir().join(format!("terminaal-sftp-{}-sync-live-edits/sync", std::process::id()));
-        let key = record_key("test", &here, there.to_str().unwrap());
+        let key = record_key("test", &here, &remote_path(&there));
         let _held = lock(&records.join(format!("{key}.lock"))).unwrap().expect("free");
         std::fs::write(here.join("while-busy.txt"), "x").unwrap();
         remote.send(Command::SyncNow(None));
@@ -1592,7 +1592,9 @@ mod tests {
         assert!(text.contains("direction = \"upload\""), "{text}");
         assert!(!text.contains("delete_local"), "{text}");
         assert_eq!(toml::from_str::<SyncPair>(&text).unwrap(), pair);
-        let minimal: SyncPair = toml::from_str("local = \"/a\"\nremote = \"b\"").unwrap();
+        // An absolute folder of this system's kind.
+        let absolute = if cfg!(windows) { r"local = 'C:\a'" } else { "local = '/a'" };
+        let minimal: SyncPair = toml::from_str(&format!("{absolute}\nremote = \"b\"")).unwrap();
         assert_eq!(minimal.direction, SyncDirection::Both);
         assert!(!minimal.live);
         assert!(SyncPair { local: "rel".into(), remote: "b".into(), ..minimal.clone() }.check().is_err());
@@ -1609,9 +1611,10 @@ mod tests {
         assert!(matches!(hashes[0], ServerHash::Hash(_)));
         assert_eq!(hashes[1], ServerHash::Unknown);
         // The real thing, through a shell that talks first.
+        let Some(mut sh) = super::super::session::tests::shell() else { return };
         let file = std::env::temp_dir().join(format!("terminaal-hashes-{}", std::process::id()));
         std::fs::write(&file, "").unwrap();
-        let output = std::process::Command::new("sh")
+        let output = sh
             .arg("-c")
             .arg(format!("echo hello from bashrc; {HASHES_COMMAND}"))
             .stdin(std::process::Stdio::piped())
@@ -1619,7 +1622,8 @@ mod tests {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write;
-                child.stdin.take().unwrap().write_all(format!("{}\n/nonexistent\n", file.display()).as_bytes())?;
+                let file = remote_path(&super::super::protocol::tests::canonical(&file));
+                child.stdin.take().unwrap().write_all(format!("{file}\n/nonexistent\n").as_bytes())?;
                 child.wait_with_output()
             })
             .unwrap();
