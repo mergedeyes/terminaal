@@ -16,7 +16,7 @@ the setup, uninstall, exe icon/details); left: the first real `v*` release.
 **W3 done in the VM** (title bar, translucency, theme "Windows"); blur needs
 real hardware. **W4 #18 done** (SFTP tests green in CI). **W5 docs written**.
 Left for parity: the rest of the VM checklist (SSH, SFTP in the app, DPI,
-notifications, English UI, WSL's message), then the final pass. Branch up to
+notifications, WSL's message), then the final pass. Branch up to
 date with `terminaal/main` at `25ddcdb`.
 
 ## Progress log
@@ -146,7 +146,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - [x] Sidebar: shells (powershell, cmd, wsl), PowerShell aliases/functions/lines, built-in commands for Windows (winget)
 - [x] Title after winget, hex exit codes, start maximized (fixed and confirmed)
 - [x] Splash, settings saved/kept (2026-11-07)
-- [ ] English UI
+- [x] English UI (2026-11-07)
 - [x] Typing incl. AltGr characters (`@ { [ ] } \ | ~`) on a German layout, dead keys, Ctrl/Alt shortcuts, Kitty keyboard in Neovim (2026-11-07: "typing works")
 - [x] PowerShell, pwsh, cmd, Git Bash tabs; prompt marks, exit codes, new tab in the same folder, `-c`, `-s`, `--hold` (2026-11-07: "shells work")
 - [ ] WSL tab: after installing WSL the tab opens and closes at once (2026-11-07) — most likely WSL 2 can't start without nested virtualization in the QEMU VM; to see its message: `terminaal -s wsl --hold`
