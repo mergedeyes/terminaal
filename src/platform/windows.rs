@@ -17,6 +17,12 @@ use windows_sys::Win32::UI::Shell::{
     FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, SHFILEOPSTRUCTW, SHFileOperationW,
 };
 
+#[path = "unix_socket_windows.rs"]
+mod unix_socket;
+pub use unix_socket::{UnixListener, UnixStream};
+#[cfg(test)]
+pub use unix_socket::supported as unix_sockets_supported;
+
 /// For helper programs (`cmd`, `powershell`) started from a window
 /// program: without it each one opens a console window.
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -36,6 +42,43 @@ pub type Events = i16;
 pub const POLLIN: Events = WinSock::POLLRDNORM;
 pub const POLLOUT: Events = WinSock::POLLWRNORM;
 pub const POLLHUP: Events = WinSock::POLLHUP;
+
+/// Whether `path` is a Unix socket: a reparse point tagged as one
+/// (`IO_REPARSE_TAG_AF_UNIX`), which only the directory listing tells.
+pub fn is_socket_file(path: &Path) -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_REPARSE_POINT, FindClose, FindFirstFileW, WIN32_FIND_DATAW};
+    const IO_REPARSE_TAG_AF_UNIX: u32 = 0x8000_0023;
+    let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: a NUL-terminated name and a struct to fill; the handle is closed.
+    let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
+    let find = unsafe { FindFirstFileW(name.as_ptr(), &mut data) };
+    if find == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    unsafe { FindClose(find) };
+    data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && data.dwReserved0 == IO_REPARSE_TAG_AF_UNIX
+}
+
+/// What tells the file at `path` (not following a link or socket) apart
+/// from one that replaced it: its file index, the inode of NTFS.
+pub fn file_id(path: &Path) -> io::Result<u64> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
+    };
+    let file = OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    // SAFETY: an open handle and a struct to fill.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(u64::from(info.nFileIndexHigh) << 32 | u64::from(info.nFileIndexLow))
+}
 
 /// Two connected loopback sockets. Another local program could connect
 /// to the listener in the moment it's open; only our own end is taken.

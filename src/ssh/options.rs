@@ -469,9 +469,10 @@ impl Target {
     }
 }
 
-/// Socket paths are told apart from addresses by their `/`, as by ssh.
+/// Socket paths are told apart from addresses by their `/`, as by ssh --
+/// or a `\`, for a Windows path (`C:\Users\…`); no address has one.
 fn is_path(text: &str) -> bool {
-    text.contains('/')
+    text.contains(['/', '\\'])
 }
 
 /// One side of a forward: a path stays whole (it may contain `:`).
@@ -730,6 +731,7 @@ mod tests {
             ("~/db.sock localhost:5432", Listen::Unix(unix("~/db.sock")), tcp("localhost", 5432)),
             ("/tmp/a.sock:db:5432", Listen::Unix(unix("/tmp/a.sock")), tcp("db", 5432)),
             ("/tmp/a.sock:/run/b.sock", Listen::Unix(unix("/tmp/a.sock")), Target::Unix(unix("/run/b.sock"))),
+            (r"C:\Users\jan\db.sock localhost:5432", Listen::Unix(unix(r"C:\Users\jan\db.sock")), tcp("localhost", 5432)),
         ] {
             let f = Forward::parse(spec, ForwardKind::Local).unwrap();
             assert_eq!((f.listen, f.target), (listen, Some(target)), "{spec}");

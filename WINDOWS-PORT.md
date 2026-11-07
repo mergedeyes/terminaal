@@ -23,6 +23,7 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | Built-in commands | Systems `windows` (PowerShell) and `windows-cmd`: winget updates, disks, folder sizes, memory, processes, uptime, failed services, log errors, ports, addresses; usable for SSH hosts via `system` |
 | SSH | Agent auth (Pageant, Windows OpenSSH agent pipe), Ed25519 keys, ProxyCommand via `cmd /C`. Agent forwarding to named pipes (`ssh::agent_pipe`): Windows' OpenSSH agent when `SSH_AUTH_SOCK` is unset (also 1Password, Bitwarden, KeePassXC), any pipe in `IdentityAgent`/`ForwardAgent` (Pageant: the path `pageant --openssh-config` writes); a thread relays message by message between the pipe and a socket pair. Tested against a fake agent on a real pipe (Wine); not yet against a real server |
 | SFTP | Edit-and-sync-back and live folder sync with `ReadDirectoryChangesW`; excludes with `\` paths |
+| Unix-socket forwards | `AF_UNIX` (Windows 10 1803+) through `platform::UnixListener`/`UnixStream` (own WinSock wrapper, polled with `WSAPoll`): local forwards listening on a socket, targets that are sockets, stale sockets replaced (reparse tag `IO_REPARSE_TAG_AF_UNIX`), only our own file removed (NTFS file index); `C:\…` paths in forwards. Wine has no `AF_UNIX` (tests skip there); **needs a run on real Windows** (CI or VM) |
 | Links & hints | File paths with drive letters (`C:\…`), runnable extensions open their folder instead |
 | Notifications, updates | Toast notifications; in-place update (running exe renamed to `.old`, cleaned up next start; restart via hidden PowerShell) |
 | Command line | `-c` with cmd, `-s` with a Windows path |
@@ -33,7 +34,6 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 | # | Gap | Linux has | Plan |
 |---|---|---|---|
-| 2 | **Unix-socket forwards** (`LocalForward /path`, RemoteForward to a local socket) | `UnixListener`/`UnixStream` | Windows 10 1803+ has `AF_UNIX`; std doesn't wrap it. Thin wrapper over `windows-sys` WinSock (`socket(AF_UNIX)`, `bind`/`connect` with `sockaddr_un`) — sockets work with `WSAPoll`. Same 0600 intent via the profile ACL; stale-file replacement as on Linux |
 | 3 | **Running program in the tab title** | Foreground process group via `tcgetpgrp` | ConPTY has no process groups. Take the shell's PID (`ChildExitWatcher::pid`), find its newest live descendant with a Toolhelp32 snapshot (skip `conhost`/`OpenConsole`), name from the exe. Same 250 ms poll after output settles |
 | 4 | **Shell integration for cmd** | bash/zsh/fish scripts | `PROMPT` can emit escapes: `$e]133;D$e\$e]133;A$e\…$e]133;B$e\`; cwd via `$e]9;9;$P$e\` (ConEmu/Windows Terminal) — teach the filter OSC 9;9 as a raw-path OSC 7. No `C` (cmd has no pre-exec hook): no durations/notifications, exit code not available — document |
 | 5 | **Git Bash** | bash integration + managed `~/.bash_terminaal` | Verify the bash launcher under Git Bash (`--rcfile` with a Windows path), convert MSYS cwd (`/c/Users/…`) to `C:\Users\…` for new tabs and links |

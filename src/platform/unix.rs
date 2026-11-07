@@ -3,7 +3,8 @@ use std::fs::{DirBuilder, File, Metadata, OpenOptions, Permissions};
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{DirBuilderExt, FileExt, OpenOptionsExt, PermissionsExt};
-use std::os::unix::net::UnixStream;
+pub use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -22,6 +23,23 @@ pub type Events = libc::c_short;
 pub const POLLIN: Events = libc::POLLIN;
 pub const POLLOUT: Events = libc::POLLOUT;
 pub const POLLHUP: Events = libc::POLLHUP;
+
+/// Whether `path` is a Unix socket (not following a symlink).
+pub fn is_socket_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_socket())
+}
+
+/// What tells this file apart from one that replaced it at the same
+/// path: the inode (not following a symlink).
+pub fn file_id(path: &Path) -> io::Result<u64> {
+    std::fs::symlink_metadata(path).map(|meta| meta.ino())
+}
+
+/// For tests: Unix always has Unix sockets.
+#[cfg(test)]
+pub fn unix_sockets_supported() -> bool {
+    true
+}
 
 /// A socketpair.
 pub fn pair() -> io::Result<(LocalStream, LocalStream)> {

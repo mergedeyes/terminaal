@@ -29,17 +29,9 @@
 //! of the pump ([`Slot::listening`]).
 
 use std::collections::VecDeque;
-#[cfg(unix)]
-use std::fs::Permissions;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-#[cfg(unix)]
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
-#[cfg(unix)]
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
-#[cfg(unix)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ssh2::{Channel, ErrorCode, ExtendedData, Listener, Session};
@@ -49,7 +41,7 @@ use super::expand_tilde;
 use super::options::{Forward, Listen, Target};
 use super::socks::{self, Handshake, Step, Version};
 use crate::i18n::t;
-use crate::platform::{self, Handle, LocalStream, POLLIN, POLLOUT, Pollable};
+use crate::platform::{self, Handle, LocalStream, POLLIN, POLLOUT, Pollable, UnixListener, UnixStream};
 
 /// Per-direction buffer limit of one forwarded connection.
 const MAX_BUFFER: usize = 256 * 1024;
@@ -66,7 +58,6 @@ fn would_block(err: &ssh2::Error) -> bool {
 /// A connection on this machine, TCP or Unix socket.
 enum Stream {
     Tcp(TcpStream),
-    #[cfg(unix)]
     Unix(UnixStream),
 }
 
@@ -82,15 +73,9 @@ impl Stream {
         Stream::Tcp(stream)
     }
 
-    /// Unix sockets: on Windows not yet (it has them, std doesn't).
-    #[cfg(unix)]
+    /// A Unix socket (Windows: `AF_UNIX`, see [`platform::UnixStream`]).
     fn connect_unix(path: &Path) -> io::Result<Self> {
         UnixStream::connect(path).map(Stream::Unix)
-    }
-
-    #[cfg(windows)]
-    fn connect_unix(_path: &Path) -> io::Result<Self> {
-        Err(io::ErrorKind::Unsupported.into())
     }
 
     /// The local agent: a Unix socket, on Windows mostly a named pipe
@@ -106,7 +91,6 @@ impl Stream {
     fn set_nonblocking(&self) -> io::Result<()> {
         match self {
             Stream::Tcp(stream) => stream.set_nonblocking(true),
-            #[cfg(unix)]
             Stream::Unix(stream) => stream.set_nonblocking(true),
         }
     }
@@ -114,7 +98,6 @@ impl Stream {
     fn shutdown_write(&self) {
         let _ = match self {
             Stream::Tcp(stream) => stream.shutdown(Shutdown::Write),
-            #[cfg(unix)]
             Stream::Unix(stream) => stream.shutdown(Shutdown::Write),
         };
     }
@@ -124,7 +107,6 @@ impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Stream::Tcp(stream) => stream.read(buf),
-            #[cfg(unix)]
             Stream::Unix(stream) => stream.read(buf),
         }
     }
@@ -134,7 +116,6 @@ impl Write for Stream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Stream::Tcp(stream) => stream.write(buf),
-            #[cfg(unix)]
             Stream::Unix(stream) => stream.write(buf),
         }
     }
@@ -148,7 +129,6 @@ impl Stream {
     fn handle(&self) -> Handle {
         match self {
             Stream::Tcp(stream) => stream.handle(),
-            #[cfg(unix)]
             Stream::Unix(stream) => stream.handle(),
         }
     }
@@ -158,9 +138,8 @@ impl Stream {
 enum Socket {
     Tcp(TcpListener),
     /// `ino` tells our socket file apart from one that replaced it since;
-    /// only ours is removed when the forward ends.
-    #[cfg(unix)]
-    Unix { listener: UnixListener, path: PathBuf, ino: u64 },
+    /// only ours is removed when the forward ends ([`platform::file_id`]).
+    Unix { listener: UnixListener, path: PathBuf, id: u64 },
 }
 
 impl Socket {
@@ -171,7 +150,6 @@ impl Socket {
                 let _ = stream.set_nodelay(true);
                 (Stream::Tcp(stream), (origin.ip().to_string(), origin.port()))
             }),
-            #[cfg(unix)]
             Socket::Unix { listener, .. } => {
                 listener.accept().map(|(stream, _)| (Stream::Unix(stream), ("127.0.0.1".to_string(), 0)))
             }
@@ -181,17 +159,15 @@ impl Socket {
     fn handle(&self) -> Handle {
         match self {
             Socket::Tcp(listener) => listener.handle(),
-            #[cfg(unix)]
             Socket::Unix { listener, .. } => listener.handle(),
         }
     }
 }
 
-#[cfg(unix)]
 impl Drop for Socket {
     fn drop(&mut self) {
-        if let Socket::Unix { path, ino, .. } = self
-            && std::fs::symlink_metadata(&*path).is_ok_and(|meta| meta.ino() == *ino)
+        if let Socket::Unix { path, id, .. } = self
+            && platform::file_id(path).is_ok_and(|current| current == *id)
         {
             let _ = std::fs::remove_file(&*path);
         }
@@ -919,9 +895,9 @@ fn listen_locally(forward: &Forward) -> io::Result<Vec<Socket>> {
 /// replaced, one in use is not. The socket is for this user only (0600,
 /// OpenSSH's default `StreamLocalBindMask`) -- set right after binding;
 /// a umask would be process-wide and hit files other threads create.
-#[cfg(unix)]
+/// On Windows the folder's ACL decides, as for every file.
 fn listen_unix(path: &Path) -> io::Result<Socket> {
-    if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_socket())
+    if platform::is_socket_file(path)
         && UnixStream::connect(path).is_err_and(|err| err.kind() == ErrorKind::ConnectionRefused)
     {
         log::info!("replacing stale socket {}", path.display());
@@ -929,15 +905,11 @@ fn listen_unix(path: &Path) -> io::Result<Socket> {
     }
     let listener = UnixListener::bind(path)?;
     listener.set_nonblocking(true)?;
-    let ino = std::fs::symlink_metadata(path)?.ino();
-    let socket = Socket::Unix { listener, path: path.to_path_buf(), ino };
-    std::fs::set_permissions(path, Permissions::from_mode(0o600))?;
+    let id = platform::file_id(path)?;
+    let socket = Socket::Unix { listener, path: path.to_path_buf(), id };
+    #[cfg(unix)]
+    platform::set_mode(path, 0o600)?;
     Ok(socket)
-}
-
-#[cfg(windows)]
-fn listen_unix(_path: &Path) -> io::Result<Socket> {
-    Err(io::ErrorKind::Unsupported.into())
 }
 
 fn connect_local(target: &Target) -> io::Result<Stream> {
@@ -962,7 +934,6 @@ fn connect_local(target: &Target) -> io::Result<Stream> {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
         // Short: socket paths are limited to ~107 bytes.
         std::env::temp_dir().join(format!("tf-{}-{name}", std::process::id()))
@@ -998,25 +969,39 @@ mod tests {
         assert_eq!(states(&forwards)[1], ForwardState::Active);
     }
 
-    #[cfg(unix)]
+    /// Whether anything is at `path` -- `Path::exists` follows the
+    /// socket's reparse point on Windows and says no.
+    fn present(path: &Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok()
+    }
+
     #[test]
     fn unix_listener_replaces_stale_sockets_and_cleans_up() {
+        if !platform::unix_sockets_supported() {
+            return;
+        }
         let path = scratch("a.sock");
         // Left behind: bound, then closed without removing the file.
         drop(UnixListener::bind(&path).unwrap());
         let socket = listen_unix(&path).unwrap();
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
         // One that's in use stays.
         assert!(listen_unix(&path).is_err());
         UnixStream::connect(&path).unwrap();
         drop(socket);
-        assert!(!path.exists(), "our socket file is removed");
+        assert!(!present(&path), "our socket file is removed");
     }
 
-    #[cfg(unix)]
     #[test]
     fn unix_listener_leaves_files_it_did_not_create() {
+        if !platform::unix_sockets_supported() {
+            return;
+        }
         let path = scratch("b.sock");
         std::fs::write(&path, "not a socket").unwrap();
         assert!(listen_unix(&path).is_err());
@@ -1028,7 +1013,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let theirs = UnixListener::bind(&path).unwrap();
         drop(socket);
-        assert!(path.exists());
+        assert!(present(&path));
         drop(theirs);
         std::fs::remove_file(&path).unwrap();
     }
