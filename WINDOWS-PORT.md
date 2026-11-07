@@ -10,7 +10,9 @@ Order follows the project's own: functionality first, then install/UX, then
 visual polish last.
 
 Status as of 2026-11-07 (evening): W1 closed in code, first manual tests in a
-Windows 11 VM under way. Branch up to date with `terminaal/main` at `25ddcdb`.
+Windows 11 VM under way; W2 (setup, exe resources, release assets, updates
+through the setup) in code, waiting for the first CI setup and a VM pass.
+Branch up to date with `terminaal/main` at `25ddcdb`.
 
 ## Progress log
 
@@ -21,10 +23,12 @@ Windows 11 VM under way. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | CI on the branch green on real Windows (313 tests); dependency cache added to the Windows workflow |
 | 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`). All three confirmed in the VM |
 | 2026-11-07 | CI with the cache: under 3 minutes. Decided for W2: a real installer (see W2) |
+| 2026-11-07 | **W2 in code:** Inno Setup script (per user by default, all users optional, Start menu shortcut with AppUserModelID, Apps entry, drop-down window at sign-in, settings kept on uninstall unless asked), exe icon + version info via `build.rs` (also under cargo xwin), installed copies update by running the new setup silently, CI artifact + release assets. `TERMINAAL_UPDATE_URL` takes `file:///` for update tests in the VM. Setup compiled only in CI so far (running Inno Setup under Wine locally was blocked) |
 
 ### How builds get into the VM
 
 - Full build (with OpenSSL, so Ed25519 works): CI artifact `terminaal-x86_64-windows` → `~/Downloads/terminaal.exe`. Only CI can build it (OpenSSL needs Perl + nmake)
+- Setup: CI artifact `terminaal-x86_64-windows-setup` → `~/Downloads/terminaal-x86_64-windows-setup.exe`
 - Quick local build (no OpenSSL, no Ed25519): `cargo xwin build --release --target x86_64-pc-windows-msvc --no-default-features` → `~/Downloads/terminaal-no-openssl.exe`
 - The VM sees `~/Downloads` read-only through virtiofs (WinFsp), usually as `Z:`; copy the exe out before starting it
 
@@ -46,7 +50,9 @@ Windows 11 VM under way. Branch up to date with `terminaal/main` at `25ddcdb`.
 | Window and tab title | A console's default title (the shell's path, maybe after `Administrator: `) and an empty title count as none, so the folder shows again after programs like winget restore it; cmd's `…\cmd.exe - <command>` shows as the command |
 | Window | `maximized` in `config.toml` (Windows only): starts maximized, noted whenever the window is maximized or restored; checkbox under Settings → General → Window size |
 | Links & hints | File paths with drive letters (`C:\…`), runnable extensions open their folder instead |
-| Notifications, updates | Toast notifications; in-place update (running exe renamed to `.old`, cleaned up next start; restart via hidden PowerShell) |
+| Notifications, updates | Toast notifications, under Terminaal's own AppUserModelID when installed by the setup (else PowerShell's). Updates: a copy the setup installed (`update::Installation::of`: the setup's Apps entry names the exe's folder, HKCU then HKLM) downloads `terminaal-x86_64-windows-setup.exe`, checks it and runs it with `/VERYSILENT … /CURRENTUSER` or `/ALLUSERS` (UAC) once Terminaal ends — "Restart now" or simply closing it — then starts Terminaal (and a drop-down window of that install that the setup closed) again; a bare copy elsewhere keeps the in-place swap (running exe renamed to `.old`, cleaned up next start). A hand copy in Program Files gets a Windows-specific "can't write" note |
+| Setup | `installer/terminaal.iss` (Inno Setup 6, preinstalled on `windows-latest`): per user by default in `%LOCALAPPDATA%\Programs\Terminaal` without admin rights, "for all users" offered (Program Files, UAC); Start menu shortcut with AppUserModelID `Terminaal.Terminaal` and start folder `%USERPROFILE%`; optional desktop shortcut and drop-down window at sign-in (`{userstartup}`, `--quake`); entry under Settings → Apps with version and uninstall; closes a running Terminaal of the install (Restart Manager); English/German. Uninstall removes program and shortcuts and asks (default No, never when silent) whether to delete `%APPDATA%\terminaal` and `%LOCALAPPDATA%\terminaal`. `AppId` is fixed (`update::SETUP_APP_ID`, a test keeps script, workflow and program in step) |
+| Exe resources | `build.rs` writes a resource script (icon from `assets/terminaal.ico`, `VERSIONINFO` from Cargo.toml) and compiles it with `embed-resource`: `rc.exe` in CI, `llvm-rc` under cargo xwin |
 | Command line | `-c` with cmd, `-s` with a Windows path |
 | Drop-down window | `terminaal --quake`: lock + loopback port in the temp folder, second start toggles and hands over the foreground; global shortcut `quake_hotkey` (default Ctrl+Alt+T, `RegisterHotKey`); frameless, on top, not in the taskbar, height slider live, hides on focus loss |
 | Fonts | Default console font Cascadia Mono → Consolas → Lucida Console → Courier New (cosmic-text's Noto Sans Mono isn't on Windows) |
@@ -69,17 +75,28 @@ All closed in code (2026-11-07); what's left is checking them on real Windows (W
 
 **Decided 2026-11-07: a real installer**, like other Windows programs — a setup
 that puts Terminaal in the Start menu and under Settings → Apps (with
-uninstall), not a script or `terminaal --install`. Still to settle with the
-user: the tool (Inno Setup `setup.exe` vs. WiX/MSI), per-user (no admin) vs.
-machine-wide, and how in-place updates and the installer's registration
-(version shown under Apps) stay in step.
+uninstall), not a script or `terminaal --install`. Settled the same day:
+**Inno Setup** (a `setup.exe`; both Inno Setup 6.7.1 and WiX 3.14 are on
+`windows-latest`, Inno makes per-user installs, the AppUserModelID and custom
+questions simple and its compiler runs under Wine), **per user by default with
+all users optional**, and **updates of installed copies run the new setup
+silently** (the common practice, VS Code's user setup does the same: the
+setup keeps its own Apps entry, files and uninstall log in step, and only an
+elevated setup can update a Program Files install). Bare exes keep the
+in-place swap.
 
-| # | Item | Plan |
+| # | Item | State |
 |---|---|---|
-| 9 | Exe icon + version info | Resource via `build.rs` (`embed-resource`); must also build in the `cargo xwin` cross-check. Window icon is already set at runtime |
-| 10 | Installer (counterpart of `install.sh`) | A real setup built in CI: per-user by default (`%LOCALAPPDATA%\Programs\Terminaal`, no admin), Start-menu shortcut with AppUserModelID (taskbar grouping, toast sender), entry under Settings → Apps with uninstall, optional Startup entry for the drop-down window. Uninstall removes the program and its shortcuts, never the user's settings unless asked |
-| 11 | Release assets | The setup + `.sha256`; the bare exe + `.sha256` for in-place updates. Check the update check picks the asset for the running OS only |
-| 12 | Updater location | Update into the install folder (writable per-user); `NotWritable` path tested for a Program Files install |
+| 9 | Exe icon + version info | Code: `build.rs` + `embed-resource`, checked in the cross build (`llvm-readobj`: icon group, `VERSIONINFO` 0.3.1). VM: open (Explorer icon, Properties → Details) |
+| 10 | Installer (counterpart of `install.sh`) | Code: `installer/terminaal.iss`, built by CI (artifact `terminaal-x86_64-windows-setup`). VM: open (install per user and for all users, Start menu, taskbar grouping, toast sender, Apps entry, drop-down at sign-in, uninstall with/without settings) |
+| 11 | Release assets | Code: `release.yml` publishes setup + `.sha256` next to the bare exe + `.sha256`; `update::Installation::asset` picks the setup for installed copies, the bare exe otherwise, only ever for its own OS (test `each_system_picks_only_its_own_download`). First real run with the next `v*` tag |
+| 12 | Updater location | Code: installed copies update through the setup (per user without prompt, all users with UAC); bare copies swap in place; a hand copy in Program Files gets `update-not-writable-windows`. Tests: staging the checked setup, setup arguments (Wine). VM: open (update from a `file:///` release on `Z:`, Apps entry afterwards, decline UAC) |
+
+Not done: code signing (see Open decisions) — SmartScreen warns about the
+setup as about the bare exe. RM closing a running main window doesn't save
+the session on the spot (winit has no `WM_ENDSESSION`); it's saved 2 s after
+every change anyway. A downloaded setup that never ran (Terminaal killed)
+stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 ## W3 — Look (last, as on Linux)
 
@@ -113,7 +130,13 @@ machine-wide, and how in-place updates and the installer's registration
 - SSH: password, key, agent (Windows OpenSSH agent, Pageant, 1Password), jump host, ProxyCommand, forwards incl. SOCKS, reconnect after network loss, host-key dialog/removal
 - SFTP tab, transfers, edit with sync-back, folder sync (live), Recycle Bin delete, drag & drop upload
 - 5250 against PUB400 (telnet + TLS through schannel)
-- Session restore, second instance, update from a local server (`TERMINAAL_UPDATE_URL`), drop-down window (command, hotkey, focus loss, height)
+- Session restore, second instance, drop-down window (command, hotkey, focus loss, height)
+- Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name)
+- Setup per user: no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
+- Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards)
+- Setup for all users: UAC, Program Files, Start menu for all users
+- Update with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: installed copy offers it, downloads the setup, "Restart now" installs silently and starts again (drop-down window comes back); "Later" + close installs too; all-users install asks UAC (declining keeps the old version running); bare exe outside still swaps in place
+- Uninstall from Settings → Apps: program and shortcuts gone; settings question (No keeps `%APPDATA%\terminaal`, Yes removes both folders)
 - Notifications for long commands and silence, bell flashes the taskbar
 
 ## W5 — Docs and merge
@@ -139,12 +162,11 @@ machine-wide, and how in-place updates and the installer's registration
 | Wayland layer surface for the drop-down window | Frameless top-most winit window + `RegisterHotKey` |
 | `ext_background_effect_v1` / KWin blur | DWM backdrop (W3 #15) |
 | COSMIC theme | Windows theme (W3 #16) |
-| `app_id`/`WM_CLASS`, `.desktop` file, `install.sh` | AppUserModelID, Start-menu shortcut, installer (W2) |
+| `app_id`/`WM_CLASS`, `.desktop` file, `install.sh` | AppUserModelID, Start-menu shortcut, Inno Setup installer (W2) |
 | Man page | `terminaal --help` in the calling console |
 | inotify, `gio trash`, `flock`, Unix sockets for `--quake` | `ReadDirectoryChangesW`, Recycle Bin, `LockFileEx`, loopback port |
 
 ## Open decisions
 
-- **Code signing:** unsigned exes trigger SmartScreen ("Windows protected your PC") on download. Signing costs money/yearly; alternative is documenting "More info → Run anyway" and a winget manifest later.
+- **Code signing:** unsigned exes trigger SmartScreen ("Windows protected your PC") on download — the setup as much as the bare exe; silent updates run without it (downloaded by Terminaal, no Mark of the Web). Signing costs money/yearly (an OV certificate no longer skips SmartScreen by itself; Azure Trusted Signing is the cheap route if the account qualifies); alternative is documenting "More info → Run anyway" and a winget manifest later. Inno Setup can sign setup and uninstaller (`SignTool=`) once there is a certificate.
 - **System theme (W3 #16):** required for parity, or is COSMIC-sync Linux-only?
-- **Installer tool (W2 #10):** decided: a real installer. Open: Inno Setup vs. WiX/MSI, per-user vs. machine-wide, updates vs. the installer's registration.
