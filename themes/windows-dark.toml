@@ -1,0 +1,40 @@
+# Base of the "Windows" theme in dark mode (theme::windows): Windows
+# Terminal's default Campbell palette, the chrome in Windows 11's dark
+# greys. The accent colour comes from Windows.
+
+[colors.primary]
+background = "#0c0c0c"
+foreground = "#cccccc"
+bright_foreground = "#f2f2f2"
+
+[colors.normal]
+black = "#0c0c0c"
+red = "#c50f1f"
+green = "#13a10e"
+yellow = "#c19c00"
+blue = "#0037da"
+magenta = "#881798"
+cyan = "#3a96dd"
+white = "#cccccc"
+
+[colors.bright]
+black = "#767676"
+red = "#e74856"
+green = "#16c60c"
+yellow = "#f9f1a5"
+blue = "#3b78ff"
+magenta = "#b4009e"
+cyan = "#61d6d6"
+white = "#f2f2f2"
+
+[ui]
+background = "#202020"
+row = "#2b2b2b"
+hover = "#323232"
+border = "#383838"
+border_strong = "#4a4a4a"
+text = "#ffffff"
+text_weak = "#a0a0a0"
+error = "#ff99a4"
+success = "#6ccb5f"
+input = "#2d2d2d"

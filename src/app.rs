@@ -136,8 +136,9 @@ pub enum UserEvent {
     Terminal(usize, TermEvent),
     /// The splash animation finished decoding (`ui::splash`).
     SplashReady(Result<SplashFrames, String>),
-    /// The COSMIC desktop's theme changed (`theme::cosmic::watch`).
-    CosmicThemeChanged,
+    /// The desktop's theme changed: COSMIC's (`theme::cosmic::watch`) or
+    /// Windows' mode or accent colour (`theme::windows::watch`).
+    DesktopThemeChanged,
     /// A pane's shell said something about itself (`terminal::integration`).
     Shell(usize, ShellEvent),
     /// A files tab's SFTP session has something new to show.
@@ -995,8 +996,10 @@ impl AppState {
         }
         let proxy = state.proxy.clone();
         crate::theme::cosmic::watch(&crate::theme::cosmic::Roots::system(), move || {
-            let _ = proxy.send_event(UserEvent::CosmicThemeChanged);
+            let _ = proxy.send_event(UserEvent::DesktopThemeChanged);
         });
+        let proxy = state.proxy.clone();
+        crate::theme::windows::watch(move || drop(proxy.send_event(UserEvent::DesktopThemeChanged)));
         // The very first tab failing to spawn means we can't do anything
         // useful at all -- that's the same "just crash" behaviour the
         // single-session version had. Later tabs (Ctrl+Shift+T) are
@@ -4426,8 +4429,8 @@ impl AppState {
         self.window.request_redraw();
     }
 
-    /// Read the themes again -- the COSMIC desktop's changed -- and apply
-    /// the configured one, in case that's it.
+    /// Read the themes again -- the desktop's (COSMIC's, Windows') changed
+    /// -- and apply the configured one, in case that's it.
     fn reload_themes(&mut self) {
         self.themes = Themes::load();
         self.apply_theme();
@@ -5650,7 +5653,7 @@ impl ApplicationHandler<UserEvent> for App {
                 state.start_splash(frames);
                 return;
             }
-            UserEvent::CosmicThemeChanged => {
+            UserEvent::DesktopThemeChanged => {
                 state.reload_themes();
                 return;
             }

@@ -273,6 +273,7 @@ settings-theme = Theme
 settings-theme-builtin = Built-in theme
 settings-theme-own = Your theme from { $path }
 settings-theme-cosmic = Follows the desktop's COSMIC theme, switching between light and dark too
+settings-theme-windows = Follows Windows' light or dark mode and accent colour, also when they change
 settings-transparency = Translucency
 settings-opacity = Opacity
 settings-percent = { $value } %

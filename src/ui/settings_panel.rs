@@ -666,6 +666,7 @@ fn theme_choice(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarActio
                             t!("settings-theme-own", path = tilde(path))
                         }
                         Source::Cosmic => t!("settings-theme-cosmic"),
+                        Source::Windows => t!("settings-theme-windows"),
                         Source::Builtin => t!("settings-theme-builtin"),
                     };
                     let chosen = theme.name == *current;

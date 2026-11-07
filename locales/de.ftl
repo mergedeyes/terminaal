@@ -273,6 +273,7 @@ settings-theme = Theme
 settings-theme-builtin = Eingebautes Theme
 settings-theme-own = Eigenes Theme aus { $path }
 settings-theme-cosmic = Folgt dem COSMIC-Theme des Desktops, auch beim Wechsel zwischen hell und dunkel
+settings-theme-windows = Folgt dem hellen oder dunklen Modus und der Akzentfarbe von Windows, auch wenn sie sich ändern
 settings-transparency = Transparenz
 settings-opacity = Deckkraft
 settings-percent = { $value } %
