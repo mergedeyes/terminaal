@@ -6,10 +6,11 @@
 ;
 ; gives terminaal-x86_64-windows-setup.exe. What it does:
 ;
-; - Installs for the current user by default (%LOCALAPPDATA%\Programs\Terminaal,
-;   no admin rights); "Install for all users" on the first page puts it in
-;   Program Files instead (UAC). An update or a repeated setup keeps the
-;   choice made the first time.
+; - Installs into Program Files for all users by default, like other Windows
+;   programs (UAC). The first page also offers "only for me"
+;   (%LOCALAPPDATA%\Programs\Terminaal, no admin rights), for accounts that
+;   can't elevate. An update or a repeated setup keeps the choice made the
+;   first time.
 ; - Start menu shortcut carrying Terminaal's AppUserModelID, which the program
 ;   takes on when it runs from here (update::APP_USER_MODEL_ID): taskbar
 ;   grouping and toasts under Terminaal's name.
@@ -19,7 +20,7 @@
 ;   user says so (never in a silent uninstall).
 ;
 ; Updates (src/update.rs) download the new setup and run it with
-; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER (or /ALLUSERS) once
+; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS (UAC) or /CURRENTUSER once
 ; Terminaal has ended; the setup closes a drop-down Terminaal of this install
 ; (Restart Manager), the update script starts it again afterwards.
 ;
@@ -46,11 +47,11 @@ AppPublisherURL=https://github.com/mergedeyes/terminaal
 AppSupportURL=https://github.com/mergedeyes/terminaal/issues
 AppUpdatesURL=https://github.com/mergedeyes/terminaal/releases
 VersionInfoVersion={#AppVersion}
-; {autopf}: %LOCALAPPDATA%\Programs per user, Program Files for all users.
+; {autopf}: Program Files for all users, %LOCALAPPDATA%\Programs per user.
 DefaultDirName={autopf}\Terminaal
 DisableProgramGroupPage=yes
-; Per user without admin rights; the first page offers all users instead.
-PrivilegesRequired=lowest
+; Program Files for all users (UAC); the first page offers "only for me".
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog commandline
 ; The drop-down window at sign-in is per user even in an all-users install.
 UsedUserAreasWarning=no

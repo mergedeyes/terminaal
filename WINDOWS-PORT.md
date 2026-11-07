@@ -24,6 +24,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`). All three confirmed in the VM |
 | 2026-11-07 | CI with the cache: under 3 minutes. Decided for W2: a real installer (see W2) |
 | 2026-11-07 | **W2 in code:** Inno Setup script (per user by default, all users optional, Start menu shortcut with AppUserModelID, Apps entry, drop-down window at sign-in, settings kept on uninstall unless asked), exe icon + version info via `build.rs` (also under cargo xwin), installed copies update by running the new setup silently, CI artifact + release assets. `TERMINAAL_UPDATE_URL` takes `file:///` for update tests in the VM. Setup compiled only in CI so far (running Inno Setup under Wine locally was blocked) |
+| 2026-11-07 | First VM look at the setup: it defaulted to `%LOCALAPPDATA%\Programs`. Changed: **Program Files for all users by default** (UAC), "only for me" stays offered on the first page |
 | 2026-11-07 | W2's first CI run green in 4:20 min: 319 tests on real Windows, the setup compiles without warnings in 8 s (10 MB, LZMA2). Setup, exe and an update test release (`~/Downloads/terminaal-update/`, tag v99.0.0) ready for the VM |
 
 ### How builds get into the VM
@@ -53,7 +54,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | Window | `maximized` in `config.toml` (Windows only): starts maximized, noted whenever the window is maximized or restored; checkbox under Settings → General → Window size |
 | Links & hints | File paths with drive letters (`C:\…`), runnable extensions open their folder instead |
 | Notifications, updates | Toast notifications, under Terminaal's own AppUserModelID when installed by the setup (else PowerShell's). Updates: a copy the setup installed (`update::Installation::of`: the setup's Apps entry names the exe's folder, HKCU then HKLM) downloads `terminaal-x86_64-windows-setup.exe`, checks it and runs it with `/VERYSILENT … /CURRENTUSER` or `/ALLUSERS` (UAC) once Terminaal ends — "Restart now" or simply closing it — then starts Terminaal (and a drop-down window of that install that the setup closed) again; a bare copy elsewhere keeps the in-place swap (running exe renamed to `.old`, cleaned up next start). A hand copy in Program Files gets a Windows-specific "can't write" note |
-| Setup | `installer/terminaal.iss` (Inno Setup 6, preinstalled on `windows-latest`): per user by default in `%LOCALAPPDATA%\Programs\Terminaal` without admin rights, "for all users" offered (Program Files, UAC); Start menu shortcut with AppUserModelID `Terminaal.Terminaal` and start folder `%USERPROFILE%`; optional desktop shortcut and drop-down window at sign-in (`{userstartup}`, `--quake`); entry under Settings → Apps with version and uninstall; closes a running Terminaal of the install (Restart Manager); English/German. Uninstall removes program and shortcuts and asks (default No, never when silent) whether to delete `%APPDATA%\terminaal` and `%LOCALAPPDATA%\terminaal`. `AppId` is fixed (`update::SETUP_APP_ID`, a test keeps script, workflow and program in step) |
+| Setup | `installer/terminaal.iss` (Inno Setup 6, preinstalled on `windows-latest`): for all users by default in Program Files (UAC), "only for me" offered on the first page (`%LOCALAPPDATA%\Programs\Terminaal`, no admin rights); Start menu shortcut with AppUserModelID `Terminaal.Terminaal` and start folder `%USERPROFILE%`; optional desktop shortcut and drop-down window at sign-in (`{userstartup}`, `--quake`); entry under Settings → Apps with version and uninstall; closes a running Terminaal of the install (Restart Manager); English/German. Uninstall removes program and shortcuts and asks (default No, never when silent) whether to delete `%APPDATA%\terminaal` and `%LOCALAPPDATA%\terminaal`. `AppId` is fixed (`update::SETUP_APP_ID`, a test keeps script, workflow and program in step) |
 | Exe resources | `build.rs` writes a resource script (icon from `assets/terminaal.ico`, `VERSIONINFO` from Cargo.toml) and compiles it with `embed-resource`: `rc.exe` in CI, `llvm-rc` under cargo xwin |
 | Command line | `-c` with cmd, `-s` with a Windows path |
 | Drop-down window | `terminaal --quake`: lock + loopback port in the temp folder, second start toggles and hands over the foreground; global shortcut `quake_hotkey` (default Ctrl+Alt+T, `RegisterHotKey`); frameless, on top, not in the taskbar, height slider live, hides on focus loss |
@@ -81,8 +82,9 @@ uninstall), not a script or `terminaal --install`. Settled the same day:
 **Inno Setup** (a `setup.exe`; both Inno Setup 6.7.1 and WiX 3.14 are on
 `windows-latest`, Inno makes per-user installs, the AppUserModelID and custom
 questions simple; its compiler would run under Wine, but installing it there
-was blocked, so only CI compiles the setup), **per user by default with
-all users optional**, and **updates of installed copies run the new setup
+was blocked, so only CI compiles the setup), **Program Files for all users by
+default, "only for me" optional** (first decided the other way round; changed
+after the first look in the VM: a real program goes to Program Files), and **updates of installed copies run the new setup
 silently** (the common practice, VS Code's user setup does the same: the
 setup keeps its own Apps entry, files and uninstall log in step, and only an
 elevated setup can update a Program Files install). Bare exes keep the
@@ -93,7 +95,7 @@ in-place swap.
 | 9 | Exe icon + version info | Code: `build.rs` + `embed-resource`, checked in the cross build (`llvm-readobj`: icon group, `VERSIONINFO` 0.3.1). VM: open (Explorer icon, Properties → Details) |
 | 10 | Installer (counterpart of `install.sh`) | Code: `installer/terminaal.iss`, built by CI (artifact `terminaal-x86_64-windows-setup`). VM: open (install per user and for all users, Start menu, taskbar grouping, toast sender, Apps entry, drop-down at sign-in, uninstall with/without settings) |
 | 11 | Release assets | Code: `release.yml` publishes setup + `.sha256` next to the bare exe + `.sha256`; `update::Installation::asset` picks the setup for installed copies, the bare exe otherwise, only ever for its own OS (test `each_system_picks_only_its_own_download`). First real run with the next `v*` tag |
-| 12 | Updater location | Code: installed copies update through the setup (per user without prompt, all users with UAC); bare copies swap in place; a hand copy in Program Files gets `update-not-writable-windows`. Tests: staging the checked setup, setup arguments (Wine). VM: open (update from a `file:///` release on `Z:`, Apps entry afterwards, decline UAC) |
+| 12 | Updater location | Code: installed copies update through the setup (all users — the default — with a UAC prompt at each update, also when it runs on closing Terminaal; per user without prompt); bare copies swap in place; a hand copy in Program Files gets `update-not-writable-windows`. Tests: staging the checked setup, setup arguments (Wine). VM: open (update from a `file:///` release on `Z:`, Apps entry afterwards, decline UAC) |
 
 Not done: code signing (see Open decisions) — SmartScreen warns about the
 setup as about the bare exe. RM closing a running main window doesn't save
@@ -135,10 +137,10 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - 5250 against PUB400 (telnet + TLS through schannel)
 - Session restore, second instance, drop-down window (command, hotkey, focus loss, height)
 - Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name)
-- Setup per user: no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
+- Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
 - Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards)
-- Setup for all users: UAC, Program Files, Start menu for all users
-- Update with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: installed copy offers it, downloads the setup, "Restart now" installs silently and starts again (drop-down window comes back); "Later" + close installs too; all-users install asks UAC (declining keeps the old version running); bare exe outside still swaps in place
+- Setup "only for me": no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Apps entry for this user only
+- Update with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: installed copy offers it, downloads the setup, "Restart now" asks UAC, installs silently and starts again (drop-down window comes back); "Later" + close installs too (UAC after closing); declining UAC keeps the old version; a per-user install updates without a prompt; bare exe outside still swaps in place
 - Uninstall from Settings → Apps: program and shortcuts gone; settings question (No keeps `%APPDATA%\terminaal`, Yes removes both folders)
 - Notifications for long commands and silence, bell flashes the taskbar
 
