@@ -96,6 +96,14 @@ pub fn visible<T>(term: &Term<T>) -> Vec<(usize, Finished)> {
 /// Commands that ran shorter show no run time at their prompt.
 pub const MIN_SHOWN_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// An exit code as shown: in decimal, unless it's negative -- a Windows
+/// error code (HRESULT, NTSTATUS: `0x8…`, `0xC…`) that PowerShell's
+/// `$LASTEXITCODE` holds as a signed number. Those are written in hex
+/// everywhere (`0x8A15002C`, not `-1978335188`). Unix codes are 0-255.
+pub fn exit_code_label(code: i32) -> String {
+    if code < 0 { format!("0x{:08X}", code as u32) } else { code.to_string() }
+}
+
 /// A run time as shown at a prompt: `4.2 s`, `12 s`, `3 min 5 s`,
 /// `1 h 20 min` (decimal comma in German).
 pub fn duration_label(duration: std::time::Duration) -> String {
@@ -265,6 +273,10 @@ mod tests {
         use std::time::Duration;
         assert_eq!(duration_label(Duration::from_millis(4230)), "4,2 s");
         assert_eq!(duration_label(Duration::from_secs(12)), "12 s");
+        assert_eq!(exit_code_label(1), "1");
+        assert_eq!(exit_code_label(1000), "1000");
+        assert_eq!(exit_code_label(-1978335188), "0x8A15002C", "winget's own error");
+        assert_eq!(exit_code_label(-1073741819), "0xC0000005", "access violation");
         assert_eq!(duration_label(Duration::from_secs(185)), "3 min 5 s");
         assert_eq!(duration_label(Duration::from_secs(4800)), "1 h 20 min");
     }

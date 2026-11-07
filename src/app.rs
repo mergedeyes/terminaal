@@ -584,7 +584,7 @@ impl Pane {
     /// failed in a launcher-started window can still be read.
     fn hold_notice(&mut self) {
         let text = match self.exit_code {
-            Some(code) => t!("cli-hold-exit-code", code = code),
+            Some(code) => t!("cli-hold-exit-code", code = prompts::exit_code_label(code)),
             None => t!("cli-hold-exit"),
         };
         let mut parser: Processor = Processor::new();
@@ -4578,7 +4578,7 @@ impl AppState {
             }
             // Right to left: the exit code at the end, the run time before it.
             let parts = [
-                finished.exit.filter(|&code| code != 0).map(|code| (t!("prompt-exit", code = code), red)),
+                finished.exit.filter(|&code| code != 0).map(|code| (t!("prompt-exit", code = prompts::exit_code_label(code)), red)),
                 finished.duration.filter(|d| *d >= prompts::MIN_SHOWN_DURATION).map(|d| (prompts::duration_label(d), weak)),
             ];
             let parts: Vec<(String, glyphon::Color)> = parts.into_iter().flatten().collect();
@@ -5123,7 +5123,7 @@ fn hostname() -> String {
 /// finished, through `notify-send` if it's installed.
 fn notify(tab: &str, exit: Option<i32>, elapsed: Duration) {
     let title = match exit {
-        Some(code) if code != 0 => t!("notify-failed", code = code),
+        Some(code) if code != 0 => t!("notify-failed", code = prompts::exit_code_label(code)),
         _ => t!("notify-finished"),
     };
     desktop_notification(title, t!("notify-body", tab = tab, duration = duration_text(elapsed)));
