@@ -9,12 +9,14 @@ into README/docs and the file is deleted.
 Order follows the project's own: functionality first, then install/UX, then
 visual polish last.
 
-Status as of 2026-11-07 (evening): W1 closed in code, first manual tests in a
+Status as of 2026-11-07 (night): W1 closed in code, first manual tests in a
 Windows 11 VM under way. **W2 done in the VM** for the setup (Program Files
 default and per user), updates through the setup and uninstall; left in W2:
 a few small checks (exe icon/details, taskbar grouping, toast sender, bare-exe
-update, setup options) and the first real release run. Next up: **W3 (look)**.
-Branch up to date with `terminaal/main` at `25ddcdb`.
+update, setup options; folded into the next VM round) and the first real
+release run. **W3 (look) in code:** dark title bar, see-through window
+through DirectComposition, Acrylic blur, theme "Windows"; next is checking
+them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
 
 ## Progress log
 
@@ -30,6 +32,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | VM: the first CI setup (per user) installed and updated itself through the setup from the `file:///` test release without a hitch. No SmartScreen prompt — expected, files from the `Z:` share carry no Mark of the Web; a browser download from GitHub will still get the warning |
 | 2026-11-07 | First VM look at the setup: it defaulted to `%LOCALAPPDATA%\Programs`. Changed: **Program Files for all users by default** (UAC), "only for me" stays offered on the first page |
 | 2026-11-07 | W2's first CI run green in 4:20 min: 319 tests on real Windows, the setup compiles without warnings in 8 s (10 MB, LZMA2). Setup, exe and an update test release (`~/Downloads/terminaal-update/`, tag v99.0.0) ready for the VM |
+| 2026-11-07 | **W3 in code** (#13–#16): wgpu 30 can present through DirectComposition (`Dx12SwapchainKind::DxgiFromVisual`, surface offers `PreMultiplied`), now the default on Windows, with a window without redirection bitmap; DXGI can't change a swapchain's alpha mode, so the surface is premultiplied from the start and opaque frames draw alpha 1. Title bar dark/light with the theme (`DWMWA_USE_IMMERSIVE_DARK_MODE`), Acrylic backdrop for `blur` (Windows 11 22H2+), theme "Windows" decided as parity and built (registry + notification thread). Cross-checked with clippy, 323 tests under Wine (one known font failure); not yet seen on real Windows |
 
 ### How builds get into the VM
 
@@ -63,6 +66,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | Command line | `-c` with cmd, `-s` with a Windows path |
 | Drop-down window | `terminaal --quake`: lock + loopback port in the temp folder, second start toggles and hands over the foreground; global shortcut `quake_hotkey` (default Ctrl+Alt+T, `RegisterHotKey`); frameless, on top, not in the taskbar, height slider live, hides on focus loss |
 | Fonts | Default console font Cascadia Mono → Consolas → Lucida Console → Courier New (cosmic-text's Noto Sans Mono isn't on Windows) |
+| Look (W3, code only so far) | Frames through DirectComposition (`gpu::composition`: wgpu's `DxgiFromVisual`; the window is made without redirection bitmap, which would cover the visual); the surface is `PreMultiplied` from the start (DXGI keeps a swapchain's alpha mode, wgpu's `configure` only resizes) and `GpuState` tracks "see-through" on its own, so `opacity`/`ui_opacity` work through the unchanged `apply_transparency`. `WGPU_DX12_PRESENTATION_SYSTEM=hwnd` falls back to the plain swapchain (opaque, settings greyed out with the existing note). Title bar: `blur::set_dark_title_bar` in `apply_theme` (`DWMWA_USE_IMMERSIVE_DARK_MODE` by the theme's brightness, only on a change, `SWP_FRAMECHANGED` for Windows 10's repaint); the window gets a winit theme at creation, else winit 0.30 resets the title bar to the system mode on every `WM_SETTINGCHANGE`. Blur: `blur_windows.rs` extends the frame into the whole client area and sets `DWMWA_SYSTEMBACKDROP_TYPE` = Acrylic (`DWMSBT_TRANSIENTWINDOW`), off again = margins 0 + `DWMSBT_AUTO`; only from build 22621 (`RtlGetVersion`), else the checkbox greys out with "Blur needs Windows 11 22H2 or newer". Theme "Windows" (`theme::windows`): `AppsUseLightTheme`, `AccentPalette` (light 2 on dark, dark 1 on light, as WinUI's accent fill), DWM's `AccentColor` as fallback; Campbell / One Half Light (Windows Terminal's defaults) for the console, Windows 11 greys for the chrome; `watch` = thread on `RegNotifyChangeKeyValue` for three keys, 200 ms settle → `UserEvent::DesktopThemeChanged` (was `CosmicThemeChanged`) |
 
 ## W1 — Functional gaps (blocking the merge)
 
@@ -109,12 +113,12 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 ## W3 — Look (last, as on Linux)
 
-| # | Item | Plan |
+| # | Item | State |
 |---|---|---|
-| 13 | Dark title bar | `DWMWA_USE_IMMERSIVE_DARK_MODE` following the theme's brightness, switched in `apply_theme` |
-| 14 | **Transparency** (`opacity`, `ui_opacity`) | The DX12 HWND swapchain is opaque-only. wgpu's DirectComposition presentation gives `PreMultiplied`; then `apply_transparency` works unchanged. Until then the settings grey out with a note instead of doing nothing |
-| 15 | **Blur** (`blur`) | DWM backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`: Acrylic/Mica, Windows 11 22H2+) behind the transparent client area — `blur_windows.rs` becomes real |
-| 16 | System theme | Counterpart of the COSMIC theme: theme "Windows" from the accent colour and light/dark mode, live on `WM_SETTINGCHANGE` |
+| 13 | Dark title bar | Code (see Done → Look): `DWMWA_USE_IMMERSIVE_DARK_MODE` by the theme's brightness, switched live in `apply_theme`. VM: open (dark and light theme, switching while the window is active and inactive, Windows' own mode changed meanwhile must not flip it) |
+| 14 | **Transparency** (`opacity`, `ui_opacity`) | Code: DirectComposition presentation (`DxgiFromVisual`) by default, premultiplied surface from the start; `apply_transparency` unchanged. VM: open (opacity slider live, panels' opacity, opaque at 100 % with no see-through gaps, resizing, maximized, DPI change, the drop-down window) |
+| 15 | **Blur** (`blur`) | Code: Acrylic system backdrop behind the extended frame (Windows 11 22H2+, else greyed out with a note). VM: open (on/off live, together with opacity, inactive window turns solid as every Acrylic window does) |
+| 16 | System theme | **Decided 2026-11-07: part of parity.** Code: theme "Windows" from mode + accent colour, live through registry notifications, tests (accent shades, fallbacks, registry read under Wine). VM: open (switch Windows' mode and accent colour under Settings → Personalization → Colors while Terminaal shows the theme) |
 
 ## W4 — Tests and verification
 
@@ -141,6 +145,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - 5250 against PUB400 (telnet + TLS through schannel)
 - Session restore, second instance, drop-down window (command, hotkey, focus loss, height)
 - Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name)
+- Look (W3): title bar dark with a dark theme and light with a light one, switching live (theme picker, also with the window inactive); opacity slider and the panels' opacity live, 100 % fully opaque; blur on/off live (Acrylic, solid while inactive); theme "Windows" follows Windows' mode and accent colour live; all of it after a DPI change (100 → 150 %), maximized, and in the drop-down window
 - Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
 - Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards)
 - [x] Setup "only for me" (first CI setup, then still the default): no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Apps entry for this user only
@@ -155,7 +160,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 | # | Item |
 |---|---|
 | 21 | README: Windows install with the setup (per user / all users, SmartScreen "More info → Run anyway", the bare exe as a portable alternative), requirements (Windows 10 1809+ for ConPTY), what differs, known limitations |
-| 22 | Guides: getting started / installation (setup, uninstall and the settings question, updates through the setup), configuration (`quake_hotkey`, `maximized`, Windows paths), drop-down window (hotkey, the setup's sign-in option or Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY, update setup log in `%TEMP%\terminaal\update`), architecture (`src/platform/`, `build.rs`, `installer/`). RELEASING.md already lists the Windows assets and the `file:///` update test |
+| 22 | Guides: getting started / installation (setup, uninstall and the settings question, updates through the setup), configuration (`quake_hotkey`, `maximized`, Windows paths), drop-down window (hotkey, the setup's sign-in option or Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY, update setup log in `%TEMP%\terminaal\update`, `WGPU_DX12_PRESENTATION_SYSTEM=hwnd` for an empty window), appearance (theme "Windows", Acrylic blur needs 11 22H2), architecture (`src/platform/`, `build.rs`, `installer/`, `blur_windows.rs`, `theme::windows`). RELEASING.md already lists the Windows assets and the `file:///` update test |
 | 23 | CLAUDE.md: Windows parts in "Aktueller Stand", module list, known problems |
 | 24 | Keep merging `terminaal/main` into the branch; **every new Linux feature adds a row here** — parity is a moving target |
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |
@@ -174,7 +179,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 |---|---|
 | Wayland layer surface for the drop-down window | Frameless top-most winit window + `RegisterHotKey` |
 | `ext_background_effect_v1` / KWin blur | DWM backdrop (W3 #15) |
-| COSMIC theme | Windows theme (W3 #16) |
+| COSMIC theme | Theme "Windows" (W3 #16, `theme::windows`) |
 | `app_id`/`WM_CLASS`, `.desktop` file, `install.sh` | AppUserModelID, Start-menu shortcut, Inno Setup installer (W2) |
 | Man page | `terminaal --help` in the calling console |
 | inotify, `gio trash`, `flock`, Unix sockets for `--quake` | `ReadDirectoryChangesW`, Recycle Bin, `LockFileEx`, loopback port |
@@ -182,4 +187,3 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 ## Open decisions
 
 - **Code signing:** unsigned exes trigger SmartScreen ("Windows protected your PC") on download — the setup as much as the bare exe (not seen in the VM only because files from the shared folder have no Mark of the Web; to see what users see, download the setup with Edge from a release); silent updates run without it (downloaded by Terminaal, no Mark of the Web). Signing costs money/yearly (an OV certificate no longer skips SmartScreen by itself; Azure Trusted Signing is the cheap route if the account qualifies); alternative is documenting "More info → Run anyway" and a winget manifest later. Inno Setup can sign setup and uninstaller (`SignTool=`) once there is a certificate.
-- **System theme (W3 #16):** required for parity, or is COSMIC-sync Linux-only?
