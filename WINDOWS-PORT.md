@@ -43,6 +43,7 @@ date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | A tab whose shell fails within 5 s of starting stays with its status (`kept_after_exit`), so WSL's error in the VM can be read: built on `feature/keep-failed-tab` from `main` (PR to `main` when you say so), merged here |
 | 2026-11-07 | **W5 docs written**: `docs/guides/windows.md` and Windows parts in README and nine pages; CLAUDE.md section on the port |
 | 2026-11-07 | VM: splash, settings kept, exe icon and details, the look (title bar, theme "Windows", translucency), setup default and options, updates through the setup, uninstall confirmed. **W2 closed** apart from the first real `v*` release; **W3 closed** apart from blur (needs real hardware) |
+| 2026-11-07 | Rust 1.99's clippy lint `chunks_exact_to_as_chunks` fixed on `fix/clippy-chunks` (from `main`, with a test for the RGB/grey conversions) and merged here: clippy clean on both targets again |
 
 ### How builds get into the VM
 
