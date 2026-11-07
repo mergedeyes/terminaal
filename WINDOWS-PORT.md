@@ -24,6 +24,7 @@ Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | First Windows 11 VM session (Insider build): found and fixed — exit codes shown as negative numbers (now hex), tab/window title stuck at `powershell.exe`'s path after winget, window didn't start maximized (new option `maximized`). All three confirmed in the VM |
 | 2026-11-07 | CI with the cache: under 3 minutes. Decided for W2: a real installer (see W2) |
 | 2026-11-07 | **W2 in code:** Inno Setup script (per user by default, all users optional, Start menu shortcut with AppUserModelID, Apps entry, drop-down window at sign-in, settings kept on uninstall unless asked), exe icon + version info via `build.rs` (also under cargo xwin), installed copies update by running the new setup silently, CI artifact + release assets. `TERMINAAL_UPDATE_URL` takes `file:///` for update tests in the VM. Setup compiled only in CI so far (running Inno Setup under Wine locally was blocked) |
+| 2026-11-07 | VM: the first CI setup (per user) installed and updated itself through the setup from the `file:///` test release without a hitch. No SmartScreen prompt — expected, files from the `Z:` share carry no Mark of the Web; a browser download from GitHub will still get the warning |
 | 2026-11-07 | First VM look at the setup: it defaulted to `%LOCALAPPDATA%\Programs`. Changed: **Program Files for all users by default** (UAC), "only for me" stays offered on the first page |
 | 2026-11-07 | W2's first CI run green in 4:20 min: 319 tests on real Windows, the setup compiles without warnings in 8 s (10 MB, LZMA2). Setup, exe and an update test release (`~/Downloads/terminaal-update/`, tag v99.0.0) ready for the VM |
 
@@ -139,8 +140,9 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name)
 - Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
 - Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards)
-- Setup "only for me": no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Apps entry for this user only
-- Update with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: installed copy offers it, downloads the setup, "Restart now" asks UAC, installs silently and starts again (drop-down window comes back); "Later" + close installs too (UAC after closing); declining UAC keeps the old version; a per-user install updates without a prompt; bare exe outside still swaps in place
+- [x] Setup "only for me" (first CI setup, then still the default): no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Apps entry for this user only
+- [x] Update of the per-user install with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: offered, setup downloaded, installed silently, Terminaal back
+- Update details with the same test release: installed copy offers it, downloads the setup, "Restart now" asks UAC, installs silently and starts again (drop-down window comes back); "Later" + close installs too (UAC after closing); declining UAC keeps the old version; a per-user install updates without a prompt; bare exe outside still swaps in place
 - Uninstall from Settings → Apps: program and shortcuts gone; settings question (No keeps `%APPDATA%\terminaal`, Yes removes both folders)
 - Notifications for long commands and silence, bell flashes the taskbar
 
@@ -175,5 +177,5 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 ## Open decisions
 
-- **Code signing:** unsigned exes trigger SmartScreen ("Windows protected your PC") on download — the setup as much as the bare exe; silent updates run without it (downloaded by Terminaal, no Mark of the Web). Signing costs money/yearly (an OV certificate no longer skips SmartScreen by itself; Azure Trusted Signing is the cheap route if the account qualifies); alternative is documenting "More info → Run anyway" and a winget manifest later. Inno Setup can sign setup and uninstaller (`SignTool=`) once there is a certificate.
+- **Code signing:** unsigned exes trigger SmartScreen ("Windows protected your PC") on download — the setup as much as the bare exe (not seen in the VM only because files from the shared folder have no Mark of the Web; to see what users see, download the setup with Edge from a release); silent updates run without it (downloaded by Terminaal, no Mark of the Web). Signing costs money/yearly (an OV certificate no longer skips SmartScreen by itself; Azure Trusted Signing is the cheap route if the account qualifies); alternative is documenting "More info → Run anyway" and a winget manifest later. Inno Setup can sign setup and uninstaller (`SignTool=`) once there is a certificate.
 - **System theme (W3 #16):** required for parity, or is COSMIC-sync Linux-only?
