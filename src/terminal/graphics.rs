@@ -486,7 +486,7 @@ fn decode(controls: &Controls, payload: &[u8]) -> Result<Image, &'static str> {
             let rgba = if channels == 4 {
                 data[..size].to_vec()
             } else {
-                data[..size].chunks_exact(3).flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255]).collect()
+                data[..size].as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect()
             };
             (width, height, rgba)
         }
@@ -517,8 +517,8 @@ fn decode_png(data: &[u8]) -> Result<(u32, u32, Vec<u8>), &'static str> {
     buffer.truncate(frame.buffer_size());
     let rgba = match frame.color_type {
         png::ColorType::Rgba => buffer,
-        png::ColorType::GrayscaleAlpha => buffer.chunks_exact(2).flat_map(|ga| [ga[0], ga[0], ga[0], ga[1]]).collect(),
-        png::ColorType::Rgb => buffer.chunks_exact(3).flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255]).collect(),
+        png::ColorType::GrayscaleAlpha => buffer.as_chunks::<2>().0.iter().flat_map(|&[g, a]| [g, g, g, a]).collect(),
+        png::ColorType::Rgb => buffer.as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect(),
         png::ColorType::Grayscale => buffer.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::Indexed => return Err("EBADPNG:unexpanded palette"),
     };
@@ -549,6 +549,31 @@ mod tests {
         encoder.set_depth(png::BitDepth::Eight);
         encoder.write_header().unwrap().write_image_data(&[255, 0, 0, 255, 0, 0, 255, 128]).unwrap();
         out
+    }
+
+    /// A PNG of `width` × 1 pixels in `color`.
+    fn png_as(color: png::ColorType, width: u32, data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, width, 1);
+        encoder.set_color(color);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.write_header().unwrap().write_image_data(data).unwrap();
+        out
+    }
+
+    #[test]
+    fn rgb_and_grey_become_rgba_channel_by_channel() {
+        let mut graphics = graphics();
+        let rgba = |graphics: &mut Graphics, command: String, id: u32| {
+            graphics.command(command.as_bytes());
+            graphics.image(id).unwrap().rgba.to_vec()
+        };
+        let direct = rgba(&mut graphics, format!("Ga=t,f=24,s=2,v=1,i=1;{}", b64(&[1, 2, 3, 4, 5, 6])), 1);
+        assert_eq!(direct, [1, 2, 3, 255, 4, 5, 6, 255]);
+        let rgb = png_as(png::ColorType::Rgb, 2, &[10, 20, 30, 40, 50, 60]);
+        assert_eq!(rgba(&mut graphics, format!("Ga=t,f=100,i=2;{}", b64(&rgb)), 2), [10, 20, 30, 255, 40, 50, 60, 255]);
+        let grey_alpha = png_as(png::ColorType::GrayscaleAlpha, 2, &[70, 128, 90, 255]);
+        assert_eq!(rgba(&mut graphics, format!("Ga=t,f=100,i=3;{}", b64(&grey_alpha)), 3), [70, 70, 70, 128, 90, 90, 90, 255]);
     }
 
     #[test]
