@@ -36,6 +36,7 @@ them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | VM (software rendering: `Microsoft Basic Render Driver`, DX12, surface offers `PreMultiplied`): **transparency works** (opacity 30 %, panels 50 %, desktop shows through). Blur on turned the window solid light grey: Acrylic's fallback colour while Windows' transparency effects are off. Fixed: the backdrop is only set while `EnableTransparency` is on (read live through the theme watcher), else blur on = plain see-through, with the note `settings-blur-effects-off` |
 | 2026-11-07 | VM: transparency effects were on after all, yet Windows' own Acrylic (desktop context menu) and Mica (Explorer) are solid there too: DWM doesn't blur on software rendering. Blur stays unverified until a machine with a GPU; the effects-off fix stays (right for that case) |
 | 2026-11-07 | Confirmed: Windows' own Acrylic needs graphics hardware acceleration. So with a software adapter (`DeviceType::Cpu`, WARP) Terminaal offers no blur either — blur on would only turn the window solid — and the settings say why (`settings-blur-software-windows`) |
+| 2026-11-07 | VM: the drop-down window typed a `t` when shown with Ctrl+Alt+T — winit's synthetic presses for keys held on focus. Fixed: only real key events reach the terminal (also helps X11 on Linux) |
 
 ### How builds get into the VM
 
