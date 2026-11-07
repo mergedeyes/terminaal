@@ -9,14 +9,15 @@ into README/docs and the file is deleted.
 Order follows the project's own: functionality first, then install/UX, then
 visual polish last.
 
-Status as of 2026-11-07 (night): W1 closed in code, first manual tests in a
-Windows 11 VM under way. **W2 done in the VM** for the setup (Program Files
-default and per user), updates through the setup and uninstall; left in W2:
-a few small checks (exe icon/details, taskbar grouping, toast sender, bare-exe
-update, setup options; folded into the next VM round) and the first real
-release run. **W3 (look) in code:** dark title bar, see-through window
-through DirectComposition, Acrylic blur, theme "Windows"; next is checking
-them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
+Status as of 2026-11-07 (late): **W1** closed in code; in the VM typing,
+shells (not WSL), splits, links, 5250, drop-down window and session restore
+work. **W2 done in the VM** (setup both ways and its options, updates through
+the setup, uninstall, exe icon/details); left: the first real `v*` release.
+**W3 done in the VM** (title bar, translucency, theme "Windows"); blur needs
+real hardware. **W4 #18 done** (SFTP tests green in CI). **W5 docs written**.
+Left for parity: the rest of the VM checklist (SSH, SFTP in the app, DPI,
+notifications, English UI, WSL's message), then the final pass. Branch up to
+date with `terminaal/main` at `25ddcdb`.
 
 ## Progress log
 
@@ -41,6 +42,7 @@ them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | CI run 42394445057 green: 352 tests, then the 33 SFTP/edit/sync tests against Git for Windows' `sftp-server` on the first try (transfers both ways, resume after a dropped connection, edits with conflicts, hash conflicts, live sync, busy lock). **W4 #18 done** |
 | 2026-11-07 | A tab whose shell fails within 5 s of starting stays with its status (`kept_after_exit`), so WSL's error in the VM can be read: built on `feature/keep-failed-tab` from `main` (PR to `main` when you say so), merged here |
 | 2026-11-07 | **W5 docs written**: `docs/guides/windows.md` and Windows parts in README and nine pages; CLAUDE.md section on the port |
+| 2026-11-07 | VM: splash, settings kept, exe icon and details, the look (title bar, theme "Windows", translucency), setup default and options, updates through the setup, uninstall confirmed. **W2 closed** apart from the first real `v*` release; **W3 closed** apart from blur (needs real hardware) |
 
 ### How builds get into the VM
 
@@ -108,10 +110,10 @@ in-place swap.
 
 | # | Item | State |
 |---|---|---|
-| 9 | Exe icon + version info | Code: `build.rs` + `embed-resource`, checked in the cross build (`llvm-readobj`: icon group, `VERSIONINFO` 0.3.1). VM: open (Explorer icon, Properties → Details) |
-| 10 | Installer (counterpart of `install.sh`) | Done: `installer/terminaal.iss`, built by CI (artifact `terminaal-x86_64-windows-setup`). VM: install for all users (default) and per user, Start menu, Apps entry, uninstall confirmed. VM, still open: taskbar grouping with a pinned entry, toast sender "Terminaal", desktop shortcut and drop-down window at sign-in options |
+| 9 | Exe icon + version info | **Done**: `build.rs` + `embed-resource` (`llvm-readobj`: icon group, `VERSIONINFO` 0.3.1); VM: icon in Explorer and taskbar, Properties → Details confirmed 2026-11-07 |
+| 10 | Installer (counterpart of `install.sh`) | **Done**: `installer/terminaal.iss`, built by CI (artifact `terminaal-x86_64-windows-setup`). VM (2026-11-07): all users (default) and per user, Start menu, Apps entry, taskbar grouping, toast sender, desktop shortcut and drop-down window at sign-in, uninstall incl. the settings question |
 | 11 | Release assets | Code (open: first real run with a `v*` tag): `release.yml` publishes setup + `.sha256` next to the bare exe + `.sha256`; `update::Installation::asset` picks the setup for installed copies, the bare exe otherwise, only ever for its own OS (test `each_system_picks_only_its_own_download`). First real run with the next `v*` tag |
-| 12 | Updater location | Done (VM: per user without prompt, Program Files with UAC; bare-exe swap outside the install still to try): installed copies update through the setup (all users — the default — with a UAC prompt at each update, also when it runs on closing Terminaal; per user without prompt); bare copies swap in place; a hand copy in Program Files gets `update-not-writable-windows`. Tests: staging the checked setup, setup arguments (Wine). VM: open (update from a `file:///` release on `Z:`, Apps entry afterwards, decline UAC) |
+| 12 | Updater location | **Done**: installed copies update through the setup (all users with UAC at each update, also on closing Terminaal; per user without prompt), bare copies swap in place, a hand copy in Program Files gets `update-not-writable-windows`. VM (2026-11-07): offered, downloaded, installed silently, Terminaal back, details incl. UAC |
 
 Not done: code signing (see Open decisions) — SmartScreen warns about the
 setup as about the bare exe. RM closing a running main window doesn't save
@@ -123,10 +125,10 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 | # | Item | State |
 |---|---|---|
-| 13 | Dark title bar | Code (see Done → Look): `DWMWA_USE_IMMERSIVE_DARK_MODE` by the theme's brightness, switched live in `apply_theme`. VM: open (dark and light theme, switching while the window is active and inactive, Windows' own mode changed meanwhile must not flip it) |
+| 13 | Dark title bar | **Done**: `DWMWA_USE_IMMERSIVE_DARK_MODE` by the theme's brightness, switched live in `apply_theme`; confirmed in the VM 2026-11-07 |
 | 14 | **Transparency** (`opacity`, `ui_opacity`) | Code: DirectComposition presentation (`DxgiFromVisual`) by default, premultiplied surface from the start; `apply_transparency` unchanged. **VM: works** (opacity and panel opacity, software rendering). Still to see: opaque at 100 % with no see-through gaps, resizing, maximized, DPI change, the drop-down window |
 | 15 | **Blur** (`blur`) | Code: Acrylic system backdrop behind the extended frame (Windows 11 22H2+ with a hardware GPU, else not offered, with a note), only while Windows' transparency effects are on (else plain see-through + note, live). VM: can't be checked there: with transparency effects on, Windows' own Acrylic and Mica (context menu, Explorer) are solid too — DWM doesn't blur on the VM's software rendering. Needs a machine with a real GPU: on/off live, together with opacity, inactive window, effects switched off live (note + plain see-through) |
-| 16 | System theme | **Decided 2026-11-07: part of parity.** Code: theme "Windows" from mode + accent colour, live through registry notifications, tests (accent shades, fallbacks, registry read under Wine). VM: open (switch Windows' mode and accent colour under Settings → Personalization → Colors while Terminaal shows the theme) |
+| 16 | System theme | **Done** (decided 2026-11-07 as part of parity): theme "Windows" from mode + accent colour, live through registry notifications; tests (accent shades, fallbacks, registry read under Wine); confirmed in the VM 2026-11-07 |
 
 ## W4 — Tests and verification
 
@@ -143,7 +145,8 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - [x] PowerShell 5.1 tab: prompt marks, durations (`5,2 s`), `✘` exit codes
 - [x] Sidebar: shells (powershell, cmd, wsl), PowerShell aliases/functions/lines, built-in commands for Windows (winget)
 - [x] Title after winget, hex exit codes, start maximized (fixed and confirmed)
-- [ ] Splash, settings saved/kept, English
+- [x] Splash, settings saved/kept (2026-11-07)
+- [ ] English UI
 - [x] Typing incl. AltGr characters (`@ { [ ] } \ | ~`) on a German layout, dead keys, Ctrl/Alt shortcuts, Kitty keyboard in Neovim (2026-11-07: "typing works")
 - [x] PowerShell, pwsh, cmd, Git Bash tabs; prompt marks, exit codes, new tab in the same folder, `-c`, `-s`, `--hold` (2026-11-07: "shells work")
 - [ ] WSL tab: after installing WSL the tab opens and closes at once (2026-11-07) — most likely WSL 2 can't start without nested virtualization in the QEMU VM; to see its message: `terminaal -s wsl --hold`
@@ -155,15 +158,15 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 - [x] 5250 against PUB400 (telnet + TLS through schannel) (2026-11-07)
 - [x] Session restore, drop-down window (2026-11-07; the hotkey typed a `t` in the window, fixed in 645a32c, to confirm)
 - Second instance, drop-down window details (focus loss, height)
-- Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name)
-- Look (W3): title bar dark with a dark theme and light with a light one, switching live (theme picker, also with the window inactive); opacity slider and the panels' opacity live, 100 % fully opaque; blur on/off live (Acrylic, solid while inactive); theme "Windows" follows Windows' mode and accent colour live; all of it after a DPI change (100 → 150 %), maximized, and in the drop-down window
-- Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows
-- Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards)
+- [x] Exe: icon in Explorer and taskbar, Properties → Details (version 0.3.1, product name) (2026-11-07)
+- [x] Look (W3): title bar dark with a dark theme and light with a light one, switching live (theme picker, also with the window inactive); opacity slider and the panels' opacity live, 100 % fully opaque; blur on/off live (Acrylic, solid while inactive); theme "Windows" follows Windows' mode and accent colour live; all of it after a DPI change (100 → 150 %), maximized, and in the drop-down window (2026-11-07; blur only on real hardware — the VM has no GPU)
+- [x] Setup default (all users): first page offers "for all users" preselected, UAC, `C:\Program Files\Terminaal`, Start menu entry with icon, first tab in the home folder, taskbar groups with a pinned Start menu entry, toast says "Terminaal" (not Windows PowerShell), Settings → Apps shows Terminaal 0.3.1 with icon; German setup on a German Windows (2026-11-07)
+- [x] Setup options: desktop shortcut, drop-down window at sign-in (sign out and in); setup over a running Terminaal (closes it, "Launch Terminaal" afterwards) (2026-11-07)
 - [x] Setup "only for me" (first CI setup, then still the default): no UAC prompt, `%LOCALAPPDATA%\Programs\Terminaal`, Apps entry for this user only
 - [x] Setup default (all users) and update of it with UAC (2026-11-07, reported working)
 - [x] Update of the per-user install with `TERMINAAL_UPDATE_URL=file:///Z:/terminaal-update/latest.json`: offered, setup downloaded, installed silently, Terminaal back
-- Update details with the same test release: installed copy offers it, downloads the setup, "Restart now" asks UAC, installs silently and starts again (drop-down window comes back); "Later" + close installs too (UAC after closing); declining UAC keeps the old version; a per-user install updates without a prompt; bare exe outside still swaps in place
-- Uninstall from Settings → Apps: program and shortcuts gone; settings question (No keeps `%APPDATA%\terminaal`, Yes removes both folders)
+- [x] Update details with the same test release: installed copy offers it, downloads the setup, "Restart now" asks UAC, installs silently and starts again (drop-down window comes back); "Later" + close installs too (UAC after closing); declining UAC keeps the old version; a per-user install updates without a prompt; bare exe outside still swaps in place (2026-11-07)
+- [x] Uninstall from Settings → Apps: program and shortcuts gone; settings question (No keeps `%APPDATA%\terminaal`, Yes removes both folders) (2026-11-07)
 - Notifications for long commands and silence, bell flashes the taskbar
 
 ## W5 — Docs and merge
