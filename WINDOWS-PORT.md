@@ -39,6 +39,7 @@ them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | VM: the drop-down window typed a `t` when shown with Ctrl+Alt+T — winit's synthetic presses for keys held on focus. Fixed: only real key events reach the terminal (also helps X11 on Linux) |
 | 2026-11-07 | VM checklist: typing, shells (not WSL: the tab closes at once, likely no nested virtualization), splits, links, 5250, drop-down window, session restore work. W4 #18 in code: SFTP/edit/sync tests on Windows against Git for Windows' `sftp-server` in CI |
 | 2026-11-07 | CI run 42394445057 green: 352 tests, then the 33 SFTP/edit/sync tests against Git for Windows' `sftp-server` on the first try (transfers both ways, resume after a dropped connection, edits with conflicts, hash conflicts, live sync, busy lock). **W4 #18 done** |
+| 2026-11-07 | A tab whose shell fails within 5 s of starting stays with its status (`kept_after_exit`), so WSL's error in the VM can be read: built on `feature/keep-failed-tab` from `main` (PR to `main` when you say so), merged here |
 
 ### How builds get into the VM
 
@@ -176,7 +177,7 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 ## Follow-ups (not blocking)
 
-- A shell that ends with an error within 5 s of starting keeps its tab open with the exit status (as `--hold`), so its message can be read — seen with `wsl.exe` in the VM; a Linux feature too, on the main roadmap (CLAUDE.md, phase 15)
+- ~~A shell that ends with an error within 5 s of starting keeps its tab open~~ — done on its own branch `feature/keep-failed-tab` (from `main`, for Linux too) and merged into this one; to check with `wsl` in the VM (the kept tab should show WSL's message, status in hex)
 - **WSL integration** (moved out of W1 on 2026-11-07: Linux has no counterpart, so it isn't parity; WSL tabs already work as plain terminals, and fish ≥ 4 or Nushell inside send OSC 7/133 themselves). Would be: one entry per distro (`wsl -l -q`, UTF-16) — needs shells with arguments in config/session/`-s`; the distro's login shell with Terminaal's startup file (path via `wslpath`); folders `/mnt/c/…` ↔ `C:\…` and `\\wsl.localhost\<distro>\…`. Can't be tested under Wine or in a VM without nested virtualization
 - MSYS2/Cygwin shells (their bash needs the login environment, which `--rcfile` skips); `pwsh` installed from the Store (an app execution alias that `is_file` doesn't see)
 - Save the session when the Restart Manager closes a running Terminaal (setup over a running window): needs `WM_QUERYENDSESSION`/`WM_ENDSESSION`, which winit doesn't pass on (a window subclass would)

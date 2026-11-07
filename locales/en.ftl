@@ -53,6 +53,7 @@ cli-command-not-for-5250 = '{ $host }' is an IBM i host: -c needs a shell, a 525
 cli-unknown-shell = No installed shell named '{ $shell }'.
 cli-hold-exit = [ Finished. Close the tab with Ctrl+Shift+W ]
 cli-hold-exit-code = [ Finished with status { $code }. Close the tab with Ctrl+Shift+W ]
+pane-failed-at-start = [ Ended with status { $code } right after starting, kept open so you can read why. Close the tab with Ctrl+Shift+W ]
 
 ## Config file
 

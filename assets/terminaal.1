@@ -79,7 +79,8 @@ redirections and several commands separated by
 .B ;
 work. The tab closes when the line ends, unless
 .B \-\-hold
-is given. Together with
+is given or the line fails (a status other than 0) within five seconds of
+starting \(en then, as for any tab, it stays with a line naming the status. Together with
 .BR \-\-connect ,
 the line runs on the server (ssh_config's
 .BR RemoteCommand ).

@@ -365,7 +365,9 @@ terminaal --help                       # all of it, and `man terminaal` for more
 ```
 
 With `--connect`, `-s` or `-c` the saved session is neither restored nor
-written. → [The command line](docs/guides/command-line.md)
+written. Any tab whose shell or command fails within five seconds of starting
+stays open with its status, so the error can be read.
+→ [The command line](docs/guides/command-line.md)
 
 ## Configuration
 
@@ -537,6 +539,7 @@ The [`docs/`](docs/README.md) folder goes into detail:
 - [x] A warning before risky pastes
 - [x] Activity in background tabs
 - [x] `terminaal -c`, `-s` and `--hold`, and a `terminaal(1)` man page
+- [x] A tab whose shell fails right after starting stays open with its status
 - [x] Folder sync over SFTP – two-way or one-way, on opening or live in the background
 - [x] Selecting several files at once in the files tab
 - [x] Updates from the GitHub releases, offered at start and installed on request
