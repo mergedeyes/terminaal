@@ -5564,7 +5564,7 @@ impl ApplicationHandler<UserEvent> for App {
         {
             return;
         }
-        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+        if let WindowEvent::KeyboardInput { event: key, is_synthetic: false, .. } = &event
             && key.state == ElementState::Pressed
         {
             state.dismiss_splash();
@@ -5631,7 +5631,9 @@ impl ApplicationHandler<UserEvent> for App {
                 state.modifiers = modifiers.state();
                 state.update_link();
             }
-            WindowEvent::KeyboardInput { event, .. } => state.handle_keyboard_input(KeyInput::from(&event)),
+            // Not what winit makes up on focus for keys already held (Windows,
+            // X11): the drop-down window, shown by Ctrl+Alt+T, typed the T.
+            WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => state.handle_keyboard_input(KeyInput::from(&event)),
             WindowEvent::CursorMoved { position, .. } => state.on_cursor_moved(position),
             WindowEvent::CursorLeft { .. } => {
                 state.set_hovered(None);
