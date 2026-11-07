@@ -18,7 +18,7 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | Build & CI | `src/platform/` holds the OS differences (stream pairs: loopback TCP + `WSAPoll`; locks; permissions; links via `explorer.exe`; trash = Recycle Bin; local time). CI on `windows-latest`: clippy, tests, release exe as artifact. Release workflow builds a Windows exe |
 | Startup | Window program without a console; `--help`/`--version`/errors/`RUST_LOG` go to the parent console (`AttachConsole`). Settings in `%APPDATA%\terminaal`, state in `%LOCALAPPDATA%\terminaal`. German UI from the Windows locale |
 | Local terminal | ConPTY; shell-integration filter inside ConPTY reads; shells found: pwsh 7, Windows PowerShell, cmd, Git Bash, WSL (default: first non-cmd) |
-| Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications) |
+| Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications). cmd: `PROMPT` set at launch wraps the user's own prompt (else `$P$G`) in OSC 133 A/B and sends the folder as OSC 9;9, which the filter now reads (all platforms); no C/D (cmd has no pre-exec hook): no durations, exit codes, notifications, output marks. Only through tests so far, not in a real cmd |
 | Sidebar | Aliases, functions and lines for PowerShell (profile-loaded file of Terminaal's own) |
 | Built-in commands | Systems `windows` (PowerShell) and `windows-cmd`: winget updates, disks, folder sizes, memory, processes, uptime, failed services, log errors, ports, addresses; usable for SSH hosts via `system` |
 | SSH | Agent auth (Pageant, Windows OpenSSH agent pipe), Ed25519 keys, ProxyCommand via `cmd /C`. Agent forwarding to named pipes (`ssh::agent_pipe`): Windows' OpenSSH agent when `SSH_AUTH_SOCK` is unset (also 1Password, Bitwarden, KeePassXC), any pipe in `IdentityAgent`/`ForwardAgent` (Pageant: the path `pageant --openssh-config` writes); a thread relays message by message between the pipe and a socket pair. Tested against a fake agent on a real pipe (Wine); not yet against a real server |
@@ -35,7 +35,6 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 | # | Gap | Linux has | Plan |
 |---|---|---|---|
-| 4 | **Shell integration for cmd** | bash/zsh/fish scripts | `PROMPT` can emit escapes: `$e]133;D$e\$e]133;A$e\…$e]133;B$e\`; cwd via `$e]9;9;$P$e\` (ConEmu/Windows Terminal) — teach the filter OSC 9;9 as a raw-path OSC 7. No `C` (cmd has no pre-exec hook): no durations/notifications, exit code not available — document |
 | 5 | **Git Bash** | bash integration + managed `~/.bash_terminaal` | Verify the bash launcher under Git Bash (`--rcfile` with a Windows path), convert MSYS cwd (`/c/Users/…`) to `C:\Users\…` for new tabs and links |
 | 6 | **WSL** | — (Linux runs shells natively) | `wsl.exe` tab with integration: start the distro's login shell with Terminaal's startup file (path via `wslpath`), cwd `/mnt/c/…` ↔ `C:\…`, `\\wsl$\<distro>\…` for Linux paths; one entry per installed distro (`wsl -l -q`) |
 | 7 | Shell detection breadth | `/etc/shells` lists everything | Also per-user Git (`%LOCALAPPDATA%\Programs\Git`), pwsh preview, MSYS2, Cygwin, Nushell; `-s` lists them |

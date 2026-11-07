@@ -3,7 +3,8 @@
 //! would drop, before the parser sees them.
 //!
 //! - OSC 7 (`file://host/path`): the working directory, as
-//!   [`ShellEvent::Cwd`]. Passed on unchanged.
+//!   [`ShellEvent::Cwd`]. Passed on unchanged. So is OSC 9;9 (`9;9;path`,
+//!   a plain path: ConEmu's and Windows Terminal's, what cmd can send).
 //! - OSC 133 (FinalTerm prompt marks): `A` prompt starts, `B` prompt ends,
 //!   `C` command starts, `D;code` command finished. `C` and `D` become
 //!   events; only their timing matters.
@@ -461,6 +462,10 @@ impl Filter {
             if let Some(event) = parse_cwd(uri) {
                 events.push(event);
             }
+        } else if let Some(path) = body.strip_prefix(b"9;9;") {
+            if let Some(event) = parse_plain_cwd(path) {
+                events.push(event);
+            }
         } else if let Some(mark) = body.strip_prefix(b"133;") {
             let mut parts = mark.split(|&b| b == b';');
             match parts.next() {
@@ -606,6 +611,12 @@ fn parse_cwd(uri: &[u8]) -> Option<ShellEvent> {
     let host = String::from_utf8_lossy(&rest[..slash]).into_owned();
     let path = percent_decode(&rest[slash..]);
     Some(ShellEvent::Cwd { host, path: local_path(path) })
+}
+
+/// OSC 9;9's path: as it is, maybe in quotes; this machine's.
+fn parse_plain_cwd(path: &[u8]) -> Option<ShellEvent> {
+    let path = path.strip_prefix(b"\"").and_then(|rest| rest.strip_suffix(b"\"")).unwrap_or(path);
+    (!path.is_empty()).then(|| ShellEvent::Cwd { host: String::new(), path: local_path(path.to_vec()) })
 }
 
 /// A decoded OSC 7 path: bytes as they are on Unix.
@@ -817,6 +828,14 @@ mod tests {
         assert_eq!(events, [ShellEvent::Cwd { host: "my-box".into(), path: PathBuf::from("/home/me/with space/ä") }]);
         assert_eq!(run(&[b"\x1b]7;file:///tmp\x07"]).1, [ShellEvent::Cwd { host: String::new(), path: "/tmp".into() }]);
         assert!(run(&[b"\x1b]7;kitty-shell-cwd://x/y\x07"]).1.is_empty());
+
+        // OSC 9;9 (cmd through its PROMPT): a plain path, maybe quoted.
+        let input: &[u8] = b"\x1b]9;9;C:\\Users\\Jan \xC3\x84\x1b\\";
+        let (out, events) = run(&[input]);
+        assert_eq!(out, input);
+        assert_eq!(events, [ShellEvent::Cwd { host: String::new(), path: PathBuf::from("C:\\Users\\Jan Ä") }]);
+        assert_eq!(run(&[b"\x1b]9;9;\"D:\\\"\x07"]).1, [ShellEvent::Cwd { host: String::new(), path: "D:\\".into() }]);
+        assert!(run(&[b"\x1b]9;9;\x07", b"\x1b]9;4;1;50\x07"]).1.is_empty(), "empty, or another OSC 9");
     }
 
     #[test]

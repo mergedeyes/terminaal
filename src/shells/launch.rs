@@ -53,6 +53,7 @@ pub fn launch(shell: &InstalledShell) -> Launch {
         (ShellKind::Fish, Some(file)) => fish(shell, &file),
         (ShellKind::Bash, Some(file)) => bash(shell, &file),
         (ShellKind::Zsh, Some(file)) => zsh(shell, &file),
+        _ if shell.name.eq_ignore_ascii_case("cmd") => Ok(cmd(shell, std::env::var("PROMPT").ok())),
         _ => Ok(Launch::plain(shell)),
     };
     result.unwrap_or_else(|err| {
@@ -259,6 +260,23 @@ fn powershell(shell: &InstalledShell, file: Option<&Path>) -> Launch {
     launch
 }
 
+/// The marks cmd's prompt gets: `$E` is an escape there.
+const CMD_PROMPT_START: &str = "$E]9;9;$P$E\\$E]133;A$E\\";
+const CMD_PROMPT_END: &str = "$E]133;B$E\\";
+
+/// cmd has no hooks, only its `PROMPT`, which can print escapes: the
+/// folder (OSC 9;9) and the prompt marks around the user's own prompt
+/// (`prompt`, else cmd's `$P$G`). Nothing runs before a command, so
+/// there's no C or D: no durations, exit codes or notifications.
+fn cmd(shell: &InstalledShell, prompt: Option<String>) -> Launch {
+    let own = prompt.filter(|prompt| !prompt.trim().is_empty()).unwrap_or_else(|| "$P$G".into());
+    // Started from a cmd tab of Terminaal's: marked already.
+    let marked = if own.contains(CMD_PROMPT_START) { own } else { format!("{CMD_PROMPT_START}{own}{CMD_PROMPT_END}") };
+    let mut launch = Launch::plain(shell);
+    launch.env.insert("PROMPT".into(), marked);
+    launch
+}
+
 fn integration_dir() -> io::Result<PathBuf> {
     let config = super::xdg_config_home().ok_or_else(|| io::Error::other("$HOME is not set"))?;
     Ok(config.join("terminaal/shell-integration"))
@@ -312,6 +330,23 @@ mod tests {
                  test -f '/home/u/.config/fish/terminaal.fish'; and source '/home/u/.config/fish/terminaal.fish'"
             ]
         );
+    }
+
+    #[test]
+    fn cmd_gets_marks_around_its_prompt() {
+        let shell = InstalledShell::new("/x/cmd");
+        let prompt = |own: Option<&str>| cmd(&shell, own.map(str::to_string)).env["PROMPT"].clone();
+        assert_eq!(prompt(None), r"$E]9;9;$P$E\$E]133;A$E\$P$G$E]133;B$E\");
+        assert_eq!(prompt(Some("$T $P$G")), r"$E]9;9;$P$E\$E]133;A$E\$T $P$G$E]133;B$E\");
+        assert_eq!(prompt(Some(&prompt(None))), prompt(None), "not marked twice");
+
+        // What cmd prints for it goes through the filter as a prompt and a folder.
+        let printed = b"\x1b]9;9;C:\\Users\x1b\\\x1b]133;A\x1b\\C:\\Users>\x1b]133;B\x1b\\";
+        let mut filter = crate::terminal::integration::Filter::default();
+        let (mut out, mut events) = (Vec::new(), Vec::new());
+        filter.feed(printed, &mut out, &mut events);
+        use crate::terminal::integration::ShellEvent;
+        assert_eq!(events, [ShellEvent::Cwd { host: String::new(), path: "C:\\Users".into() }, ShellEvent::Prompt]);
     }
 
     #[test]
