@@ -21,7 +21,7 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | Shell integration | PowerShell: OSC 7 + OSC 133 (prompt marks, exit codes, durations, notifications) |
 | Sidebar | Aliases, functions and lines for PowerShell (profile-loaded file of Terminaal's own) |
 | Built-in commands | Systems `windows` (PowerShell) and `windows-cmd`: winget updates, disks, folder sizes, memory, processes, uptime, failed services, log errors, ports, addresses; usable for SSH hosts via `system` |
-| SSH | Agent auth (Pageant, Windows OpenSSH agent pipe), Ed25519 keys, ProxyCommand via `cmd /C` |
+| SSH | Agent auth (Pageant, Windows OpenSSH agent pipe), Ed25519 keys, ProxyCommand via `cmd /C`. Agent forwarding to named pipes (`ssh::agent_pipe`): Windows' OpenSSH agent when `SSH_AUTH_SOCK` is unset (also 1Password, Bitwarden, KeePassXC), any pipe in `IdentityAgent`/`ForwardAgent` (Pageant: the path `pageant --openssh-config` writes); a thread relays message by message between the pipe and a socket pair. Tested against a fake agent on a real pipe (Wine); not yet against a real server |
 | SFTP | Edit-and-sync-back and live folder sync with `ReadDirectoryChangesW`; excludes with `\` paths |
 | Links & hints | File paths with drive letters (`C:\…`), runnable extensions open their folder instead |
 | Notifications, updates | Toast notifications; in-place update (running exe renamed to `.old`, cleaned up next start; restart via hidden PowerShell) |
@@ -33,7 +33,6 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 
 | # | Gap | Linux has | Plan |
 |---|---|---|---|
-| 1 | **Agent forwarding** (`ForwardAgent`) | Forwarded agent channels tunnelled to `$SSH_AUTH_SOCK` | Windows agents are named pipes (`\\.\pipe\openssh-ssh-agent`, Pageant's pipe). Default socket = the OpenSSH pipe when `SSH_AUTH_SOCK` is unset; `Stream` variant for a pipe, bridged to the poll loop through a thread + loopback pair (pipes can't go into `WSAPoll`). `IdentityAgent` with a pipe path |
 | 2 | **Unix-socket forwards** (`LocalForward /path`, RemoteForward to a local socket) | `UnixListener`/`UnixStream` | Windows 10 1803+ has `AF_UNIX`; std doesn't wrap it. Thin wrapper over `windows-sys` WinSock (`socket(AF_UNIX)`, `bind`/`connect` with `sockaddr_un`) — sockets work with `WSAPoll`. Same 0600 intent via the profile ACL; stale-file replacement as on Linux |
 | 3 | **Running program in the tab title** | Foreground process group via `tcgetpgrp` | ConPTY has no process groups. Take the shell's PID (`ChildExitWatcher::pid`), find its newest live descendant with a Toolhelp32 snapshot (skip `conhost`/`OpenConsole`), name from the exe. Same 250 ms poll after output settles |
 | 4 | **Shell integration for cmd** | bash/zsh/fish scripts | `PROMPT` can emit escapes: `$e]133;D$e\$e]133;A$e\…$e]133;B$e\`; cwd via `$e]9;9;$P$e\` (ConEmu/Windows Terminal) — teach the filter OSC 9;9 as a raw-path OSC 7. No `C` (cmd has no pre-exec hook): no durations/notifications, exit code not available — document |
@@ -91,6 +90,10 @@ Status as of 2026-11-07, branch up to date with `terminaal/main` at `25ddcdb`.
 | 23 | CLAUDE.md: Windows parts in "Aktueller Stand", module list, known problems |
 | 24 | Keep merging `terminaal/main` into the branch; **every new Linux feature adds a row here** — parity is a moving target |
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |
+
+## Follow-ups (not blocking)
+
+- Pageant found by itself for forwarding (its pipe name is derived from the user name and `CryptProtectMemory`), so `ForwardAgent yes` works with it without the `--openssh-config` path
 
 ## Not ported, by design
 

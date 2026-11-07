@@ -93,6 +93,16 @@ impl Stream {
         Err(io::ErrorKind::Unsupported.into())
     }
 
+    /// The local agent: a Unix socket, on Windows mostly a named pipe
+    /// ([`super::agent_pipe`]).
+    fn connect_agent(path: &Path) -> io::Result<Self> {
+        #[cfg(windows)]
+        if super::agent_pipe::is_pipe(path) {
+            return super::agent_pipe::connect(path).map(Stream::local);
+        }
+        Self::connect_unix(path)
+    }
+
     fn set_nonblocking(&self) -> io::Result<()> {
         match self {
             Stream::Tcp(stream) => stream.set_nonblocking(true),
@@ -611,7 +621,7 @@ impl Forwards {
         // Last: the accepts above may have read an agent request.
         if let Some(agent) = &self.agent {
             for channel in agent.take() {
-                match Stream::connect_unix(agent.socket()) {
+                match Stream::connect_agent(agent.socket()) {
                     Ok(stream) => self.tunnels.push(Tunnel::over(Box::new(channel), stream)),
                     Err(err) => {
                         log::debug!("agent {}: {err}", agent.socket().display());

@@ -65,7 +65,8 @@ xkbcommon = "0.8"
 [target.'cfg(windows)'.dependencies]
 # WSAPoll for the workers' sockets, local time, the Recycle Bin, the UI
 # language (platform::windows, i18n), watching folders for SFTP edits and
-# live sync (sftp::watch_windows); the version the tree already has.
+# live sync (sftp::watch_windows), SSH agents' named pipes
+# (ssh::agent_pipe); the version the tree already has.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -74,6 +75,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_IO",
+    "Win32_System_Pipes",
     "Win32_System_Time",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",

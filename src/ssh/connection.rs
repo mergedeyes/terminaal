@@ -665,10 +665,17 @@ impl Worker {
                 None => expand_tilde(spec),
             },
             (_, AgentSocket::Path(path)) => path.clone(),
+            // Windows: without the variable, Windows' own OpenSSH agent --
+            // as for logging in, where libssh2 looks there itself.
+            #[cfg(windows)]
+            (_, AgentSocket::Env) => {
+                from_env("SSH_AUTH_SOCK").unwrap_or_else(|_| PathBuf::from(super::agent_pipe::OPENSSH_AGENT))
+            }
+            #[cfg(unix)]
             (_, AgentSocket::Env) => from_env("SSH_AUTH_SOCK")?,
             (_, AgentSocket::Off) => return Err(t!("conn-agent-forward-off")),
         };
-        if !socket.exists() {
+        if !super::agent_pipe::exists(&socket) {
             return Err(t!("conn-agent-forward-missing", socket = display_path(&socket)));
         }
         Ok(socket)

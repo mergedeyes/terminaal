@@ -17,6 +17,7 @@
 //! settings count, and [`Host::tn5250_target`] stands in for the catalog.
 
 mod agent_forward;
+mod agent_pipe;
 pub mod connection;
 pub mod forward;
 mod socks;
