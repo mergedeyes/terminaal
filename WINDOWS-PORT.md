@@ -40,6 +40,7 @@ them in the VM. Branch up to date with `terminaal/main` at `25ddcdb`.
 | 2026-11-07 | VM checklist: typing, shells (not WSL: the tab closes at once, likely no nested virtualization), splits, links, 5250, drop-down window, session restore work. W4 #18 in code: SFTP/edit/sync tests on Windows against Git for Windows' `sftp-server` in CI |
 | 2026-11-07 | CI run 42394445057 green: 352 tests, then the 33 SFTP/edit/sync tests against Git for Windows' `sftp-server` on the first try (transfers both ways, resume after a dropped connection, edits with conflicts, hash conflicts, live sync, busy lock). **W4 #18 done** |
 | 2026-11-07 | A tab whose shell fails within 5 s of starting stays with its status (`kept_after_exit`), so WSL's error in the VM can be read: built on `feature/keep-failed-tab` from `main` (PR to `main` when you say so), merged here |
+| 2026-11-07 | **W5 docs written**: `docs/guides/windows.md` and Windows parts in README and nine pages; CLAUDE.md section on the port |
 
 ### How builds get into the VM
 
@@ -169,9 +170,9 @@ stays in `%TEMP%\terminaal\update` until Windows cleans the temp folder.
 
 | # | Item |
 |---|---|
-| 21 | README: Windows install with the setup (per user / all users, SmartScreen "More info → Run anyway", the bare exe as a portable alternative), requirements (Windows 10 1809+ for ConPTY), what differs, known limitations |
-| 22 | Guides: getting started / installation (setup, uninstall and the settings question, updates through the setup), configuration (`quake_hotkey`, `maximized`, Windows paths), drop-down window (hotkey, the setup's sign-in option or Startup folder), shells/integration (PowerShell, cmd, Git Bash, WSL), SSH hosts (Windows agents), troubleshooting (SmartScreen, Defender, ConPTY, update setup log in `%TEMP%\terminaal\update`, `WGPU_DX12_PRESENTATION_SYSTEM=hwnd` for an empty window), appearance (theme "Windows", Acrylic blur needs 11 22H2), architecture (`src/platform/`, `build.rs`, `installer/`, `blur_windows.rs`, `theme::windows`). RELEASING.md already lists the Windows assets and the `file:///` update test |
-| 23 | CLAUDE.md: Windows parts in "Aktueller Stand", module list, known problems |
+| 21 | **Done (2026-11-07)**: README – status line, Windows install paragraph (setup / plain exe, SmartScreen), Windows limitations under Known limitations, Windows in Roadmap → Done, link in Documentation |
+| 22 | **Done (2026-11-07)**: new `docs/guides/windows.md` (install, updates, uninstall, folders, shells and integration, SSH agents, drop-down shortcut, look, notifications, troubleshooting), index entry; Windows parts in getting started, configuration (`maximized`, `quake_hotkey`, `%APPDATA%`), updates (assets, setup updates), drop-down window, appearance, shell integration, SSH hosts (pipes as `IdentityAgent`), troubleshooting, architecture (module map). To reread against the code before the merge |
+| 23 | Partly (2026-11-07): CLAUDE.md has a marked section on the port (modules, rendering, where the details are). Before the merge: Windows into "Aktueller Stand", module list, known problems |
 | 24 | Keep merging `terminaal/main` into the branch; **every new Linux feature adds a row here** — parity is a moving target |
 | 25 | Final: tests + clippy on both targets, full VM pass, PR, then a release |
 

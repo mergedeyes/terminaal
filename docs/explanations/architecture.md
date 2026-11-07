@@ -184,7 +184,7 @@ them back into 5250 keys.
 | `src/session.rs` | Saving and restoring the open tabs |
 | `src/input.rs`, `src/input/keyboard.rs` | Keys, wheel and paste into bytes: the xterm encoding and the kitty keyboard protocol |
 | `src/render/` | Grid, tab bar, search bar, scrollbar, labels, quads, images, palette |
-| `src/gpu.rs`, `src/blur.rs` | wgpu device and surface; blur behind a see-through window |
+| `src/gpu.rs`, `src/blur.rs`, `src/blur_windows.rs` | wgpu device and surface (on Windows through DirectComposition, so it can be see-through); blur behind a see-through window: `ext-background-effect` on Wayland, DWM's Acrylic and the dark title bar on Windows |
 | `src/terminal/` | Sessions, PTY filter, shell integration, prompts, search, links, hints, vi mode, images (kitty graphics) |
 | `src/sftp/` | SFTP client over the terminal's connection, its session thread (listing, pipelined transfers), editing files locally with sudo, folder sync |
 | `src/tn5250/` | IBM i 5250 terminal: telnet, EBCDIC code pages, screen and fields, drawing it as VT, key decoding, the connection worker |
@@ -193,5 +193,7 @@ them back into 5250 keys.
 | `src/update.rs` | Checking the GitHub releases, downloading and replacing the program |
 | `src/shells/` | Shell detection, managed aliases, generated startup files |
 | `src/commands.rs`, `src/snippets.rs` | Built-in commands, your own commands |
-| `src/theme.rs`, `src/theme/cosmic.rs` | Themes, COSMIC theme and its file watcher |
+| `src/theme.rs`, `src/theme/cosmic.rs`, `src/theme/windows.rs` | Themes, the COSMIC theme and its file watcher, the Windows theme and its registry watcher |
+| `src/platform/` | What differs between Unix and Windows underneath: local socket pairs and polling, locks, file modes, the trash, links, the program running in a tab, Unix sockets on Windows |
+| `build.rs`, `installer/` | Windows: the exe's icon and version info; the Inno Setup script |
 | `src/shortcuts.rs`, `src/config.rs`, `src/i18n.rs` | Shortcuts, config, translations |

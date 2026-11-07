@@ -50,6 +50,13 @@ On the COSMIC desktop there's a **COSMIC** theme built from your desktop theme:
 
 It doesn't copy COSMIC's "frosted" window look; use translucency below for that.
 
+## Windows
+
+On Windows there's a **Windows** theme instead: Windows' light or dark app mode
+with its accent color, live when you change them, the console in Windows
+Terminal's colors. The title bar follows whichever theme you pick – dark or
+light. More in [Terminaal on Windows](windows.md#the-look).
+
 ## Translucency
 
 - **Opacity** (0.2–1): below 1, the terminal background, tab bar, sidebar and
@@ -61,10 +68,12 @@ It doesn't copy COSMIC's "frosted" window look; use translucency below for that.
   opacity`). **Theme default** goes back to that. The lower it is, the more the
   interface text moves towards white (black for light themes).
 - **Blur what's behind (frosted)**: blurs the desktop behind the window. Works on
-  COSMIC and other compositors with `ext-background-effect`, and on KDE.
+  COSMIC and other compositors with `ext-background-effect`, and on KDE. On
+  Windows it's Acrylic: Windows 11 22H2 or newer, a graphics card, and Windows'
+  transparency effects on.
 
-Translucency needs **Wayland**. On X11 the window stays opaque, and the settings
-say so.
+On Linux translucency needs **Wayland**. On X11 the window stays opaque, and the
+settings say so. On Windows it works everywhere.
 
 ## Fonts
 

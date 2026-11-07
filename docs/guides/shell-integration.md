@@ -13,6 +13,9 @@ directory it's in, you get:
 | Copy a command's output, select a command with a click on its prompt | OSC 133 `A`, `C`, `D` |
 | Notification when a long command finishes unseen | OSC 133 `C`, `D` |
 
+On Windows, PowerShell, Git Bash and (partly) cmd are integrated too; see
+[Terminaal on Windows](windows.md#shells).
+
 ## fish, bash and zsh: nothing to do
 
 Terminaal starts these shells with small generated startup files in

@@ -56,6 +56,8 @@ Look something up, or get one thing done.
   between the text, over SSH too
 - [Appearance](guides/appearance.md) – themes, COSMIC, translucency, fonts
 - [Updates](guides/updates.md) – how Terminaal updates itself, and where it can't
+- [Terminaal on Windows](guides/windows.md) – installing, where things are,
+  shells, SSH agents, the drop-down shortcut, the look
 
 ## Explanations
 

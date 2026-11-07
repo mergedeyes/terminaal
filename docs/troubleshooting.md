@@ -12,6 +12,9 @@ RUST_LOG=terminaal=trace terminaal --connect web1   # plus the SSH worker's time
 
 ## Installation and startup
 
+**On Windows**: SmartScreen, an empty window, a WSL tab that ends at once, logs
+and update logs are in [Terminaal on Windows](guides/windows.md#when-somethings-wrong).
+
 **The launcher doesn't start Terminaal, or starts an old version.**
 Run `./install.sh` again after updating the source. The desktop entry points at
 `~/.cargo/bin/terminaal` (from source) or `~/.local/bin/terminaal` (from a
