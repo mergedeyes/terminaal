@@ -197,8 +197,18 @@ Connecting to the local target blocks the connection's worker for up to three
 seconds if the target doesn't answer.
 
 **A remote shell with `RemoteCommand` closes the tab immediately.**
-The tab closes when the command ends, like a local shell. Use something that stays,
-e.g. `tmux new -A -s main`.
+The tab closes when the command ends, like a local shell. If it failed within five
+seconds of starting, the tab stays with its output and a line naming the status;
+a command that ended cleanly (status 0) closes it at once. Use something that
+stays, e.g. `tmux new -A -s main`, or `--hold` on the
+[command line](guides/command-line.md#--hold-keep-the-tab-when-the-command-ends).
+
+**A tab says "Ended with status … right after starting".**
+Its shell or command failed within five seconds of starting, so Terminaal kept the
+tab instead of closing it with the error. Read what the program printed above that
+line — a misconfigured shell, a startup file that fails, `wsl.exe` without a Linux
+distribution — fix it, and close the tab with
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd>.
 
 **Agent forwarding doesn't work.**
 The server must allow it (`AllowAgentForwarding`), and the local agent socket must

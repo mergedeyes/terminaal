@@ -49,8 +49,16 @@ Which shell runs the line: the one from `-s`, else the default shell
 ## `--hold`: keep the tab when the command ends
 
 Without `--hold` the tab closes as soon as the command ends — like a shell that
-you `exit`. The window goes with the last tab, so a command that fails
-immediately leaves nothing to read.
+you `exit`, and the window goes with the last tab. Only a command that fails
+right away keeps its tab: one that ends with a status other than 0 within five
+seconds of starting stays, with a last line
+
+```
+[ Ended with status 3 right after starting, kept open so you can read why. Close the tab with Ctrl+Shift+W ]
+```
+
+That holds for every tab, not just `-c`: a shell that can't start, or a host
+whose `RemoteCommand` fails at once.
 
 With `--hold` the tab stays and a last line names the status:
 

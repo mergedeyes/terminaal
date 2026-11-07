@@ -61,7 +61,9 @@ instead. Splitting, or closing the focused pane, brings all panes back.
 
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> or **Close pane** in the right-click
   menu closes the focused pane; its neighbour takes over the room.
-- Ending the shell (`exit`, <kbd>Ctrl</kbd>+<kbd>D</kbd>) closes its pane too.
+- Ending the shell (`exit`, <kbd>Ctrl</kbd>+<kbd>D</kbd>) closes its pane too —
+  unless it failed within five seconds of starting: then the pane stays with a
+  line naming the status, so the error can be read.
 - A tab closes with its last pane.
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd>, the tab's **×** or
   a middle click on it close the whole tab with all its panes.
