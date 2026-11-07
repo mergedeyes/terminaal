@@ -159,6 +159,11 @@ impl CommandsPanel {
         }
 
         match target.system {
+            // A local Windows shell that isn't PowerShell or cmd (WSL, Git
+            // Bash): which system it is would take a probe.
+            Some(system) if cfg!(windows) && target.host.is_none() && !system.family.is_windows() => {
+                ui.label(weak(t!("cmd-windows-local")));
+            }
             // An SSH session that hasn't got to the probe yet.
             None => {
                 ui.label(weak(t!("cmd-system-probing")));
@@ -192,6 +197,7 @@ impl CommandsPanel {
             let hint = match (&target.host, target.configured) {
                 _ if target.configured => t!("settings-key-hint", key = "system"),
                 (Some(host), _) => t!("cmd-system-remote-hint", host = host),
+                (None, _) if cfg!(windows) => t!("cmd-system-windows-hint"),
                 (None, _) => t!("cmd-system-local-hint"),
             };
             ui.label(weak(t!("cmd-system", system = system.family.label()))).on_hover_text(hint);

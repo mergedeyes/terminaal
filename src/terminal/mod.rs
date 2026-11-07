@@ -1,4 +1,5 @@
 pub mod listener;
+#[cfg_attr(windows, path = "filtered_pty_windows.rs")]
 pub mod filtered_pty;
 pub mod graphics;
 pub mod hints;

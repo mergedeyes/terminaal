@@ -44,6 +44,12 @@ unic-langid = "0.9.6"
 # Updates from the GitHub releases (update): HTTPS through the system's
 # OpenSSL, which libssh2 links anyway.
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
+wgpu = "30.0.1"
+winit = "0.30.13"
+
+# Wayland: blur, the drop-down window's layer surface and keyboard. Linux
+# and the BSDs only; on Windows these modules aren't built.
+[target.'cfg(unix)'.dependencies]
 # Blur behind the see-through window (ext-background-effect, see blur.rs),
 # spoken on winit's own Wayland connection: the versions and features
 # winit already uses.
@@ -53,10 +59,50 @@ wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "staging", "unstable"] }
 # The drop-down window's layer surface (quake::layer).
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
-wgpu = "30.0.1"
-winit = "0.30.13"
 # The drop-down window's keyboard (quake::keys); winit's own is private.
 xkbcommon = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+# WSAPoll for the workers' sockets, local time, the Recycle Bin, the UI
+# language (platform::windows, i18n), watching folders for SFTP edits and
+# live sync (sftp::watch_windows), SSH agents' named pipes
+# (ssh::agent_pipe), the program running in a tab
+# (platform::windows::process), the setup's entry under Settings → Apps
+# and the AppUserModelID (update, platform::windows), DWM's backdrop and
+# dark title bar plus the Windows build (blur_windows); the version the
+# tree already has.
+windows-sys = { version = "0.61", features = [
+    "Wdk_System_SystemServices",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Dwm",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# OpenSSL for libssh2, built from source (feature `windows-openssl`).
+openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
+
+[features]
+default = ["windows-openssl"]
+# On Windows, libssh2 on OpenSSL rather than Windows' own CNG, which has no
+# Ed25519 -- neither for keys nor host keys. Building OpenSSL takes Perl
+# (Strawberry, not Git's) and nmake; `--no-default-features` builds without
+# it, for a quick try. Changes nothing elsewhere: Linux links the system's
+# OpenSSL anyway, the vendored one is only in the Windows table above.
+windows-openssl = ["dep:openssl-sys", "ssh2/openssl-on-win32"]
 
 # Text shaping/rasterization is the hot path in the render loop
 # (see the [timing] discussion) and ~10x slower unoptimized. These
@@ -106,3 +152,8 @@ opt-level = 3
 
 [dev-dependencies]
 fluent-syntax = "0.12.0"
+
+[build-dependencies]
+# The exe's icon and version information on Windows (build.rs); llvm-rc
+# when cross-compiling with cargo xwin.
+embed-resource = "3"

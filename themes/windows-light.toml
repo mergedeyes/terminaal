@@ -1,0 +1,39 @@
+# Base of the "Windows" theme in light mode (theme::windows): Windows
+# Terminal's One Half Light palette (its default for light mode), the
+# chrome in Windows 11's light greys. The accent colour comes from Windows.
+
+[colors.primary]
+background = "#fafafa"
+foreground = "#383a42"
+
+[colors.normal]
+black = "#383a42"
+red = "#e45649"
+green = "#50a14f"
+yellow = "#c18301"
+blue = "#0184bc"
+magenta = "#a626a4"
+cyan = "#0997b3"
+white = "#fafafa"
+
+[colors.bright]
+black = "#4f525d"
+red = "#df6c75"
+green = "#98c379"
+yellow = "#e4c07a"
+blue = "#61afef"
+magenta = "#c577dd"
+cyan = "#56b5c1"
+white = "#ffffff"
+
+[ui]
+background = "#f3f3f3"
+row = "#fbfbfb"
+hover = "#eaeaea"
+border = "#e0e0e0"
+border_strong = "#c8c8c8"
+text = "#1a1a1a"
+text_weak = "#5d5d5d"
+error = "#c42b1c"
+success = "#0f7b0f"
+input = "#ffffff"

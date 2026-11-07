@@ -38,6 +38,10 @@ update at its next start ([Updates](docs/guides/updates.md)).
 | `terminaal-x86_64-linux.sha256` | Its checksum; without it, no update is offered |
 | `terminaal-x86_64-linux.tar.gz` | First installs: program, `install.sh`, desktop entry, icons, man page |
 | `terminaal-x86_64-linux.tar.gz.sha256` | Its checksum |
+| `terminaal-x86_64-windows.exe` | The bare Windows program; a copy of it outside the setup's folder updates itself from exactly this name |
+| `terminaal-x86_64-windows.exe.sha256` | Its checksum |
+| `terminaal-x86_64-windows-setup.exe` | The Windows setup (`installer/terminaal.iss`): first installs, and what installed copies update through (run silently once Terminaal ends) |
+| `terminaal-x86_64-windows-setup.exe.sha256` | Its checksum |
 
 Built on Ubuntu 22.04, so the program runs with glibc 2.35 or newer – practically
 every current distribution. It uses OpenSSL 3, zlib and libxkbcommon from the
@@ -74,3 +78,10 @@ TERMINAAL_UPDATE_URL=http://127.0.0.1:8765/latest.json /tmp/terminaal-old
 
 **Update now** then replaces `/tmp/terminaal-old`, not your installed Terminaal –
 the updater always replaces the program that's running.
+
+Where no test server can be reached (a Windows VM with a read-only shared
+folder), the release can sit in a folder: `TERMINAAL_UPDATE_URL` also takes
+`file:///` URLs, for `latest.json` and in its `browser_download_url`s
+(`file:///Z:/rel/terminaal-x86_64-windows-setup.exe`). A Terminaal installed by
+the setup asks for `terminaal-x86_64-windows-setup.exe`, a bare copy for
+`terminaal-x86_64-windows.exe`.

@@ -1,4 +1,9 @@
+// A window, not a console program: started from Explorer or the Start
+// menu, Windows would open a console beside it. Tests keep theirs.
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 mod app;
+#[cfg_attr(windows, path = "blur_windows.rs")]
 mod blur;
 mod commands;
 mod config;
@@ -6,6 +11,7 @@ mod gpu;
 mod i18n;
 mod input;
 mod panes;
+mod platform;
 mod quake;
 mod render;
 mod session;
@@ -27,6 +33,7 @@ use crate::i18n::t;
 use crate::shells::InstalledShell;
 
 fn main() {
+    platform::attach_console();
     env_logger::Builder::from_default_env().format_timestamp_millis().init();
 
     let config = config::Config::load();
@@ -40,6 +47,13 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    // Installed by the setup: the taskbar groups the windows with its
+    // Start menu shortcut, toasts come from Terminaal. Before any window.
+    #[cfg(windows)]
+    if let update::Installation::Setup { .. } = update::Installation::of(std::env::current_exe().ok().as_deref()) {
+        platform::use_app_id(update::APP_USER_MODEL_ID);
+    }
 
     let event_loop = EventLoop::<app::UserEvent>::with_user_event()
         .build()

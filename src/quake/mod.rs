@@ -1,33 +1,66 @@
 //! The drop-down ("Quake") window: `terminaal --quake` puts a Terminaal
 //! along the top edge of the screen, or takes it away again. There's no
 //! global shortcut a Wayland client may grab, so the desktop's own
-//! shortcut settings run that command.
+//! shortcut settings run that command; on Windows the drop-down
+//! Terminaal registers one itself as well ([`hotkey`]).
 //!
 //! The drop-down Terminaal is an instance of its own, with its own tabs
 //! and session. The first `--quake` starts it; later ones find it by its
-//! socket in `$XDG_RUNTIME_DIR` and tell it to toggle ([`Toggle`]).
+//! socket in `$XDG_RUNTIME_DIR` (Windows: a loopback port, written to a
+//! file in the user's temp folder) and tell it to toggle ([`Toggle`]).
 //!
 //! On Wayland it's a layer surface ([`layer`]); elsewhere a normal window
 //! that shows and hides.
 
+#[cfg(windows)]
+pub mod hotkey;
+#[cfg(unix)]
 pub mod keys;
+#[cfg_attr(windows, path = "layer_windows.rs")]
 pub mod layer;
 
 use std::io::{self, Read, Write};
-use std::os::fd::AsRawFd;
+#[cfg(windows)]
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use winit::dpi::PhysicalPosition;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+use winit::keyboard::ModifiersState;
+
+use crate::input::KeyInput;
+
+/// What happened to the drop-down window, for `app.rs`. Never on
+/// Windows, which has no layer surfaces.
+#[derive(Debug)]
+#[cfg_attr(windows, allow(dead_code))]
+pub enum LayerEvent {
+    /// A new size in physical pixels, or a new scale.
+    Resized { width: u32, height: u32, scale: f64 },
+    /// The compositor took the surface away (its output went, say).
+    Closed,
+    Focused(bool),
+    Modifiers(ModifiersState),
+    Key(KeyInput),
+    /// In physical pixels.
+    PointerMoved(PhysicalPosition<f64>),
+    PointerLeft,
+    Button(MouseButton, ElementState),
+    Wheel(MouseScrollDelta),
+}
+
 /// What goes over the socket.
 const TOGGLE: &[u8] = b"toggle\n";
 
-/// `$XDG_RUNTIME_DIR/terminaal`, else a folder of this user's in the temp dir.
+/// `$XDG_RUNTIME_DIR/terminaal`, else a folder of this user's in the temp
+/// dir (Windows: always that).
 pub fn runtime_dir() -> PathBuf {
     match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|dir| dir.is_absolute()) {
         Some(dir) => dir.join("terminaal"),
-        // SAFETY: getuid can't fail.
-        None => std::env::temp_dir().join(format!("terminaal-{}", unsafe { libc::getuid() })),
+        None => crate::platform::user_temp_dir(),
     }
 }
 
@@ -42,20 +75,24 @@ pub enum Start {
 /// Toggle the drop-down Terminaal in `dir`, or become it.
 pub fn start(dir: &Path) -> io::Result<Start> {
     std::fs::create_dir_all(dir)?;
-    let socket = dir.join("quake.sock");
     let lock = std::fs::File::options().create(true).truncate(false).write(true).open(dir.join("quake.lock"))?;
-    // SAFETY: a valid descriptor, owned by `lock`.
-    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        // Whatever socket is left there belongs to one that's gone.
-        let _ = std::fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket)?;
-        return Ok(Start::Owner(Toggle { listener, _lock: lock }));
+    if lock.try_lock().is_ok() {
+        return Ok(Start::Owner(Toggle { listener: bind(dir)?, _lock: lock }));
     }
     // It may still be starting and not listen yet.
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        match UnixStream::connect(&socket) {
+        match connect(dir) {
             Ok(mut stream) => {
+                // Windows gives the foreground only to the process the
+                // user just started (this one): pass that on, or the
+                // drop-down window would only flash in the taskbar.
+                #[cfg(windows)]
+                // SAFETY: no pointers; only widens who may take the foreground.
+                unsafe {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
+                    AllowSetForegroundWindow(ASFW_ANY);
+                }
                 stream.write_all(TOGGLE)?;
                 return Ok(Start::Toggled);
             }
@@ -68,9 +105,45 @@ pub fn start(dir: &Path) -> io::Result<Start> {
     }
 }
 
+#[cfg(unix)]
+type Listener = UnixListener;
+#[cfg(windows)]
+type Listener = TcpListener;
+
+/// The socket in `dir`; whatever socket is left there belongs to one
+/// that's gone.
+#[cfg(unix)]
+fn bind(dir: &Path) -> io::Result<Listener> {
+    let socket = dir.join("quake.sock");
+    let _ = std::fs::remove_file(&socket);
+    UnixListener::bind(&socket)
+}
+
+#[cfg(unix)]
+fn connect(dir: &Path) -> io::Result<UnixStream> {
+    UnixStream::connect(dir.join("quake.sock"))
+}
+
+/// No Unix sockets in std on Windows: a loopback port, named in
+/// `quake.port`. Anyone on this machine could toggle the window -- and
+/// only that.
+#[cfg(windows)]
+fn bind(dir: &Path) -> io::Result<Listener> {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    std::fs::write(dir.join("quake.port"), listener.local_addr()?.port().to_string())?;
+    Ok(listener)
+}
+
+#[cfg(windows)]
+fn connect(dir: &Path) -> io::Result<TcpStream> {
+    let port = std::fs::read_to_string(dir.join("quake.port"))?;
+    let port: u16 = port.trim().parse().map_err(io::Error::other)?;
+    TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+}
+
 /// The drop-down Terminaal's end: holds the lock and the socket.
 pub struct Toggle {
-    listener: UnixListener,
+    listener: Listener,
     _lock: std::fs::File,
 }
 
@@ -111,8 +184,9 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(2)).expect("toggled");
         }
         // Garbage on the socket toggles nothing.
-        UnixStream::connect(dir.join("quake.sock")).unwrap().write_all(b"rm -rf\n").unwrap();
+        connect(&dir).unwrap().write_all(b"rm -rf\n").unwrap();
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Windows keeps the lock file while the listening thread holds it.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -42,6 +42,10 @@ Not configurable: <kbd>Ctrl</kbd>+click opens links, <kbd>Shift</kbd>+wheel alwa
 scrolls the scrollback, and the keys inside the search bar, the hints and vi mode
 (see [Search, links and the scrollback](search-and-links.md)).
 
+The drop-down window's global shortcut on Windows (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>)
+isn't in this list: it's `quake_hotkey`, set under **Settings → General →
+Drop-down window** ([The drop-down window](drop-down-window.md#on-windows)).
+
 ## Changing them in the settings
 
 **Settings → Shortcuts** lists every action with its combinations:

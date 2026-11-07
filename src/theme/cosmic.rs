@@ -9,8 +9,10 @@
 //! chrome gets the "primary" container (as COSMIC's own navigation bars
 //! do) and the accent color.
 
+#[cfg(unix)]
 use std::ffi::CString;
 use std::iter::Peekable;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::str::Chars;
@@ -29,6 +31,7 @@ const LIGHT: &str = "com.system76.CosmicTheme.Light";
 
 /// A change to the theme usually touches many files at once; [`watch`]
 /// waits until none has changed for this long.
+#[cfg(unix)]
 const SETTLE_MS: i32 = 200;
 
 /// Where COSMIC's config lives: the user's, then the system's defaults.
@@ -158,6 +161,7 @@ fn luminance(Rgb { r, g, b }: Rgb) -> f32 {
 /// blocked on inotify, so a quiet desktop costs nothing; `changed` comes
 /// once a change has settled ([`SETTLE_MS`]). No thread without a COSMIC
 /// theme folder to watch.
+#[cfg(unix)]
 pub fn watch(roots: &Roots, changed: impl Fn() + Send + 'static) {
     let Some(user) = &roots.user else { return };
     let dirs: Vec<PathBuf> =
@@ -204,6 +208,7 @@ pub fn watch(roots: &Roots, changed: impl Fn() + Send + 'static) {
 
 /// Whether `fd` has something to read within `ms` milliseconds (-1:
 /// however long it takes).
+#[cfg(unix)]
 fn readable_within(fd: libc::c_int, ms: libc::c_int) -> bool {
     let mut poll = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
     loop {
@@ -217,6 +222,7 @@ fn readable_within(fd: libc::c_int, ms: libc::c_int) -> bool {
 }
 
 /// Read (and drop) the pending inotify events; `false` if that failed.
+#[cfg(unix)]
 fn drain(fd: libc::c_int, buf: &mut [u8]) -> bool {
     loop {
         let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
@@ -229,6 +235,10 @@ fn drain(fd: libc::c_int, buf: &mut [u8]) -> bool {
         return false;
     }
 }
+
+/// No COSMIC on Windows.
+#[cfg(windows)]
+pub fn watch(_roots: &Roots, _changed: impl Fn() + Send + 'static) {}
 
 /// Just enough of RON for COSMIC's theme files: structs (named or not),
 /// tuples, lists, numbers, bools, strings and bare identifiers (`None`,
@@ -539,6 +549,7 @@ mod tests {
         std::fs::remove_dir_all(&user).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn watch_reports_a_changed_theme() {
         let user = temp("watch");

@@ -36,8 +36,10 @@ until an even newer one comes out (`update_skipped` in `config.toml` remembers i
 - **Installed by a package manager** (in `/usr/bin`, for example): Terminaal may
   not write there, says so and points to the release page. Update it the way you
   installed it.
-- **No ready-made program for your machine**: releases carry a build for x86_64
-  Linux. Elsewhere the dialog offers the release page instead.
+- **No ready-made program for your machine**: releases carry builds for x86_64
+  Linux and Windows. Elsewhere the dialog offers the release page instead.
+- **On Windows** a copy the setup installed updates by running the new setup;
+  see [Terminaal on Windows](windows.md#updates).
 - **Built from source** with `./install.sh`: updating replaces
   `~/.cargo/bin/terminaal` with the release build, which works the same. To stay
   on your own builds, turn off **Check for updates at start** and run
@@ -52,6 +54,8 @@ Development builds (`cargo run`) don't check at start.
 | `api.github.com/repos/mergedeyes/terminaal/releases/latest` | a few KB | Which version is the newest, its notes and files |
 | `terminaal-x86_64-linux.sha256` | 90 bytes | The checksum, on **Update now** |
 | `terminaal-x86_64-linux` | the program | On **Update now** |
+| `terminaal-x86_64-windows-setup.exe` and its `.sha256` | the setup | Windows, installed by the setup |
+| `terminaal-x86_64-windows.exe` and its `.sha256` | the program | Windows, a plain exe |
 
 All over HTTPS, checked with your system's certificates through OpenSSL. The
 desktop entry, icons and man page aren't updated – they rarely change; unpack the

@@ -2,8 +2,9 @@
 
 Terminaal keeps everything in `~/.config/terminaal/` – always under your home
 folder, `$XDG_CONFIG_HOME` doesn't move it (only the generated
-`shell-integration/` folder follows `$XDG_CONFIG_HOME`). All files are optional,
-and none holds a password or passphrase.
+`shell-integration/` folder follows `$XDG_CONFIG_HOME`). On Windows it's
+`%APPDATA%\terminaal` ([Terminaal on Windows](windows.md#where-things-are)). All
+files are optional, and none holds a password or passphrase.
 
 | File | What's in it | Who writes it |
 | --- | --- | --- |
@@ -43,12 +44,14 @@ and keeps your comments and formatting. A missing file means defaults.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `default_width`, `default_height` | `1000.0`, `650.0` | Window size at start |
+| `maximized` | `false` | Windows only: start maximized. Terminaal sets it whenever you maximize or restore the window |
 | `tab_bar` | `true` | Show the tab bar |
 | `sidebar` | `true` | Show the sidebar at start |
 | `sidebar_width` | `300.0` | |
 | `splash` | `true` | Start-up animation |
 | `quake_height` | `50` | Height of the drop-down window in percent of the screen, `20`–`100`. See [The drop-down window](drop-down-window.md) |
 | `quake_hide_on_unfocus` | `true` | Hide the drop-down window when another window gets the keyboard |
+| `quake_hotkey` | `"Ctrl+Alt+T"` | Windows only: the global shortcut that shows and hides the drop-down window once it runs, written like those in `[shortcuts]`; `""` for none. Applies from its next start |
 | `update_check` | `true` | Ask GitHub for a newer release at start. See [Updates](updates.md) |
 | `update_skipped` | not set | A version **Skip this version** was clicked for; not offered again |
 | `restore_session` | `true` | Open last time's tabs again. Turning it off deletes the saved session. See [Restoring the last session](sessions.md) |

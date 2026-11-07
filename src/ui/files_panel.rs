@@ -15,6 +15,7 @@ use std::time::SystemTime;
 use egui::{Align, Align2, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
 
 use crate::i18n::t;
+use crate::platform;
 use crate::sftp::edit::{EditAction, EditState, EditStatus, SudoFor};
 use crate::sftp::session::{Command, Connection, Direction, State, TransferState, TransferStatus, join, parent};
 use crate::sftp::sync::{SyncState, SyncStatus};
@@ -153,7 +154,7 @@ pub struct FilesPanel {
 
 impl FilesPanel {
     pub fn new() -> Self {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        let home = crate::platform::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let mut panel = Self {
             local_dir: home.clone(),
             local_entries: Ok(Vec::new()),
@@ -662,18 +663,15 @@ impl Default for FilesPanel {
     }
 }
 
-/// Into the desktop's trash, with `gio trash` (GLib's, on nearly every
-/// desktop) -- it knows the trash of other disks too.
+/// Into the desktop's trash ([`platform::trash`]).
 fn trash(paths: &[PathBuf]) -> Result<String, String> {
-    let output = std::process::Command::new("gio").arg("trash").arg("--").args(paths).output();
-    match output {
-        Ok(output) if output.status.success() => Ok(match paths {
+    match platform::trash(paths) {
+        Ok(()) => Ok(match paths {
             [one] => t!("files-trashed", name = one.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()),
             many => t!("files-trashed-many", count = many.len()),
         }),
-        Ok(output) => Err(t!("files-trash-failed", err = String::from_utf8_lossy(&output.stderr).trim().to_string())),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(t!("files-trash-no-gio")),
-        Err(err) => Err(t!("files-trash-failed", err = err.to_string())),
+        Err(platform::TrashError::NoTool) => Err(t!("files-trash-no-gio")),
+        Err(platform::TrashError::Failed(err)) => Err(t!("files-trash-failed", err = err)),
     }
 }
 
@@ -810,13 +808,8 @@ pub fn size_text(bytes: u64) -> String {
 
 /// Local time, `2026-09-14 02:51`.
 fn date_text(secs: u64) -> String {
-    let time = secs as libc::time_t;
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: both pointers are valid for the call.
-    if unsafe { libc::localtime_r(&time, &mut tm) }.is_null() {
-        return String::new();
-    }
-    format!("{:04}-{:02}-{:02} {:02}:{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min)
+    let Some((year, month, day, hour, minute)) = platform::local_time(secs) else { return String::new() };
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
 #[cfg(test)]

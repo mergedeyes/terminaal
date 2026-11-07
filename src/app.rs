@@ -25,12 +25,15 @@ use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
+#[cfg(unix)]
 use winit::platform::wayland::WindowAttributesExtWayland;
+#[cfg(unix)]
 use winit::platform::x11::WindowAttributesExtX11;
 use winit::window::{CursorIcon, Icon, UserAttentionType, Window, WindowId};
 
 /// Wayland app_id and X11 WM_CLASS; a desktop entry named
 /// `terminaal.desktop` gets matched to the window through it.
+#[cfg(unix)]
 const APP_ID: &str = "terminaal";
 
 /// Window icon for X11 (`_NET_WM_ICON`), RGBA. Wayland has no window-icon
@@ -49,6 +52,14 @@ fn window_icon() -> Option<Icon> {
         Ok(Icon::from_rgba(rgba, info.width, info.height)?)
     };
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
+}
+
+/// The drop-down window without a layer shell: the monitor's width,
+/// `percent` of its height.
+fn dropdown_size(monitor: &winit::monitor::MonitorHandle, percent: f32) -> PhysicalSize<u32> {
+    let size = monitor.size();
+    let height = (f64::from(size.height) * f64::from(percent) / 100.0).round() as u32;
+    PhysicalSize::new(size.width, height.max(1))
 }
 
 use crate::Cli;
@@ -125,8 +136,9 @@ pub enum UserEvent {
     Terminal(usize, TermEvent),
     /// The splash animation finished decoding (`ui::splash`).
     SplashReady(Result<SplashFrames, String>),
-    /// The COSMIC desktop's theme changed (`theme::cosmic::watch`).
-    CosmicThemeChanged,
+    /// The desktop's theme changed: COSMIC's (`theme::cosmic::watch`) or
+    /// Windows' mode or accent colour (`theme::windows::watch`).
+    DesktopThemeChanged,
     /// A pane's shell said something about itself (`terminal::integration`).
     Shell(usize, ShellEvent),
     /// A files tab's SFTP session has something new to show.
@@ -139,7 +151,7 @@ pub enum UserEvent {
     /// when asked for in the settings rather than at start.
     UpdateChecked { result: Result<Option<update::Release>, String>, manual: bool },
     /// Downloading and putting a new binary in place is done.
-    UpdateInstalled(Result<(), update::InstallError>),
+    UpdateInstalled(Result<update::Installed, update::InstallError>),
 }
 
 pub struct App {
@@ -521,11 +533,32 @@ fn pane_title(
         },
         (None, Some(title), _) => title.to_string(),
         (None, None, Some((host, path))) => {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let home = crate::platform::home_dir();
             integration::short_path(host, path, home.as_deref(), local_host)
         }
         (None, None, None) => default.to_string(),
     }
+}
+
+/// The part of a title a local shell's terminal got that a tab can
+/// show; `None` if it says nothing. Empty is xterm's way of clearing
+/// it. A Windows console's default title is the path of the shell it
+/// runs (`Administrator: ` maybe in front), which programs such as winget
+/// set back when they're done -- PowerShell sets no title at its prompt,
+/// so the path stood in for the folder until the next program. cmd puts
+/// that path before a running command (`…\cmd.exe - winget upgrade`):
+/// the command is what's left.
+fn console_title(title: &str, shell_path: &str) -> Option<String> {
+    let trimmed = title.trim();
+    let find = trimmed.to_ascii_lowercase().find(&shell_path.to_ascii_lowercase());
+    let after_path = find
+        .filter(|&at| at == 0 || trimmed.get(..at).is_some_and(|before| before.ends_with(": ")))
+        .and_then(|at| trimmed.get(at + shell_path.len()..));
+    let shown = match after_path {
+        Some(rest) => rest.strip_prefix(" - ").unwrap_or(rest).trim(),
+        None => trimmed,
+    };
+    (!shown.is_empty()).then(|| shown.to_string())
 }
 
 /// A fingerprint of what `term` shows at the bottom of its scrollback,
@@ -589,8 +622,8 @@ impl Pane {
     /// A pane kept because its program failed right away says so instead.
     fn hold_notice(&mut self) {
         let text = match self.exit_code {
-            Some(code) if !self.hold => t!("pane-failed-at-start", code = code),
-            Some(code) => t!("cli-hold-exit-code", code = code),
+            Some(code) if !self.hold => t!("pane-failed-at-start", code = prompts::exit_code_label(code)),
+            Some(code) => t!("cli-hold-exit-code", code = prompts::exit_code_label(code)),
             None => t!("cli-hold-exit"),
         };
         let mut parser: Processor = Processor::new();
@@ -755,6 +788,10 @@ struct AppState {
     /// The running binary, as it was at start: an update replaces the
     /// file, after which `/proc/self/exe` names it "(deleted)".
     exe: Option<PathBuf>,
+    /// How `exe` got here: what an update downloads and how it goes in.
+    installation: update::Installation,
+    /// An update that waits for Terminaal to end (Windows: the setup).
+    installed_update: Option<update::Installed>,
     /// The open command palette; it has the keyboard while open.
     command_palette: Option<CommandPalette>,
     /// Background sessions of hosts with live synced folders.
@@ -765,6 +802,10 @@ struct AppState {
     hostname: String,
     /// The window has the keyboard focus.
     focused: bool,
+    /// This is the drop-down Terminaal (`--quake`).
+    dropdown: bool,
+    /// The window was maximized when last looked at (`note_maximized`).
+    window_maximized: bool,
     /// Keys held down whose press went to terminals: the key and where it
     /// is, and the panes that got it (see `release_key`).
     pressed_keys: Vec<((Key, KeyLocation), Vec<usize>)>,
@@ -866,6 +907,10 @@ impl AppState {
 
         let next_blink = Instant::now() + Duration::from_millis(config.cursor_blink_interval_ms);
         let blur = layer_blur(&window).or_else(|| window.winit().and_then(|window| Blur::new(window)));
+        // Without graphics acceleration DWM draws Acrylic as a solid
+        // colour: blur on would make the window opaque.
+        #[cfg(windows)]
+        let blur = blur.filter(|_| !gpu.software);
         let x11 = window.winit().is_some_and(|window| {
             matches!(
                 window.display_handle().map(|handle| handle.as_raw()),
@@ -879,8 +924,10 @@ impl AppState {
         // unless a test server stands in for GitHub, and not twice: the
         // drop-down window leaves it to the main one.
         let testing = std::env::var_os(update::URL_OVERRIDE).is_some();
+        let exe = std::env::current_exe().ok();
+        let installation = update::Installation::of(exe.as_deref());
         if config.update_check && (!cfg!(debug_assertions) || testing) && !quake {
-            spawn_update_check(proxy.clone(), false);
+            spawn_update_check(proxy.clone(), false, installation);
         }
 
         let ui_colors = theme.ui;
@@ -925,9 +972,13 @@ impl AppState {
             paste_warning: None,
             update: None,
             clipboard_request: None,
-            exe: std::env::current_exe().ok(),
+            exe,
+            installation,
+            installed_update: None,
             hostname: hostname(),
             focused: true,
+            dropdown: quake,
+            window_maximized: config.maximized,
             pressed_keys: Vec::new(),
             prompt_labels: Labels::default(),
             links: links::Finder::default(),
@@ -959,10 +1010,17 @@ impl AppState {
         };
         state.apply_ui_fonts();
         state.apply_transparency();
+        // The program an update replaced, kept while it was running.
+        #[cfg(windows)]
+        if let Some(exe) = &state.exe {
+            update::clean_up(exe);
+        }
         let proxy = state.proxy.clone();
         crate::theme::cosmic::watch(&crate::theme::cosmic::Roots::system(), move || {
-            let _ = proxy.send_event(UserEvent::CosmicThemeChanged);
+            let _ = proxy.send_event(UserEvent::DesktopThemeChanged);
         });
+        let proxy = state.proxy.clone();
+        crate::theme::windows::watch(move || drop(proxy.send_event(UserEvent::DesktopThemeChanged)));
         // The very first tab failing to spawn means we can't do anything
         // useful at all -- that's the same "just crash" behaviour the
         // single-session version had. Later tabs (Ctrl+Shift+T) are
@@ -1680,11 +1738,14 @@ impl AppState {
                     self.show_quake();
                 }
             }
-            // No layer shell: a plain window that shows and hides.
+            // No layer shell: a plain window that shows and hides --
+            // shown but behind another, it comes to the front instead.
             AppWindow::Winit(window) => {
-                let show = !window.is_visible().unwrap_or(true);
-                window.set_visible(show);
-                if show {
+                let visible = window.is_visible().unwrap_or(false);
+                if visible && self.focused {
+                    window.set_visible(false);
+                } else {
+                    window.set_visible(true);
                     window.focus_window();
                 }
             }
@@ -2180,16 +2241,25 @@ impl AppState {
     /// `None` while the settings tab is showing -- no shell to send to.
     fn command_target(&self) -> Option<Target> {
         // An IBM i screen has no shell to type commands into.
-        let terminal = self.current_terminal().filter(|terminal| !terminal.is_tn5250())?;
-        let mut target = self.target_of(terminal);
+        let pane = self.current_pane().filter(|pane| !pane.terminal.is_tn5250())?;
+        let mut target = self.target_of(pane);
         target.terminals = self.input_panes().len();
         Some(target)
     }
 
-    /// The system and host of `terminal`, with the configured system
-    /// winning for a local shell.
-    fn target_of(&self, terminal: &TerminalSession) -> Target {
-        let mut target = terminal.command_target();
+    /// The system and host of `pane`, with the configured system winning
+    /// for a local shell. On Windows a local shell's commands depend on
+    /// the shell: PowerShell's or cmd's.
+    fn target_of(&self, pane: &Pane) -> Target {
+        let mut target = pane.terminal.command_target();
+        #[cfg(windows)]
+        if let (PaneOrigin::Shell(shell), Some(system)) = (&pane.origin, &mut target.system) {
+            system.family = match shell.kind {
+                ShellKind::PowerShell => crate::commands::Family::Windows,
+                _ if shell.name.eq_ignore_ascii_case("cmd") => crate::commands::Family::WindowsCmd,
+                _ => crate::commands::Family::Unknown,
+            };
+        }
         if target.host.is_none() && let Some(family) = self.config.system() {
             target.system = Some(System { family, ..target.system.unwrap_or_default() });
             target.configured = true;
@@ -2287,7 +2357,7 @@ impl AppState {
         let queued = pane.queued.take();
         let pane = &self.tabs[tab].panes().expect("found above").panes[idx];
         let ssh = matches!(pane.origin, PaneOrigin::Ssh(_));
-        let target = self.target_of(&pane.terminal);
+        let target = self.target_of(pane);
         let mut lines: Vec<(&str, bool)> = self
             .sidebar
             .snippets()
@@ -2846,12 +2916,18 @@ impl AppState {
         self.window.request_redraw();
     }
 
-    fn update_installed(&mut self, result: Result<(), update::InstallError>) {
+    fn update_installed(&mut self, result: Result<update::Installed, update::InstallError>) {
         let Some(dialog) = &mut self.update else { return };
         dialog.stage = match result {
-            Ok(()) => {
+            Ok(update::Installed::Replaced) => {
                 log::info!("updated to {}", dialog.release.version);
                 update_dialog::Stage::Installed
+            }
+            #[cfg(windows)]
+            Ok(installed @ update::Installed::Setup { .. }) => {
+                log::info!("setup for {} ready", dialog.release.version);
+                self.installed_update = Some(installed);
+                update_dialog::Stage::Ready
             }
             Err(update::InstallError::NotWritable(dir)) => update_dialog::Stage::NotWritable(dir),
             Err(update::InstallError::Failed(err)) => {
@@ -2869,8 +2945,9 @@ impl AppState {
                 let (Some(binary), Some(exe)) = (dialog.release.binary.clone(), self.exe.clone()) else { return };
                 dialog.stage = update_dialog::Stage::Installing;
                 let proxy = self.proxy.clone();
+                let installation = self.installation;
                 let spawned = std::thread::Builder::new().name("update".into()).spawn(move || {
-                    let result = update::install(&update::Http::new(), &binary, &exe);
+                    let result = update::install(&update::Http::new(), &binary, &exe, installation);
                     let _ = proxy.send_event(UserEvent::UpdateInstalled(result));
                 });
                 if let Err(err) = spawned {
@@ -2887,11 +2964,13 @@ impl AppState {
             }
             update_dialog::Choice::OpenPage => open_link(&links::Target::Uri(dialog.release.page.clone())),
             // The new binary takes over once this one is gone, session
-            // and all.
+            // and all; a waiting setup runs before it starts.
             update_dialog::Choice::Restart => {
                 let Some(exe) = self.exe.clone() else { return };
-                match update::restart(&exe) {
+                let installed = self.installed_update.clone().unwrap_or(update::Installed::Replaced);
+                match update::restart(&exe, &installed) {
                     Ok(()) => {
+                        self.installed_update = None;
                         self.save_session();
                         self.exiting = true;
                     }
@@ -3984,6 +4063,28 @@ impl AppState {
         self.window.request_redraw();
     }
 
+    /// Windows: note in `config.toml` (`maximized`) when the window got
+    /// maximized or restored, right away -- so the next start opens it
+    /// that way even if Terminaal doesn't end cleanly. Not for the
+    /// drop-down window. On Linux the desktop places the window.
+    fn note_maximized(&mut self) {
+        if !cfg!(windows) || self.dropdown {
+            return;
+        }
+        let Some(maximized) = self.window.winit().map(|window| window.is_maximized()) else { return };
+        // Only a change counts: a tick in the settings stays until the
+        // window itself is maximized or restored.
+        if maximized == self.window_maximized {
+            return;
+        }
+        self.window_maximized = maximized;
+        if maximized != self.config.maximized
+            && let Err(err) = self.config.save(Setting::Maximized(maximized))
+        {
+            log::warn!("failed to note the maximized window in config.toml: {err}");
+        }
+    }
+
     fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -4114,6 +4215,8 @@ impl AppState {
                             supported: self.gpu.supports_translucency(),
                             blur: self.blur.is_some(),
                             x11: self.x11,
+                            effects_off: self.blur.as_ref().is_some_and(|blur| blur.effects_off()),
+                            software: self.gpu.software,
                         },
                     };
                     self.settings.show_tab(ui, &view, &mut settings_actions);
@@ -4267,7 +4370,7 @@ impl AppState {
             SidebarAction::OpenSettings => self.open_settings(),
             SidebarAction::CheckForUpdates => {
                 self.settings.report(Ok(t!("update-checking")));
-                spawn_update_check(self.proxy.clone(), true);
+                spawn_update_check(self.proxy.clone(), true, self.installation);
             }
             SidebarAction::SetShortcut(action, combos) => self.set_shortcut(action, combos, origin),
             SidebarAction::SetTheme(name) => {
@@ -4300,6 +4403,11 @@ impl AppState {
                     self.report(origin, Err(err));
                 }
             }
+            SidebarAction::SetQuakeHotkey(text) => {
+                if let Err(err) = self.config.save_quake_hotkey(&text) {
+                    self.report(origin, Err(err));
+                }
+            }
             SidebarAction::SetFont(slot, family) => {
                 if let Err(err) = self.config.save_font(slot, family.as_deref()) {
                     self.report(origin, Err(err));
@@ -4324,6 +4432,11 @@ impl AppState {
         self.search_bar = SearchBar::new(self.theme.ui);
         crate::ui::theme::apply(&self.ui.ctx, &self.theme.ui, self.ui_opacity());
         self.sidebar.set_theme_names(self.themes.all().iter().map(|theme| theme.name.clone()).collect());
+        // The title bar goes with the theme, not with Windows' mode.
+        #[cfg(windows)]
+        if let Some(window) = self.window.winit() {
+            crate::blur::set_dark_title_bar(window, self.theme.ui.is_dark());
+        }
         // A host's theme may have changed with the others.
         let looks: Vec<Vec<PaneLook>> = self
             .tabs
@@ -4340,8 +4453,8 @@ impl AppState {
         self.window.request_redraw();
     }
 
-    /// Read the themes again -- the COSMIC desktop's changed -- and apply
-    /// the configured one, in case that's it.
+    /// Read the themes again -- the desktop's (COSMIC's, Windows') changed
+    /// -- and apply the configured one, in case that's it.
     fn reload_themes(&mut self) {
         self.themes = Themes::load();
         self.apply_theme();
@@ -4442,11 +4555,15 @@ impl AppState {
             Setting::SidebarWidth(_) => {}
             Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
             Setting::NotifyAfter(_) | Setting::Notifications(_) => {}
-            Setting::QuakeHeight(percent) => {
-                if let AppWindow::Layer(window) = &self.window {
-                    window.layer.borrow_mut().set_height(percent);
+            Setting::QuakeHeight(percent) => match &self.window {
+                AppWindow::Layer(window) => window.layer.borrow_mut().set_height(percent),
+                AppWindow::Winit(window) if self.dropdown => {
+                    if let Some(monitor) = window.current_monitor() {
+                        let _ = window.request_inner_size(dropdown_size(&monitor, percent));
+                    }
                 }
-            }
+                AppWindow::Winit(_) => {}
+            },
             Setting::QuakeHideOnUnfocus(_) => {}
             // Off: the next start opens a fresh tab, so there's nothing to
             // keep. On: saved from now.
@@ -4474,6 +4591,7 @@ impl AppState {
             | Setting::ScrollSelectFactor(_)
             | Setting::Scrollbar(_)
             | Setting::WindowSize { .. }
+            | Setting::Maximized(_)
             | Setting::Sidebar(_)
             | Setting::Splash(_)
             | Setting::CommandsRun(_)
@@ -4556,7 +4674,7 @@ impl AppState {
             }
             // Right to left: the exit code at the end, the run time before it.
             let parts = [
-                finished.exit.filter(|&code| code != 0).map(|code| (t!("prompt-exit", code = code), red)),
+                finished.exit.filter(|&code| code != 0).map(|code| (t!("prompt-exit", code = prompts::exit_code_label(code)), red)),
                 finished.duration.filter(|d| *d >= prompts::MIN_SHOWN_DURATION).map(|d| (prompts::duration_label(d), weak)),
             ];
             let parts: Vec<(String, glyphon::Color)> = parts.into_iter().flatten().collect();
@@ -5094,21 +5212,14 @@ fn login_of(target: &SshTarget) -> (String, u16, String) {
 
 /// This machine's host name, as shells put it into OSC 7.
 fn hostname() -> String {
-    let mut buf = [0u8; 256];
-    // SAFETY: `buf` is valid for `buf.len()` bytes; gethostname writes at
-    // most that many, NUL-terminated unless truncated.
-    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
-        return String::new();
-    }
-    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    String::from_utf8_lossy(&buf[..len]).into_owned()
+    crate::platform::hostname()
 }
 
 /// A desktop notification that the command in the tab titled `tab`
 /// finished, through `notify-send` if it's installed.
 fn notify(tab: &str, exit: Option<i32>, elapsed: Duration) {
     let title = match exit {
-        Some(code) if code != 0 => t!("notify-failed", code = code),
+        Some(code) if code != 0 => t!("notify-failed", code = prompts::exit_code_label(code)),
         _ => t!("notify-finished"),
     };
     desktop_notification(title, t!("notify-body", tab = tab, duration = duration_text(elapsed)));
@@ -5121,9 +5232,8 @@ fn notify_silence(tab: &str, after: Duration) {
 }
 
 fn desktop_notification(title: String, body: String) {
-    let spawned = std::process::Command::new("notify-send")
-        .args(["--app-name=Terminaal", "--icon=terminaal", "--"])
-        .args([title, body])
+    let Some(mut command) = crate::platform::notify_command(title, body) else { return };
+    let spawned = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -5139,19 +5249,17 @@ fn desktop_notification(title: String, body: String) {
 /// executable file isn't opened -- that could run it -- but the folder
 /// it's in.
 fn open_link(target: &links::Target) {
-    use std::os::unix::fs::PermissionsExt;
     let arg = match target {
         links::Target::Uri(uri) => uri.clone().into(),
         links::Target::Path(path) => {
-            let executable = path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0);
+            let executable = path.metadata().is_ok_and(|meta| crate::platform::is_executable(path, &meta));
             match path.parent().filter(|_| executable) {
                 Some(dir) => dir.as_os_str().to_owned(),
                 None => path.as_os_str().to_owned(),
             }
         }
     };
-    let spawned = std::process::Command::new("xdg-open")
-        .arg(&arg)
+    let spawned = crate::platform::open_command(&arg)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -5174,9 +5282,9 @@ fn duration_text(elapsed: Duration) -> String {
 
 /// Ask GitHub for a newer release on a thread of its own; the answer
 /// comes as `UserEvent::UpdateChecked`.
-fn spawn_update_check(proxy: EventLoopProxy<UserEvent>, manual: bool) {
+fn spawn_update_check(proxy: EventLoopProxy<UserEvent>, manual: bool, installation: update::Installation) {
     let spawned = std::thread::Builder::new().name("update-check".into()).spawn(move || {
-        let result = update::check(&update::Http::new(), update::current());
+        let result = update::check(&update::Http::new(), update::current(), installation);
         let _ = proxy.send_event(UserEvent::UpdateChecked { result, manual });
     });
     if let Err(err) = spawned {
@@ -5306,6 +5414,15 @@ fn wheel_lines(delta: MouseScrollDelta, lines_per_step: f32, cell_height: f32, r
 }
 
 impl ApplicationHandler<UserEvent> for App {
+    /// However the loop ends: an update still waiting (Windows: its setup)
+    /// goes in now, so the next start is the new version.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        let Some(state) = &mut self.state else { return };
+        if let (Some(installed), Some(exe)) = (state.installed_update.take(), &state.exe) {
+            update::apply_at_exit(exe, &installed);
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;
@@ -5313,6 +5430,14 @@ impl ApplicationHandler<UserEvent> for App {
         let quake = self.quake.take().map(|toggle| {
             let proxy = self.proxy.clone();
             toggle.listen(move || drop(proxy.send_event(UserEvent::QuakeToggle)));
+            // Windows lets a program have a global shortcut of its own.
+            #[cfg(windows)]
+            if let Some(combo) = self.config.quake_hotkey() {
+                let proxy = self.proxy.clone();
+                if let Err(err) = crate::quake::hotkey::listen(combo, move || drop(proxy.send_event(UserEvent::QuakeToggle))) {
+                    log::warn!("no global shortcut {combo} for the drop-down window: {err}");
+                }
+            }
         });
         if quake.is_some() {
             if let Some(window) = quake_layer(event_loop, self.config.quake_height()) {
@@ -5329,25 +5454,46 @@ impl ApplicationHandler<UserEvent> for App {
             // anyway -- a window with an alpha visual crashed Xwayland
             // (abort in Mesa's libgallium, COSMIC), taking every X11 app
             // down with it.
-            .with_window_icon(window_icon());
+            .with_window_icon(window_icon())
+            // Windows: as it was when last closed (`maximized`).
+            .with_maximized(cfg!(windows) && quake.is_none() && self.config.maximized);
         // Without an app_id (Wayland) / WM_CLASS (X11) the dock can't tell
         // which app the window belongs to: COSMIC matched it to an unrelated
         // desktop entry, and clicking that never restored a minimized window.
+        #[cfg(unix)]
         let attrs = WindowAttributesExtWayland::with_name(attrs, APP_ID, APP_ID);
+        #[cfg(unix)]
         let attrs = WindowAttributesExtX11::with_name(attrs, APP_ID, APP_ID);
         // Without a layer shell the drop-down window can only ask: on top,
         // along the top edge (X11 takes that, Wayland places it itself).
         let attrs = match quake.and_then(|()| event_loop.primary_monitor()) {
-            Some(monitor) => {
-                let size = monitor.size();
-                let height = (f64::from(size.height) * f64::from(self.config.quake_height()) / 100.0).round();
-                attrs
-                    .with_decorations(false)
-                    .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
-                    .with_position(monitor.position())
-                    .with_inner_size(PhysicalSize::new(f64::from(size.width), height))
-            }
+            Some(monitor) => attrs
+                .with_decorations(false)
+                .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
+                .with_position(monitor.position())
+                .with_inner_size(dropdown_size(&monitor, self.config.quake_height())),
             None => attrs,
+        };
+        // Shown and hidden by its shortcut, not from the taskbar.
+        #[cfg(windows)]
+        let attrs = if quake.is_some() {
+            winit::platform::windows::WindowAttributesExtWindows::with_skip_taskbar(attrs, true)
+        } else {
+            attrs
+        };
+        // Frames through DirectComposition (`gpu::composition`) need a
+        // window without the redirection bitmap GDI would draw into: it
+        // lies over the composition visual, and see-through frames would
+        // show it instead of the desktop. And a theme of winit's own, so
+        // it leaves the title bar to `apply_theme`: winit 0.30 sets the
+        // system's mode again on every WM_SETTINGCHANGE unless the window
+        // was made with one (`set_theme` doesn't count).
+        #[cfg(windows)]
+        let attrs = {
+            let dark = Themes::load().get(self.config.theme.as_deref()).ui.is_dark();
+            let theme = if dark { winit::window::Theme::Dark } else { winit::window::Theme::Light };
+            winit::platform::windows::WindowAttributesExtWindows::with_no_redirection_bitmap(attrs, crate::gpu::composition())
+                .with_theme(Some(theme))
         };
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
         let window = AppWindow::Winit(window);
@@ -5436,7 +5582,7 @@ impl ApplicationHandler<UserEvent> for App {
         {
             return;
         }
-        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+        if let WindowEvent::KeyboardInput { event: key, is_synthetic: false, .. } = &event
             && key.state == ElementState::Pressed
         {
             state.dismiss_splash();
@@ -5479,9 +5625,20 @@ impl ApplicationHandler<UserEvent> for App {
                 state.save_session();
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => state.resize(size.width, size.height),
+            WindowEvent::Resized(size) => {
+                state.resize(size.width, size.height);
+                state.note_maximized();
+            }
             WindowEvent::Focused(focused) => {
                 state.focused = focused;
+                // The drop-down window as a plain window (no layer shell).
+                if !focused
+                    && state.dropdown
+                    && state.config.quake_hide_on_unfocus
+                    && let Some(window) = state.window.winit()
+                {
+                    window.set_visible(false);
+                }
                 // Releases of what's held now go to whichever window
                 // gets the keyboard.
                 if !focused {
@@ -5492,7 +5649,9 @@ impl ApplicationHandler<UserEvent> for App {
                 state.modifiers = modifiers.state();
                 state.update_link();
             }
-            WindowEvent::KeyboardInput { event, .. } => state.handle_keyboard_input(KeyInput::from(&event)),
+            // Not what winit makes up on focus for keys already held (Windows,
+            // X11): the drop-down window, shown by Ctrl+Alt+T, typed the T.
+            WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => state.handle_keyboard_input(KeyInput::from(&event)),
             WindowEvent::CursorMoved { position, .. } => state.on_cursor_moved(position),
             WindowEvent::CursorLeft { .. } => {
                 state.set_hovered(None);
@@ -5520,8 +5679,11 @@ impl ApplicationHandler<UserEvent> for App {
                 state.start_splash(frames);
                 return;
             }
-            UserEvent::CosmicThemeChanged => {
+            UserEvent::DesktopThemeChanged => {
                 state.reload_themes();
+                // Windows' transparency effects may have changed with it.
+                #[cfg(windows)]
+                state.update_blur();
                 return;
             }
             UserEvent::Shell(pane_id, event) => {
@@ -5565,7 +5727,10 @@ impl ApplicationHandler<UserEvent> for App {
             // Every tab's title is visible in the tab bar, so unlike most
             // events these redraw even when they come from a background tab.
             TermEvent::Title(title) => {
-                pane.program_title = Some(title);
+                pane.program_title = match &pane.origin {
+                    PaneOrigin::Shell(shell) => console_title(&title, &shell.path.to_string_lossy()),
+                    _ => (!title.trim().is_empty()).then_some(title),
+                };
                 pane.refresh_title(&hostname);
                 if focused {
                     state.update_window_title();
@@ -5816,6 +5981,24 @@ mod tests {
         term.set_options(term_config(TermOptions { clipboard_write: false, ..options }));
         parser.advance(&mut term, b"\x1b]52;c;Y29waWVk\x07\x1b]52;c;?\x07");
         assert_eq!(events.0.lock().unwrap().drain(..).collect::<Vec<_>>(), ["load \x1b]52;c;aGk=\x07"]);
+    }
+
+    #[test]
+    fn a_consoles_default_title_is_no_title() {
+        use super::console_title;
+        let shell = r"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe";
+        // What winget left behind, also elevated and in other casing.
+        assert_eq!(console_title(shell, shell), None);
+        assert_eq!(console_title(r"Administrator: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", shell), None);
+        assert_eq!(console_title("  ", shell), None, "empty clears it");
+        // cmd's title while a command runs: the command.
+        let cmd = r"C:\WINDOWS\system32\cmd.exe";
+        assert_eq!(console_title(r"C:\WINDOWS\system32\cmd.exe - winget  upgrade", cmd).as_deref(), Some("winget  upgrade"));
+        assert_eq!(console_title(r"Administrator: C:\WINDOWS\system32\cmd.exe - ping x", cmd).as_deref(), Some("ping x"));
+        // Titles of their own stay as they are.
+        assert_eq!(console_title("nvim", shell).as_deref(), Some("nvim"));
+        assert_eq!(console_title("~/src: fish", "/usr/bin/fish").as_deref(), Some("~/src: fish"));
+        assert_eq!(console_title("my/usr/bin/fish", "/usr/bin/fish").as_deref(), Some("my/usr/bin/fish"));
     }
 
     #[test]

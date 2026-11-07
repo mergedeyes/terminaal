@@ -30,14 +30,19 @@
 //!   the same check -- once the session is attached again. Only the pasted command passes through the
 //!   user's shell -- whatever it is -- the paths only ever through `sh`.
 
+#[cfg(unix)]
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::ffi::CString;
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, PoisonError};
+#[cfg(unix)]
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -45,6 +50,7 @@ use sha2::{Digest, Sha256};
 use super::protocol::{self, Attrs, Client, open};
 use super::session::{Channels, Command, Fatal, file_name, join, parent};
 use crate::i18n::t;
+use crate::platform;
 
 /// Quiet time after a local change before it's uploaded.
 const SETTLE: Duration = Duration::from_millis(300);
@@ -243,7 +249,7 @@ impl Edits {
     pub fn default_root(label: &str) -> PathBuf {
         let base = match std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()) {
             Some(dir) => PathBuf::from(dir).join("terminaal"),
-            None => std::env::temp_dir().join(format!("terminaal-{}", unsafe { libc::getuid() })),
+            None => platform::user_temp_dir(),
         };
         let label: String = label.chars().map(|c| if c.is_alphanumeric() || "@.-_".contains(c) { c } else { '_' }).collect();
         base.join("edit").join(format!("{label}-{}-{}", std::process::id(), unique()))
@@ -332,11 +338,11 @@ impl Edits {
     /// A fresh 0700 folder for one file's local copy.
     fn local_path(&self, remote: &str) -> Result<PathBuf, String> {
         let dir = self.root.join(unique());
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|err| err.to_string())?;
+        platform::create_private_dir(&dir).map_err(|err| err.to_string())?;
         // `recursive` leaves existing parents as they are: make sure no one
         // else can look in.
         for folder in [&self.root, &dir] {
-            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).map_err(|err| err.to_string())?;
+            platform::set_mode(folder, 0o700).map_err(|err| err.to_string())?;
         }
         Ok(dir.join(file_name(remote)))
     }
@@ -735,7 +741,7 @@ fn unique() -> String {
 
 fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    let mut file = platform::create_private_file(path)?;
     file.write_all(data)
 }
 
@@ -751,16 +757,8 @@ fn write_in_place(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// desktop's default application.
 fn launch_editor(editor: Option<&str>, path: &Path) {
     let mut command = match editor.map(str::trim).filter(|editor| !editor.is_empty()) {
-        Some(editor) => {
-            let mut command = std::process::Command::new("/bin/sh");
-            command.arg("-c").arg(format!("exec {editor} \"$1\"")).arg("sh").arg(path);
-            command
-        }
-        None => {
-            let mut command = std::process::Command::new("xdg-open");
-            command.arg(path);
-            command
-        }
+        Some(editor) => platform::editor_command(editor, path),
+        None => platform::open_command(path.as_os_str()),
     };
     let spawned = command
         .stdin(std::process::Stdio::null())
@@ -910,6 +908,7 @@ pub fn sudo_script(purpose: SudoFor, dir: &str, target: &str, message: &str, exp
 /// `changed` gets a file that was written (closed after writing) or renamed
 /// into a watched folder, until it returns `false`. Folder sync
 /// ([`super::sync`]) watches for more ([`Watcher::with`]).
+#[cfg(unix)]
 pub(super) struct Watcher {
     fd: Arc<OwnedFd>,
     dirs: Arc<Mutex<HashMap<i32, PathBuf>>>,
@@ -919,6 +918,7 @@ pub(super) struct Watcher {
     stop: std::os::unix::net::UnixStream,
 }
 
+#[cfg(unix)]
 impl Watcher {
     fn new(changed: impl Fn(PathBuf) -> bool + Send + 'static) -> std::io::Result<Self> {
         Self::with("edit-watch", libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO, changed)
@@ -990,6 +990,7 @@ impl Watcher {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Watcher {
     fn drop(&mut self) {
         use std::io::Write;
@@ -998,6 +999,7 @@ impl Drop for Watcher {
 }
 
 /// The watch descriptor and file name of each event with a name.
+#[cfg(unix)]
 fn parse_events(mut buf: &[u8]) -> Vec<(i32, std::ffi::OsString)> {
     const HEADER: usize = std::mem::size_of::<libc::inotify_event>();
     let mut events = Vec::new();
@@ -1018,17 +1020,26 @@ fn parse_events(mut buf: &[u8]) -> Vec<(i32, std::ffi::OsString)> {
     events
 }
 
+/// `ReadDirectoryChangesW` on Windows.
+#[cfg(windows)]
+pub(super) use super::watch_windows::Watcher;
+
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::process::Command as Process;
 
-    use super::super::protocol::tests::scratch;
-    use super::super::session::tests::{Session, session, wait_for};
+    use super::super::protocol::tests::{remote_path, scratch};
+    use super::super::session::tests::{Session, session, shell, wait_for};
     use super::super::session::{Command, Connection};
     use super::*;
 
     /// A `sudo` that makes `target` readable and writable just for the
-    /// command, as the real one would by running it as root.
+    /// command, as the real one would by running it as root. (Unix only:
+    /// Windows' files have no modes to take away.)
+    #[cfg(unix)]
     fn fake_sudo(dir: &Path, target: &Path) -> PathBuf {
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
@@ -1041,6 +1052,7 @@ mod tests {
         bin
     }
 
+    #[cfg(unix)]
     fn run_pasted(command: &str, bin: &Path) -> std::process::ExitStatus {
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
         Process::new("/bin/sh").arg("-c").arg(command).env("PATH", path).status().unwrap()
@@ -1075,11 +1087,13 @@ mod tests {
         assert_eq!(parse_hash(b""), ServerHash::Unknown);
         assert_eq!(parse_hash(format!("{}  x", "z".repeat(64)).as_bytes()), ServerHash::Unknown);
 
-        // The command itself, with this machine's tools and a nasty name.
+        // The command itself, with this machine's tools and a nasty name
+        // (`"` can't be in a Windows name).
+        let Some(mut sh) = shell() else { return };
         let dir = scratch("hash");
-        let file = dir.join("it's \"a\" $file");
+        let file = dir.join(if cfg!(windows) { "it's a $file" } else { "it's \"a\" $file" });
         std::fs::write(&file, "hello").unwrap();
-        let output = Process::new("/bin/sh")
+        let output = sh
             .arg("-c")
             .arg(HASH_COMMAND)
             .stdin(std::process::Stdio::piped())
@@ -1087,7 +1101,7 @@ mod tests {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write;
-                child.stdin.take().unwrap().write_all(format!("{}\n", file.display()).as_bytes())?;
+                child.stdin.take().unwrap().write_all(format!("{}\n", remote_path(&file)).as_bytes())?;
                 child.wait_with_output()
             })
             .unwrap();
@@ -1095,6 +1109,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_sudo_scripts_copy_and_leave_their_status() {
         if unsafe { libc::geteuid() } == 0 {
@@ -1146,27 +1161,38 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let watcher = Watcher::new(move |path| tx.send(path).is_ok()).unwrap();
         watcher.add(&dir).unwrap();
+        // Windows tells one write as several changes (size, then time):
+        // what counts is that `path` is told, repeats are let through.
+        let told = |path: PathBuf| loop {
+            let got = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| panic!("{} never told", path.display()));
+            if got == path {
+                break;
+            }
+        };
         std::fs::write(dir.join("a.txt"), "1").unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), dir.join("a.txt"));
+        told(dir.join("a.txt"));
         // Like editors that write a new file and rename it over the old one.
         std::fs::write(dir.join(".a.txt.swp"), "2").unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), dir.join(".a.txt.swp"));
+        told(dir.join(".a.txt.swp"));
         std::fs::rename(dir.join(".a.txt.swp"), dir.join("a.txt")).unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), dir.join("a.txt"));
+        told(dir.join("a.txt"));
         watcher.remove(&dir);
+        std::thread::sleep(Duration::from_millis(100));
+        while rx.try_recv().is_ok() {}
         std::fs::write(dir.join("b.txt"), "3").unwrap();
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "no longer watched");
         drop(watcher);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    fn edit_of<'a>(state: &'a super::super::session::State, remote: &Path) -> Option<&'a EditStatus> {
-        state.edits.iter().find(|edit| Path::new(&edit.remote) == remote)
+    fn edit_of<'a>(state: &'a super::super::session::State, file: &Path) -> Option<&'a EditStatus> {
+        let remote = remote_path(file);
+        state.edits.iter().find(|edit| edit.remote == remote)
     }
 
     /// Open `file` for editing and wait until it's synced.
     fn open(remote: &super::super::session::Remote, file: &Path) -> EditStatus {
-        remote.send(Command::Edit { path: file.to_str().unwrap().into(), editor: Some("true".into()) });
+        remote.send(Command::Edit { path: remote_path(file), editor: Some("true".into()) });
         let state = wait_for(remote, "opened", |s| edit_of(s, file).is_some_and(|e| e.state == EditState::Synced));
         edit_of(&state, file).unwrap().clone()
     }
@@ -1198,17 +1224,21 @@ mod tests {
         let root = scratch("edit-server");
         let file = root.join("notes.txt");
         std::fs::write(&file, "one\n").unwrap();
+        #[cfg(unix)]
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
         let file = file.canonicalize().unwrap();
 
         let edit = open(&remote, &file);
         assert_eq!(std::fs::read_to_string(&edit.local).unwrap(), "one\n");
+        #[cfg(unix)]
         let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        #[cfg(unix)]
         assert_eq!((mode(&edit.local), mode(edit.local.parent().unwrap())), (0o600, 0o700));
 
         // Saved locally: the server gets it, keeping its mode.
         std::fs::write(&edit.local, "two\n").unwrap();
         wait_for(&remote, "uploaded", |_| std::fs::read_to_string(&file).unwrap() == "two\n");
+        #[cfg(unix)]
         assert_eq!(mode(&file), 0o640);
         assert!(root.read_dir().unwrap().count() == 1, "no temporary file left");
         wait_for(&remote, "synced", |s| edit_of(s, &file).is_some_and(|e| e.state == EditState::Synced && !e.unsaved));
@@ -1286,6 +1316,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn files_without_permission_go_through_sudo() {
         if unsafe { libc::geteuid() } == 0 {

@@ -36,11 +36,10 @@
 use std::fs::OpenOptions;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::os::fd::{AsRawFd, OwnedFd, RawFd};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::ExitStatusExt;
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -57,6 +56,7 @@ use ssh2::{
 
 use crate::commands::{self, AurHelper, Family, System, Target};
 use crate::i18n::t;
+use crate::platform::{self, Handle, LocalStream, POLLIN, POLLOUT, Pollable, poll};
 use crate::ssh::agent_forward::AgentForwarding;
 use crate::ssh::forward::{ForwardStatus, Forwards};
 use crate::ssh::known_hosts;
@@ -104,10 +104,10 @@ enum Msg {
     /// Pause the forward at this index, or start it (again).
     SetForward(usize, bool),
     /// Run the SFTP subsystem, tied to this socket.
-    OpenSftp(UnixStream),
+    OpenSftp(LocalStream),
     /// Run this command on the server, its stdin and output tied to this
     /// socket.
-    Exec(String, UnixStream),
+    Exec(String, LocalStream),
 }
 
 /// Terminal escape sequences that undo what a program may have left on
@@ -125,7 +125,7 @@ pub fn retry_delay(attempt: u32) -> Duration {
 /// drops it (the tab closed), however many openers are around.
 struct Link {
     tx: Sender<Msg>,
-    wake: UnixStream,
+    wake: LocalStream,
 }
 
 impl Link {
@@ -156,16 +156,16 @@ impl Opener {
 
     /// A socket that speaks SFTP with the server; it closes at once if
     /// there's no connection or no SFTP.
-    pub fn open_sftp(&self) -> io::Result<UnixStream> {
-        let (ours, theirs) = UnixStream::pair()?;
+    pub fn open_sftp(&self) -> io::Result<LocalStream> {
+        let (ours, theirs) = platform::pair()?;
         self.send(Msg::OpenSftp(theirs))?;
         Ok(ours)
     }
 
     /// Run `command` on the server: write its input to the socket, read its
     /// output (stderr included) until it closes.
-    pub fn exec(&self, command: &str) -> io::Result<UnixStream> {
-        let (ours, theirs) = UnixStream::pair()?;
+    pub fn exec(&self, command: &str) -> io::Result<LocalStream> {
+        let (ours, theirs) = platform::pair()?;
         self.send(Msg::Exec(command.to_string(), theirs))?;
         Ok(ours)
     }
@@ -244,7 +244,7 @@ pub fn spawn(
     graphics: SharedGraphics,
 ) -> io::Result<SshHandle> {
     let (tx, rx) = mpsc::channel();
-    let (wake_tx, wake_rx) = UnixStream::pair()?;
+    let (wake_tx, wake_rx) = platform::pair()?;
     wake_tx.set_nonblocking(true)?;
     let name = format!("ssh {}", target.label);
     // A host that says what it is needs no probe -- and being root is
@@ -318,14 +318,14 @@ impl From<io::Error> for Stop {
 /// (fed by a forwarder thread) behind a jump host.
 enum Transport {
     Tcp(TcpStream),
-    Tunnel(UnixStream),
+    Tunnel(LocalStream),
 }
 
 impl Transport {
-    fn raw_fd(&self) -> RawFd {
+    fn raw_fd(&self) -> Handle {
         match self {
-            Transport::Tcp(stream) => stream.as_raw_fd(),
-            Transport::Tunnel(stream) => stream.as_raw_fd(),
+            Transport::Tcp(stream) => stream.handle(),
+            Transport::Tunnel(stream) => stream.handle(),
         }
     }
 }
@@ -339,7 +339,7 @@ struct Worker {
     filter: Filter,
     rx: Receiver<Msg>,
     /// Read end of the wakeup socketpair; see the module docs.
-    wake: UnixStream,
+    wake: LocalStream,
     size: WindowSize,
     proxy: Option<Proxy>,
     /// Shared with the handle; see [`SshHandle::system`].
@@ -490,7 +490,7 @@ impl Worker {
                     err = err.to_string()
                 ))
             })?;
-            let (near, far) = UnixStream::pair()?;
+            let (near, far) = platform::pair()?;
             spawn_forwarder(session, channel, socket, near, hop.settings.keepalive.map(|(interval, _)| interval))?;
             transport = Transport::Tunnel(far);
         }
@@ -498,7 +498,7 @@ impl Worker {
     }
 
     /// Handshake, host key check and authentication for one hop.
-    fn establish(&mut self, hop: &SshTarget, transport: Transport) -> Result<(Session, RawFd), Stop> {
+    fn establish(&mut self, hop: &SshTarget, transport: Transport) -> Result<(Session, Handle), Stop> {
         // The session takes ownership of the stream but keeps it (and so
         // the fd) alive as long as itself.
         let socket = transport.raw_fd();
@@ -526,7 +526,7 @@ impl Worker {
         Ok((session, socket))
     }
 
-    fn open_shell(&mut self, session: Session, socket: RawFd) -> Result<End, Stop> {
+    fn open_shell(&mut self, session: Session, socket: Handle) -> Result<End, Stop> {
         let settings = self.target.settings.clone();
         let (mut forwards, report) = Forwards::start(&session, &settings.forwards);
         self.publish_forwards(&forwards);
@@ -604,18 +604,24 @@ impl Worker {
         }
         let previous = session.timeout();
         session.set_timeout(PROBE_TIMEOUT_MS);
-        let output = (|| -> Result<String, io::Error> {
+        let run = |command: &str| -> Result<String, io::Error> {
             let mut channel = session.channel_session()?;
-            channel.exec(commands::PROBE)?;
+            channel.exec(command)?;
             let mut output = String::new();
             channel.read_to_string(&mut output)?;
             let _ = channel.close();
             Ok(output)
-        })();
+        };
+        let system = run(commands::PROBE).map(|output| commands::probe(&output)).map(|system| {
+            if system.family != commands::Family::Unknown {
+                return system;
+            }
+            // Nothing a Unix shell would say: maybe a Windows server.
+            run(commands::WINDOWS_PROBE).ok().and_then(|output| commands::windows_probe(&output)).unwrap_or(system)
+        });
         session.set_timeout(previous);
-        match output {
-            Ok(output) => {
-                let system = commands::probe(&output);
+        match system {
+            Ok(system) => {
                 log::debug!("{}: system is {:?} (root: {})", self.target.label, system.family, system.root);
                 *self.system.lock().unwrap_or_else(PoisonError::into_inner) = Some(system);
             }
@@ -665,10 +671,17 @@ impl Worker {
                 None => expand_tilde(spec),
             },
             (_, AgentSocket::Path(path)) => path.clone(),
+            // Windows: without the variable, Windows' own OpenSSH agent --
+            // as for logging in, where libssh2 looks there itself.
+            #[cfg(windows)]
+            (_, AgentSocket::Env) => {
+                from_env("SSH_AUTH_SOCK").unwrap_or_else(|_| PathBuf::from(super::agent_pipe::OPENSSH_AGENT))
+            }
+            #[cfg(unix)]
             (_, AgentSocket::Env) => from_env("SSH_AUTH_SOCK")?,
             (_, AgentSocket::Off) => return Err(t!("conn-agent-forward-off")),
         };
-        if !socket.exists() {
+        if !super::agent_pipe::exists(&socket) {
             return Err(t!("conn-agent-forward-missing", socket = display_path(&socket)));
         }
         Ok(socket)
@@ -701,17 +714,10 @@ impl Worker {
     /// `ProxyCommand`: it runs with one end of a socketpair as stdin and
     /// stdout, and the session gets the other -- like OpenSSH, including
     /// the `exec`, so no shell lingers in between.
-    fn spawn_proxy(&mut self, command: &str) -> Result<UnixStream, Stop> {
+    fn spawn_proxy(&mut self, command: &str) -> Result<LocalStream, Stop> {
         self.print(&format!("\x1b[2mProxyCommand: {command}\x1b[0m\n"));
-        let (ours, theirs) = UnixStream::pair()?;
-        let stdin = OwnedFd::from(theirs.try_clone()?);
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(format!("exec {command}"))
-            .stdin(Stdio::from(stdin))
-            .stdout(Stdio::from(OwnedFd::from(theirs)))
-            .stderr(Stdio::piped())
-            .spawn()
+        let (ours, theirs) = platform::pair()?;
+        let mut child = proxy_command(command, theirs)
             .map_err(|err| Stop::Failed(t!("conn-proxy-start-failed", command = command, err = err.to_string())))?;
         let stderr = Arc::new(Mutex::new(String::new()));
         if let Some(mut pipe) = child.stderr.take() {
@@ -923,7 +929,7 @@ impl Worker {
     fn try_agent(&mut self, session: &Session, user: &str, plan: &AuthPlan) -> (bool, usize) {
         let socket = match &plan.agent {
             AgentSocket::Off => return (false, 0),
-            AgentSocket::Env if std::env::var_os("SSH_AUTH_SOCK").is_none() => return (false, 0),
+            AgentSocket::Env if !crate::platform::agent_available() => return (false, 0),
             AgentSocket::Env => None,
             AgentSocket::Path(path) => Some(path),
         };
@@ -1010,7 +1016,7 @@ impl Worker {
         &mut self,
         session: &Session,
         channel: &mut Channel,
-        socket: RawFd,
+        socket: Handle,
         forwards: &mut Forwards,
     ) -> Result<End, Stop> {
         session.set_blocking(false);
@@ -1123,11 +1129,11 @@ impl Worker {
             // needs us. POLLOUT only when libssh2 is waiting to send -- a full
             // remote window is cleared by inbound data, not by the socket
             // being writable.
-            let mut events = libc::POLLIN;
+            let mut events = POLLIN;
             if matches!(session.block_directions(), BlockDirections::Outbound | BlockDirections::Both) {
-                events |= libc::POLLOUT;
+                events |= POLLOUT;
             }
-            let mut fds = vec![(socket, events), (self.wake.as_raw_fd(), libc::POLLIN)];
+            let mut fds = vec![(socket, events), (self.wake.handle(), POLLIN)];
             forwards.poll_fds(&mut fds);
             // Data libssh2 already took off the socket for a channel (while
             // reading or writing another) doesn't wake poll().
@@ -1143,7 +1149,7 @@ impl Worker {
             };
             log::trace!("{}: poll for {timeout:?} (events {events:#x})", self.target.label);
             let revents = poll(&fds, timeout);
-            if revents[0] & libc::POLLIN != 0 {
+            if revents[0] & POLLIN != 0 {
                 unanswered = 0;
             }
             log::trace!("{}: poll woke", self.target.label);
@@ -1181,7 +1187,7 @@ impl Worker {
                 log::debug!("{}: remote command exited with {code}", self.target.label);
                 // `ExitStatus` is `wait(2)`'s encoding: the code is the
                 // high byte, so `.code()` gives it back.
-                self.listener.send_event(Event::ChildExit(ExitStatus::from_raw(code << 8)));
+                self.listener.send_event(Event::ChildExit(platform::exit_status(code)));
             }
             Err(err) => log::debug!("{}: no exit status: {err}", self.target.label),
         }
@@ -1288,8 +1294,8 @@ impl KeyboardInteractivePrompt for Prompter<'_> {
 fn spawn_forwarder(
     session: Session,
     channel: Channel,
-    socket: RawFd,
-    local: UnixStream,
+    socket: Handle,
+    local: LocalStream,
     keepalive: Option<u32>,
 ) -> io::Result<()> {
     std::thread::Builder::new().name("ssh jump".into()).spawn(move || {
@@ -1304,8 +1310,8 @@ fn spawn_forwarder(
 fn forward(
     session: &Session,
     mut channel: Channel,
-    socket: RawFd,
-    mut local: UnixStream,
+    socket: Handle,
+    mut local: LocalStream,
     keepalive: Option<u32>,
 ) -> io::Result<()> {
     // Stderr on a tunnel is unheard of, but it would count as waiting data
@@ -1367,17 +1373,17 @@ fn forward(
         // this into a busy loop.
         let mut remote_events = 0;
         if to_local.len() < MAX_FORWARD_BUFFER {
-            remote_events |= libc::POLLIN;
+            remote_events |= POLLIN;
         }
         if matches!(session.block_directions(), BlockDirections::Outbound | BlockDirections::Both) {
-            remote_events |= libc::POLLOUT;
+            remote_events |= POLLOUT;
         }
         let mut local_events = 0;
         if !local_closed && to_remote.len() < MAX_FORWARD_BUFFER {
-            local_events |= libc::POLLIN;
+            local_events |= POLLIN;
         }
         if !to_local.is_empty() {
-            local_events |= libc::POLLOUT;
+            local_events |= POLLOUT;
         }
         // Writing to the channel may have read data for it off the socket.
         let timeout = if to_local.len() < MAX_FORWARD_BUFFER && channel.read_window().available > 0 {
@@ -1385,7 +1391,7 @@ fn forward(
         } else {
             keepalive.map_or(IDLE_POLL, secs)
         };
-        let revents = poll(&[(socket, remote_events), (local.as_raw_fd(), local_events)], timeout);
+        let revents = poll(&[(socket, remote_events), (local.handle(), local_events)], timeout);
         if keepalive.is_some() && revents.iter().all(|&r| r == 0) {
             let _ = session.keepalive_send();
         }
@@ -1424,6 +1430,48 @@ fn stored_keys(path: Option<&Path>, host: &str, port: u16) -> String {
     format!("  {}", lines.join("\n  "))
 }
 
+/// Start a `ProxyCommand` talking over `socket`, its stderr piped.
+#[cfg(unix)]
+fn proxy_command(command: &str, socket: LocalStream) -> io::Result<Child> {
+    let stdin = OwnedFd::from(socket.try_clone()?);
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(format!("exec {command}"))
+        .stdin(Stdio::from(stdin))
+        .stdout(Stdio::from(OwnedFd::from(socket)))
+        .stderr(Stdio::piped())
+        .spawn()
+}
+
+/// Windows can't hand a socket to a program as its stdin/stdout: pipes,
+/// and a thread each way between them and `socket`.
+#[cfg(windows)]
+fn proxy_command(command: &str, socket: LocalStream) -> io::Result<Child> {
+    use std::os::windows::process::CommandExt;
+    let mut child = Command::new("cmd")
+        .arg("/C")
+        .arg(command)
+        .creation_flags(platform::CREATE_NO_WINDOW)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let (mut stdin, mut stdout) = (child.stdin.take(), child.stdout.take());
+    let (mut to_child, mut from_child) = (socket.try_clone()?, socket);
+    std::thread::Builder::new().name("ssh proxy stdin".into()).spawn(move || {
+        if let Some(stdin) = &mut stdin {
+            let _ = io::copy(&mut to_child, stdin);
+        }
+    })?;
+    std::thread::Builder::new().name("ssh proxy stdout".into()).spawn(move || {
+        if let Some(stdout) = &mut stdout {
+            let _ = io::copy(stdout, &mut from_child);
+        }
+        let _ = from_child.shutdown(std::net::Shutdown::Both);
+    })?;
+    Ok(child)
+}
+
 /// Append one line rather than letting libssh2 rewrite the file, which
 /// would drop comments and every line it didn't understand.
 fn append_known_host(path: &Path, entry: &str, key_type: HostKeyType, key: &[u8]) -> io::Result<()> {
@@ -1432,8 +1480,7 @@ fn append_known_host(path: &Path, entry: &str, key_type: HostKeyType, key: &[u8]
         && !dir.exists()
     {
         std::fs::create_dir_all(dir)?;
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        platform::set_mode(dir, 0o700)?;
     }
     let missing_newline = std::fs::read(path).is_ok_and(|data| !data.is_empty() && !data.ends_with(b"\n"));
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
@@ -1512,20 +1559,6 @@ pub(super) fn base64(data: &[u8]) -> String {
         }
     }
     out
-}
-
-/// Block until one of `fds` is ready or `timeout` passes. Returns each
-/// fd's `revents`, all 0 on timeout -- or on an error (EINTR); the caller
-/// just loops.
-fn poll(fds: &[(RawFd, libc::c_short)], timeout: Duration) -> Vec<libc::c_short> {
-    let mut pollfds: Vec<libc::pollfd> =
-        fds.iter().map(|&(fd, events)| libc::pollfd { fd, events, revents: 0 }).collect();
-    // Round up, so a sub-millisecond deadline doesn't turn into a busy loop.
-    let millis = timeout.as_micros().div_ceil(1000).min(libc::c_int::MAX as u128) as libc::c_int;
-    // SAFETY: `pollfds` is a valid, exclusively borrowed array of
-    // `pollfds.len()` entries for the duration of the call.
-    let ready = unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, millis) };
-    if ready > 0 { pollfds.iter().map(|p| p.revents).collect() } else { vec![0; fds.len()] }
 }
 
 #[cfg(test)]
@@ -1607,18 +1640,5 @@ mod tests {
         assert_eq!(base64(b"Ma"), "TWE=");
         assert_eq!(base64(b"Man"), "TWFu");
         assert_eq!(base64(&[0xff, 0xfe, 0xfd, 0x00]), "//79AA==");
-    }
-
-    #[test]
-    fn poll_reports_which_fd_is_ready() {
-        // The forwarders need a live libssh2 channel; what can be checked
-        // here is the poll helper they and the pump rely on.
-        let (a, mut b) = UnixStream::pair().unwrap();
-        let (c, _d) = UnixStream::pair().unwrap();
-        let fds = [(a.as_raw_fd(), libc::POLLIN), (c.as_raw_fd(), libc::POLLIN)];
-        assert_eq!(poll(&fds, Duration::from_millis(10)), [0, 0]);
-        b.write_all(b"x").unwrap();
-        let revents = poll(&fds, Duration::from_millis(10));
-        assert!(revents[0] & libc::POLLIN != 0 && revents[1] == 0);
     }
 }

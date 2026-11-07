@@ -20,6 +20,9 @@ pub enum ShellKind {
     Fish,
     Bash,
     Zsh,
+    /// `pwsh` and Windows PowerShell: shell integration, but no managed
+    /// aliases.
+    PowerShell,
     Other,
 }
 
@@ -31,6 +34,7 @@ impl ShellKind {
             "fish" => Self::Fish,
             "bash" => Self::Bash,
             "zsh" => Self::Zsh,
+            "pwsh" | "powershell" => Self::PowerShell,
             _ => Self::Other,
         }
     }
@@ -56,10 +60,12 @@ impl InstalledShell {
     }
 
     fn from_parts(path: PathBuf, canonical: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        // `pwsh`, not `pwsh.exe`.
+        #[cfg(windows)]
+        let name = path.file_stem();
+        #[cfg(unix)]
+        let name = path.file_name();
+        let name = name.map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
         Self { kind: ShellKind::from_name(&name), name, path, canonical }
     }
 
@@ -77,6 +83,7 @@ const NOT_INTERACTIVE: &[&str] = &["nologin", "false", "git-shell", "systemd-hom
 
 /// All interactive shells from `/etc/shells` that actually exist,
 /// deduplicated, with the ones Terminaal can manage listed first.
+#[cfg(unix)]
 pub fn detect() -> Vec<InstalledShell> {
     let listing = std::fs::read_to_string("/etc/shells").unwrap_or_else(|err| {
         log::warn!("failed to read /etc/shells: {err}");
@@ -88,8 +95,38 @@ pub fn detect() -> Vec<InstalledShell> {
     shells
 }
 
+/// Windows has no list of shells: the usual places of the ones that
+/// come with it or are commonly installed, then PowerShell 7 and Nushell
+/// wherever else the `PATH` has them (scoop, portable installs) -- those
+/// that exist, each once.
+#[cfg(windows)]
+pub fn detect() -> Vec<InstalledShell> {
+    let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+    let system = var("SystemRoot").unwrap_or_else(|| PathBuf::from(r"C:\Windows")).join("System32");
+    let programs = var("ProgramFiles").unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+    let mut candidates = vec![
+        programs.join(r"PowerShell\7\pwsh.exe"),
+        programs.join(r"PowerShell\7-preview\pwsh.exe"),
+        system.join(r"WindowsPowerShell\v1.0\powershell.exe"),
+        system.join("cmd.exe"),
+        programs.join(r"Git\bin\bash.exe"),
+        programs.join(r"nu\bin\nu.exe"),
+        system.join("wsl.exe"),
+    ];
+    // Git installed for this user only.
+    if let Some(local) = var("LOCALAPPDATA") {
+        candidates.insert(5, local.join(r"Programs\Git\bin\bash.exe"));
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        candidates.extend(["pwsh.exe", "nu.exe"].map(|name| dir.join(name)));
+    }
+    dedup(candidates.into_iter().filter(|path| path.is_file()).map(InstalledShell::new).collect())
+}
+
 /// The shell new tabs use unless told otherwise: the configured one,
 /// else `$SHELL`, else `/bin/sh`.
+#[cfg(unix)]
 pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
     let path = configured
         .map(Path::to_path_buf)
@@ -104,13 +141,27 @@ pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
 /// -- something not in `/etc/shells` can still be run deliberately --
 /// while a name has to be one of the installed shells.
 pub fn find(arg: &str, installed: &[InstalledShell]) -> Option<InstalledShell> {
-    if arg.contains('/') {
+    if arg.contains(std::path::is_separator) {
         let path = PathBuf::from(arg);
         return path.is_file().then(|| InstalledShell::new(path));
     }
     installed.iter().find(|shell| shell.name == arg).cloned()
 }
 
+/// On Windows: the configured one, else the first PowerShell found,
+/// else `%COMSPEC%` (cmd).
+#[cfg(windows)]
+pub fn default_shell(configured: Option<&Path>) -> InstalledShell {
+    let path = configured
+        .map(Path::to_path_buf)
+        .filter(|p| p.is_file())
+        .or_else(|| detect().into_iter().map(|shell| shell.path).find(|p| p.file_stem().is_some_and(|n| n != "cmd")))
+        .or_else(|| std::env::var_os("COMSPEC").map(PathBuf::from).filter(|p| p.is_file()))
+        .unwrap_or_else(|| PathBuf::from("cmd.exe"));
+    InstalledShell::new(path)
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 fn parse_etc_shells(text: &str) -> Vec<PathBuf> {
     text.lines()
         .map(str::trim)
@@ -132,7 +183,7 @@ fn dedup(shells: Vec<InstalledShell>) -> Vec<InstalledShell> {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from)
+    crate::platform::home_dir().filter(|h| !h.as_os_str().is_empty())
 }
 
 fn xdg_config_home() -> Option<PathBuf> {
@@ -143,6 +194,18 @@ fn xdg_config_home() -> Option<PathBuf> {
 }
 
 /// Where zsh looks for its dotfiles.
+/// Where PowerShell keeps its profile: `~/.config/powershell` (pwsh on
+/// Linux), `Documents\PowerShell` on Windows.
+#[cfg(unix)]
+fn powershell_dir() -> Option<PathBuf> {
+    Some(xdg_config_home()?.join("powershell"))
+}
+
+#[cfg(windows)]
+fn powershell_dir() -> Option<PathBuf> {
+    Some(crate::platform::documents_dir()?.join("PowerShell"))
+}
+
 fn zdotdir() -> Option<PathBuf> {
     std::env::var_os("ZDOTDIR").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(home)
 }
@@ -164,6 +227,7 @@ mod tests {
         assert!(find("zsh", &installed).is_none());
         // A path is checked against the file system, not the list.
         assert!(find("/nonexistent/shell", &installed).is_none());
+        #[cfg(unix)]
         assert_eq!(find("/bin/sh", &installed).unwrap().name, "sh");
     }
 

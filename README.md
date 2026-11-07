@@ -28,7 +28,7 @@ disk.
 
 > [!NOTE]
 > **Status:** under active development and used as a daily driver on Linux
-> (CachyOS, Wayland and X11). Expect rough edges, and expect the config format
+> (CachyOS, Wayland and X11); also for Windows 10 1809 and newer. Expect rough edges, and expect the config format
 > to change.
 
 > [!IMPORTANT]
@@ -238,6 +238,12 @@ the man page under `~/.local/share`. It needs a GPU driver with Vulkan or OpenGL
 and OpenSSL 3, zlib and libxkbcommon, which practically every desktop has. From
 then on Terminaal **updates itself**: it offers new releases at start
 ([Updates](docs/guides/updates.md)).
+
+**On Windows** (10 version 1809 or newer, 64-bit): run
+`terminaal-x86_64-windows-setup.exe` from the same release – for all users or
+just for you – or start `terminaal-x86_64-windows.exe` from any folder without
+installing. The setup isn't signed yet, so SmartScreen asks first: **More info →
+Run anyway**. → [Terminaal on Windows](docs/guides/windows.md)
 
 **From source**
 
@@ -455,19 +461,23 @@ The [`docs/`](docs/README.md) folder goes into detail:
 | --- | --- |
 | **Start here** | [Getting started](docs/getting-started.md) · [Tips and tricks](docs/tips.md) · [Troubleshooting](docs/troubleshooting.md) |
 | **Tutorials** | [Your first SSH host](docs/tutorials/01-your-first-ssh-host.md) · [Keys and the agent](docs/tutorials/02-keys-and-the-agent.md) · [Port forwarding](docs/tutorials/03-port-forwarding.md) · [One command on many servers](docs/tutorials/04-one-command-many-servers.md) · [Your own theme](docs/tutorials/05-make-your-own-theme.md) |
-| **Guides** | [Configuration](docs/guides/configuration.md) · [Shortcuts](docs/guides/keyboard-shortcuts.md) · [Command line](docs/guides/command-line.md) · [SSH hosts](docs/guides/ssh-hosts.md) · [IBM i (5250)](docs/guides/ibm-i-5250.md) · [Host keys](docs/guides/host-keys.md) · [Files and SFTP](docs/guides/files-and-sftp.md) · [Shell integration](docs/guides/shell-integration.md) · [Commands and snippets](docs/guides/commands-and-snippets.md) · [Command palette](docs/guides/command-palette.md) · [Search and links](docs/guides/search-and-links.md) · [Split panes](docs/guides/split-panes.md) · [Sessions](docs/guides/sessions.md) · [Drop-down window](docs/guides/drop-down-window.md) · [Appearance](docs/guides/appearance.md) |
+| **Guides** | [Configuration](docs/guides/configuration.md) · [Shortcuts](docs/guides/keyboard-shortcuts.md) · [Command line](docs/guides/command-line.md) · [SSH hosts](docs/guides/ssh-hosts.md) · [IBM i (5250)](docs/guides/ibm-i-5250.md) · [Host keys](docs/guides/host-keys.md) · [Files and SFTP](docs/guides/files-and-sftp.md) · [Shell integration](docs/guides/shell-integration.md) · [Commands and snippets](docs/guides/commands-and-snippets.md) · [Command palette](docs/guides/command-palette.md) · [Search and links](docs/guides/search-and-links.md) · [Split panes](docs/guides/split-panes.md) · [Sessions](docs/guides/sessions.md) · [Drop-down window](docs/guides/drop-down-window.md) · [Appearance](docs/guides/appearance.md) · [Windows](docs/guides/windows.md) |
 | **Background** | [Architecture](docs/explanations/architecture.md) · [Security and your files](docs/explanations/security-and-your-files.md) · [How prompt marks work](docs/explanations/prompt-marks.md) |
 
 ## Known limitations
 
 **Platform**
-- Linux only for now
-- A see-through window needs Wayland; on X11 it stays opaque
+- Linux and Windows; no macOS
+- A see-through window needs Wayland on Linux; on X11 it stays opaque
 - The drop-down window needs a Wayland desktop with the layer shell (not GNOME);
   on X11 it's an always-on-top window. It takes no dropped files and no input
   method (dead keys work)
 - Desktop notifications need `notify-send`, opening links `xdg-open`, the local
   trash `gio`
+- Windows: the setup and exe aren't signed (SmartScreen warns once); blur needs
+  Windows 11 22H2, a graphics card and Windows' transparency effects; cmd tabs
+  have prompt marks but no exit codes or run times; WSL tabs are plain
+  terminals, and programs in them don't show in the tab title
 
 **SSH**
 - Based on libssh2: the server can't listen on a Unix socket, and there's no
@@ -514,6 +524,9 @@ The [`docs/`](docs/README.md) folder goes into detail:
 <summary><b>Done</b></summary>
 
 - [x] Local terminal core, tabs and sessions
+- [x] Windows: setup and updates, ConPTY, PowerShell/cmd/Git Bash integration,
+  SSH agents on named pipes, a global shortcut for the drop-down window, Windows
+  theme, Acrylic blur
 - [x] Shell management with per-shell aliases, functions and lines of your own
 - [x] SSH sessions, host manager, keys, per-host options
 - [x] Configurable keyboard shortcuts for every action

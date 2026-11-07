@@ -61,6 +61,10 @@ pub struct Transparency {
     pub blur: bool,
     /// X11: see-through only from the next start.
     pub x11: bool,
+    /// Windows' transparency effects are off: no blur.
+    pub effects_off: bool,
+    /// Drawn without graphics acceleration.
+    pub software: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -368,6 +372,13 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
         moved = Some(true);
     }
     change(actions, moved, Setting::WindowSize { width, height });
+    // Only Windows lets a program open its window maximized; on Linux the
+    // desktop decides.
+    if cfg!(windows) {
+        let moved = checkbox(ui, t!("settings-maximized"), "maximized", config.maximized);
+        change(actions, moved.map(|_| true), Setting::Maximized(moved.unwrap_or(config.maximized)));
+        ui.label(weak(t!("settings-maximized-note")).size(11.0));
+    }
     ui.label(weak(t!("settings-startup-note")).size(11.0));
 
     ui.add_space(SECTION_GAP);
@@ -379,13 +390,17 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
     change(actions, moved, Setting::QuakeHeight(height));
     let moved = checkbox(ui, t!("settings-quake-hide"), "quake_hide_on_unfocus", config.quake_hide_on_unfocus);
     change(actions, moved.map(|_| true), Setting::QuakeHideOnUnfocus(moved.unwrap_or(config.quake_hide_on_unfocus)));
+    if cfg!(windows) {
+        quake_hotkey(ui, config, actions);
+    }
     ui.horizontal(|ui| {
         ui.monospace(quake_command());
         if ui.button(t!("settings-quake-copy")).clicked() {
             ui.ctx().copy_text(quake_command().to_string());
         }
     });
-    ui.label(weak(t!("settings-quake-note")).size(11.0));
+    let note = if cfg!(windows) { t!("settings-quake-note-windows") } else { t!("settings-quake-note") };
+    ui.label(weak(note).size(11.0));
 
     ui.add_space(SECTION_GAP);
     section_title(ui, &t!("settings-updates"));
@@ -397,6 +412,34 @@ fn general(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarAction>) {
     if ui.button(t!("settings-update-now")).clicked() {
         actions.push(SidebarAction::CheckForUpdates);
     }
+}
+
+/// The drop-down window's global shortcut (Windows), typed like those in
+/// `[shortcuts]`; saved once the field lets go. What's being typed waits
+/// in egui's memory -- this page has no state of its own.
+fn quake_hotkey(ui: &mut Ui, config: &Config, actions: &mut Vec<SidebarAction>) {
+    let id = ui.id().with("quake_hotkey");
+    let saved = config.quake_hotkey.clone().unwrap_or_else(|| config::DEFAULT_QUAKE_HOTKEY.to_string());
+    let mut text = ui.data(|data| data.get_temp::<String>(id)).unwrap_or_else(|| saved.clone());
+    ui.horizontal(|ui| {
+        ui.label(t!("settings-quake-hotkey")).on_hover_text(key_hint("quake_hotkey"));
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .desired_width(COMBO_WIDTH)
+                .hint_text(t!("settings-quake-hotkey-none"))
+                .font(TextStyle::Monospace),
+        );
+        if field.has_focus() {
+            ui.data_mut(|data| data.insert_temp(id, text.clone()));
+        }
+        if field.lost_focus() {
+            ui.data_mut(|data| data.remove::<String>(id));
+            if text.trim() != saved {
+                actions.push(SidebarAction::SetQuakeHotkey(text));
+            }
+        }
+    });
+    ui.label(weak(t!("settings-quake-hotkey-hint")).size(11.0));
 }
 
 /// `terminaal --quake` with this program's full path: shortcut settings
@@ -627,6 +670,7 @@ fn theme_choice(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarActio
                             t!("settings-theme-own", path = tilde(path))
                         }
                         Source::Cosmic => t!("settings-theme-cosmic"),
+                        Source::Windows => t!("settings-theme-windows"),
                         Source::Builtin => t!("settings-theme-builtin"),
                     };
                     let chosen = theme.name == *current;
@@ -695,8 +739,12 @@ fn transparency(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarActio
     let note = |ui: &mut Ui, text: String| drop(ui.label(weak(text).size(11.0)));
     if !support.supported {
         note(ui, t!("settings-transparency-unsupported"));
+    } else if !support.blur && cfg!(windows) && support.software {
+        note(ui, t!("settings-blur-software-windows"));
     } else if !support.blur {
-        note(ui, t!("settings-blur-unsupported"));
+        note(ui, if cfg!(windows) { t!("settings-blur-unsupported-windows") } else { t!("settings-blur-unsupported") });
+    } else if support.effects_off && config.blur && config.opacity() < 1.0 {
+        note(ui, t!("settings-blur-effects-off"));
     }
     if support.x11 {
         note(ui, t!("settings-transparency-x11"));

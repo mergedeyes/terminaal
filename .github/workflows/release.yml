@@ -5,6 +5,16 @@
 #   terminaal-x86_64-linux.sha256         from (src/update.rs), and its checksum
 #   terminaal-x86_64-linux.tar.gz         binary, install.sh, desktop entry,
 #   terminaal-x86_64-linux.tar.gz.sha256  icons and man page for a first install
+#   terminaal-x86_64-windows.exe          the bare Windows program, what a
+#   terminaal-x86_64-windows.exe.sha256   copy of it updates itself from
+#   terminaal-x86_64-windows-setup.exe         the Windows setup (installer/
+#   terminaal-x86_64-windows-setup.exe.sha256  terminaal.iss), for a first
+#                                         install and what installed
+#                                         copies update through
+#
+# The Windows job adds its files to the release once the Linux one made it;
+# if it fails, the release is there without them (and Windows installs
+# simply see no newer version).
 #
 # Built on the oldest supported Ubuntu, so the binary runs wherever that
 # glibc or a newer one is (practically every current distribution). It needs
@@ -68,3 +78,46 @@ jobs:
             --title "Terminaal ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             --verify-tag
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    env:
+      NAME: terminaal-x86_64-windows.exe
+      SETUP: terminaal-x86_64-windows-setup.exe
+      # OpenSSL for libssh2 is built from source (feature `windows-openssl`);
+      # its Configure needs a full Perl, which Git's isn't.
+      OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # Inno Setup is on the runner; the version is the tag's (checked
+      # against Cargo.toml by the Linux job).
+      - name: Setup
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc /Qp "/DAppVersion=$($env:GITHUB_REF_NAME.TrimStart('v'))" "/DSourceExe=$PWD\target\release\terminaal.exe" "/DOutputDir=$PWD\dist" installer\terminaal.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/terminaal.exe "dist/$NAME"
+          cd dist
+          sha256sum "$NAME" > "$NAME.sha256"
+          sha256sum "$SETUP" > "$SETUP.sha256"
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*

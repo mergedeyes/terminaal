@@ -25,8 +25,6 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::fs::{FileExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -36,6 +34,7 @@ use super::edit::{EditAction, EditStatus, Edits};
 use super::protocol::{self, Attrs, Client, Entry, open};
 use super::sync::{SyncLink, SyncPair, SyncStatus, SyncTransfer, Syncs};
 use crate::i18n::t;
+use crate::platform::{self, Handle, Pollable};
 use crate::ssh::connection::Opener;
 
 /// Longest a transfer round takes before commands get a look in.
@@ -54,7 +53,7 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 pub struct Stream {
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub fd: RawFd,
+    pub fd: Handle,
 }
 
 /// Where a session's streams come from: a terminal's SSH connection
@@ -74,7 +73,7 @@ impl Channels for Opener {
 
     fn open_sftp(&self) -> io::Result<Stream> {
         let stream = Opener::open_sftp(self)?;
-        let fd = stream.as_raw_fd();
+        let fd = stream.handle();
         let writer = stream.try_clone()?;
         Ok(Stream { reader: Box::new(stream), writer: Box::new(writer), fd })
     }
@@ -254,7 +253,7 @@ impl Remote {
             let mut worker = Worker {
                 channels,
                 client: None,
-                fd: -1,
+                fd: platform::NO_HANDLE,
                 attached_to: 0,
                 refused: 0,
                 rx,
@@ -370,7 +369,7 @@ struct Worker {
     channels: Arc<dyn Channels>,
     client: Option<SftpClient>,
     /// The client's stream, watched for its end.
-    fd: RawFd,
+    fd: Handle,
     /// The connection the client runs on.
     attached_to: u64,
     /// The connection SFTP last failed to start on: not tried again until
@@ -494,10 +493,7 @@ impl Worker {
             connection if connection != self.attached_to => return self.lose(&t!("files-reconnected")),
             _ => {}
         }
-        let mut poll = libc::pollfd { fd: self.fd, events: libc::POLLIN | libc::POLLRDHUP, revents: 0 };
-        // SAFETY: one valid pollfd for the duration of the call; no wait.
-        let ready = unsafe { libc::poll(&mut poll, 1, 0) };
-        if ready > 0 && poll.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLRDHUP | libc::POLLNVAL) != 0 {
+        if platform::hung_up(self.fd) {
             self.lose(&t!("files-stream-closed"));
         }
     }
@@ -838,7 +834,7 @@ impl Worker {
         }
         let mut dirs = vec![(local.to_path_buf(), remote)];
         while let Some((local_dir, remote_dir)) = dirs.pop() {
-            let mode = std::fs::metadata(&local_dir).map_or(0o755, |meta| meta.permissions().mode());
+            let mode = std::fs::metadata(&local_dir).map_or(0o755, |meta| platform::mode(&meta));
             if let Err(err) = self.client()?.mkdir(&remote_dir, Attrs::mode(mode)) {
                 return self.report(Err(err));
             }
@@ -1016,7 +1012,7 @@ impl Worker {
                 let (_, offset, len) = run.in_flight.swap_remove(at);
                 match reply.data()? {
                     Some(data) => {
-                        run.file.write_all_at(&data, offset)?;
+                        platform::write_all_at(&run.file, &data, offset)?;
                         status.done += data.len() as u64;
                         let end = offset + data.len() as u64;
                         // The file grew meanwhile: keep reading to its end.
@@ -1045,7 +1041,7 @@ impl Worker {
                             if *created {
                                 let _ = client.remove(remote);
                             }
-                            let mode = meta.permissions().mode();
+                            let mode = platform::mode(&meta);
                             let flags = open::WRITE | open::CREATE | open::EXCLUSIVE;
                             (client.open(remote, flags, Attrs::mode(mode))?, 0)
                         }
@@ -1058,7 +1054,7 @@ impl Worker {
                 let run = run.as_mut().expect("just started");
                 let mut buf = vec![0u8; chunk as usize];
                 while run.in_flight.len() < protocol::PIPELINE && run.next < status.total {
-                    let n = run.file.read_at(&mut buf, run.next)?;
+                    let n = platform::read_at(&run.file, &mut buf, run.next)?;
                     if n == 0 {
                         // Shrank meanwhile.
                         status.total = run.next;
@@ -1161,11 +1157,31 @@ fn display(path: &Path) -> String {
 
 #[cfg(test)]
 pub mod tests {
+    #[cfg(unix)]
+    use std::os::fd::AsRawFd;
     use std::process::{Child, Command as Process, Stdio};
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-    use super::super::protocol::tests::{scratch, sftp_server};
+    use super::super::protocol::tests::{remote_path, scratch, sftp_server};
     use super::*;
+
+    /// A shell for the server's commands (`exec`): `/bin/sh`; on Windows
+    /// Git for Windows' `sh.exe` named by `TERMINAAL_TEST_SH`, with its
+    /// folder first on the `PATH` (`sha256sum` and the rest are there).
+    pub fn shell() -> Option<Process> {
+        #[cfg(unix)]
+        return Some(Process::new("/bin/sh"));
+        #[cfg(windows)]
+        {
+            let sh = PathBuf::from(std::env::var_os("TERMINAAL_TEST_SH")?);
+            let mut path = std::ffi::OsString::from(sh.parent()?);
+            path.push(";");
+            path.push(std::env::var_os("PATH").unwrap_or_default());
+            let mut command = Process::new(sh);
+            command.env("PATH", path);
+            Some(command)
+        }
+    }
 
     #[test]
     fn remote_paths() {
@@ -1256,14 +1272,15 @@ pub mod tests {
             let mut child =
                 Process::new(&self.path).current_dir(&self.home).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn()?;
             let (stdout, stdin) = (child.stdout.take().unwrap(), child.stdin.take().unwrap());
-            let fd = stdout.as_raw_fd();
             self.children.lock().unwrap().push(child);
+            let (stdout, fd) = relayed(stdout)?;
             let reader: Box<dyn Read + Send> = if self.slow { Box::new(Slow(stdout)) } else { Box::new(stdout) };
             Ok(Stream { reader, writer: Box::new(stdin), fd })
         }
 
         fn exec(&self, command: &str, input: &[u8]) -> io::Result<Vec<u8>> {
-            let mut child = Process::new("/bin/sh")
+            let mut child = shell()
+                .ok_or_else(|| io::Error::other("no shell for the test server"))?
                 .arg("-c")
                 .arg(command)
                 .current_dir(&self.home)
@@ -1275,6 +1292,28 @@ pub mod tests {
             let output = child.wait_with_output()?;
             Ok([output.stdout, output.stderr].concat())
         }
+    }
+
+    /// The server's output and what tells it hung up: the pipe itself on
+    /// Unix. Windows can only poll sockets (as the SSH channel's is), so
+    /// a thread copies the pipe into one; it ends, and the socket hangs
+    /// up, with the server.
+    #[cfg(unix)]
+    fn relayed(stdout: std::process::ChildStdout) -> io::Result<(std::process::ChildStdout, platform::Handle)> {
+        let fd = stdout.as_raw_fd();
+        Ok((stdout, fd))
+    }
+
+    #[cfg(windows)]
+    fn relayed(mut stdout: std::process::ChildStdout) -> io::Result<(platform::LocalStream, platform::Handle)> {
+        use platform::Pollable;
+        let (mut into, out) = platform::pair()?;
+        std::thread::spawn(move || {
+            let _ = io::copy(&mut stdout, &mut into);
+            let _ = into.shutdown(std::net::Shutdown::Both);
+        });
+        let fd = out.handle();
+        Ok((out, fd))
     }
 
     pub struct Session {
@@ -1330,7 +1369,7 @@ pub mod tests {
         assert!(wakes.load(Ordering::SeqCst) > 0);
 
         let dir = scratch("browse");
-        let dir_s = dir.to_str().unwrap().to_string();
+        let dir_s = remote_path(&dir);
         std::fs::write(dir.join("file.txt"), "x").unwrap();
         remote.send(Command::List(Some(dir_s.clone())));
         wait_for(&remote, "listing", |s| s.dir == dir_s && s.entries.len() == 1);
@@ -1343,12 +1382,14 @@ pub mod tests {
         remote.send(Command::Remove(vec![(join(&dir_s, "sub"), true)]));
         wait_for(&remote, "rmdir", |s| s.entries.len() == 1);
 
-        // A folder with everything in it, a symlink inside left as it is.
+        // A folder with everything in it, a symlink inside left as it is
+        // (on Unix: Windows makes them only with a privilege).
         std::fs::create_dir_all(dir.join("tree/deeper/deepest")).unwrap();
         std::fs::write(dir.join("tree/a.txt"), "a").unwrap();
         std::fs::write(dir.join("tree/deeper/b.txt"), "b").unwrap();
         let outside = scratch("browse-outside");
         std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, dir.join("tree/deeper/link")).unwrap();
         remote.send(Command::List(None));
         wait_for(&remote, "tree listed", |s| s.entries.len() == 2);
@@ -1382,7 +1423,7 @@ pub mod tests {
         std::fs::write(server.join("tree/a.txt"), "a").unwrap();
         std::fs::write(server.join("tree/deeper/b.txt"), "b").unwrap();
         std::fs::write(local.join("big.bin"), "already here").unwrap();
-        let s = |path: &Path| path.to_str().unwrap().to_string();
+        let s = |path: &Path| remote_path(path);
 
         remote.send(Command::Download { remote: s(&server.join("big.bin")), local_dir: local.clone() });
         remote.send(Command::Download { remote: s(&server.join("tree")), local_dir: local.clone() });
@@ -1411,10 +1452,12 @@ pub mod tests {
         let Some(Session { remote, .. }) = session("cancel") else { return };
         wait_for(&remote, "connected", |s| s.connection == Connection::Ready);
         let root = scratch("cancel");
-        // Sparse: far too big to be done before the cancel comes in.
-        File::create(root.join("huge")).unwrap().set_len(8 << 30).unwrap();
+        // Far too big to be done before the cancel comes in. Sparse on
+        // Unix; NTFS only extends it, but keeps 8 GB on the disk.
+        let size = if cfg!(windows) { 1 << 30 } else { 8 << 30 };
+        File::create(root.join("huge")).unwrap().set_len(size).unwrap();
         std::fs::create_dir_all(root.join("into")).unwrap();
-        remote.send(Command::Download { remote: root.join("huge").to_str().unwrap().into(), local_dir: root.join("into") });
+        remote.send(Command::Download { remote: remote_path(&root.join("huge")), local_dir: root.join("into") });
         // The first transfer gets id 1; it's cancelled mid-way.
         remote.send(Command::Cancel(1));
         let state = wait_for(&remote, "cancelled", |s| s.transfers.first().is_some_and(TransferStatus::is_over));
@@ -1450,7 +1493,7 @@ pub mod tests {
         let data: Vec<u8> = (0..24_000_000u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
         std::fs::write(serverside.join("down.bin"), &data).unwrap();
         std::fs::write(local.join("up.bin"), &data).unwrap();
-        let s = |path: &Path| path.to_str().unwrap().to_string();
+        let s = |path: &Path| remote_path(path);
 
         for direction in [Direction::Download, Direction::Upload] {
             remote.send(match direction {

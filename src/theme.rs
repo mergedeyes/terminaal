@@ -1,7 +1,8 @@
 //! Color themes: the console's colors and those of the chrome around it
 //! (sidebar, tab bar, settings). A few are built in (`themes/*.toml`,
-//! compiled in), one follows the COSMIC desktop's theme ([`cosmic`]), and
-//! your own are TOML files in `~/.config/terminaal/themes/`.
+//! compiled in), one follows the COSMIC desktop's theme ([`cosmic`]), one
+//! Windows' mode and accent colour ([`windows`]), and your own are TOML
+//! files in `~/.config/terminaal/themes/`.
 //!
 //! The format is Alacritty's -- `[colors.primary]`, `[colors.normal]`,
 //! `[colors.bright]`, ... -- so its theme files work as they are. Keys
@@ -13,6 +14,7 @@
 //! colors; whatever it leaves out is derived from the console's.
 
 pub mod cosmic;
+pub mod windows;
 
 use std::path::{Path, PathBuf};
 
@@ -50,6 +52,8 @@ pub enum Source {
     Builtin,
     /// The COSMIC desktop's theme ([`cosmic`]).
     Cosmic,
+    /// Windows' light/dark mode and accent colour ([`windows`]).
+    Windows,
     /// One of your own, from this file.
     File(PathBuf),
 }
@@ -236,7 +240,7 @@ pub fn default_theme() -> Theme {
 }
 
 /// Every theme to choose from: the built-in ones, the COSMIC desktop's,
-/// then your own, sorted by name. One of your own replaces another theme
+/// Windows', then your own, sorted by name. One of your own replaces another theme
 /// of the same name.
 pub struct Themes {
     list: Vec<Theme>,
@@ -247,13 +251,13 @@ pub struct Themes {
 
 impl Themes {
     pub fn load() -> Self {
-        Self::load_from(Self::dir().as_deref(), Some(&cosmic::Roots::system()))
+        Self::load_from(Self::dir().as_deref(), Some(&cosmic::Roots::system()), windows::Desktop::current())
     }
 
     /// Just the built-in themes.
     #[cfg(test)]
     pub fn builtin() -> Self {
-        Self::load_from(None, None)
+        Self::load_from(None, None, None)
     }
 
     /// `~/.config/terminaal/themes`.
@@ -261,7 +265,7 @@ impl Themes {
         Some(Config::dir()?.join("themes"))
     }
 
-    fn load_from(dir: Option<&Path>, cosmic: Option<&cosmic::Roots>) -> Self {
+    fn load_from(dir: Option<&Path>, cosmic: Option<&cosmic::Roots>, desktop: Option<windows::Desktop>) -> Self {
         let mut list: Vec<Theme> = BUILTIN
             .iter()
             .map(|(name, text)| Theme::parse(name, text, Source::Builtin).expect("built-in theme"))
@@ -276,6 +280,7 @@ impl Themes {
             }
             None => {}
         }
+        list.extend(desktop.map(|desktop| desktop.theme()));
         if let Some(dir) = dir {
             read_dir(dir, &mut own, &mut errors);
         }
@@ -656,7 +661,7 @@ opacity = 0.9
         std::fs::write(dir.join("broken.toml"), "colors = 1").unwrap();
         std::fs::write(dir.join("notes.txt"), "not a theme").unwrap();
 
-        let themes = Themes::load_from(Some(&dir), None);
+        let themes = Themes::load_from(Some(&dir), None, None);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(themes.all().len(), BUILTIN.len() + 1);
         assert_eq!(themes.errors().len(), 1);
@@ -666,5 +671,16 @@ opacity = 0.9
         assert!(matches!(dracula.source, Source::File(_)));
         assert_eq!(themes.get(Some("mine")).name, "Mine");
         assert!(themes.all().iter().any(|theme| theme.name == DEFAULT && theme.source == Source::Builtin));
+    }
+
+    #[test]
+    fn windows_settings_add_the_windows_theme() {
+        let desktop = windows::Desktop { dark: false, palette: None, color: None };
+        let themes = Themes::load_from(None, None, Some(desktop));
+        assert_eq!(themes.all().len(), BUILTIN.len() + 1);
+        let theme = themes.get(Some("windows"));
+        assert_eq!((theme.name.as_str(), &theme.source), (windows::NAME, &Source::Windows));
+        assert!(!theme.ui.is_dark());
+        assert!(Themes::builtin().find(windows::NAME).is_none());
     }
 }

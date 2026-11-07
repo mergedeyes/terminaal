@@ -62,7 +62,7 @@ The order follows **PreferredAuthentications** when set.
 | --- | --- |
 | Key files | `IdentityFile` (several) |
 | Offer only configured keys | `IdentitiesOnly` |
-| Agent socket | `IdentityAgent` – a path, `SSH_AUTH_SOCK` or `none` |
+| Agent socket | `IdentityAgent` – a path, `SSH_AUTH_SOCK` or `none`; on Windows also a pipe (`\\.\pipe\…`, see [SSH agents on Windows](windows.md#ssh-agents)) |
 | Forward the agent to the server | `ForwardAgent` – yes, a socket path, or `$VARIABLE` |
 | Methods in this order | `PreferredAuthentications` |
 

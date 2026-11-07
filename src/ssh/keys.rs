@@ -125,17 +125,11 @@ pub fn generate(path: &Path, comment: &str, passphrase: &str) -> Result<PublicKe
         && !dir.exists()
     {
         std::fs::create_dir_all(dir).map_err(|e| fail(&e))?;
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| fail(&e))?;
+        crate::platform::set_mode(dir, 0o700).map_err(|e| fail(&e))?;
     }
     // Private from the first byte on (0600), and `create_new` so a file
     // appearing in the meantime is never clobbered.
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
+    crate::platform::create_private_file(path)
         .and_then(|mut file| file.write_all(pem.as_bytes()))
         .map_err(|e| fail(&e))?;
     let line = public.to_openssh().map_err(|e| fail(&e))?;
@@ -164,7 +158,7 @@ pub fn delete_files(files: &[PathBuf]) -> Result<(), String> {
 /// The keys in the SSH agent (`$SSH_AUTH_SOCK`), to add one to the store.
 /// Only lists them -- nothing gets signed, so the agent doesn't ask.
 pub fn agent_identities() -> Result<Vec<KeyInfo>, String> {
-    if std::env::var_os("SSH_AUTH_SOCK").is_none() {
+    if !crate::platform::agent_available() {
         return Err(t!("keystore-no-agent"));
     }
     let fail = |err: ssh2::Error| t!("keystore-agent-unreachable", err = err.to_string());
@@ -253,8 +247,11 @@ mod tests {
         let path = dir.join("id_test");
         let public = generate(&path, "me@test", "geheim").unwrap();
 
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         assert!(PrivateKey::read_openssh_file(&path).unwrap().is_encrypted());
         // …and the connection code's own check agrees, so it will ask for the passphrase.
         assert!(crate::ssh::connection::key_is_encrypted(&std::fs::read_to_string(&path).unwrap()));

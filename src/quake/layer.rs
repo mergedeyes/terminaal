@@ -32,28 +32,12 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{self, 
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
-use winit::keyboard::ModifiersState;
 use winit::window::CursorIcon;
 
 use super::keys::Keyboard;
 use crate::input::KeyInput;
 
-/// What happened to the drop-down window, for `app.rs`.
-#[derive(Debug)]
-pub enum LayerEvent {
-    /// A new size in physical pixels, or a new scale.
-    Resized { width: u32, height: u32, scale: f64 },
-    /// The compositor took the surface away (its output went, say).
-    Closed,
-    Focused(bool),
-    Modifiers(ModifiersState),
-    Key(KeyInput),
-    /// In physical pixels.
-    PointerMoved(PhysicalPosition<f64>),
-    PointerLeft,
-    Button(MouseButton, ElementState),
-    Wheel(MouseScrollDelta),
-}
+pub use super::LayerEvent;
 
 pub struct Layer {
     conn: Connection,

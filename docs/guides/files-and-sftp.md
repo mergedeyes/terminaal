@@ -166,7 +166,8 @@ one side and a folder on the other is reported and skipped.
 
 ### Where the record lives
 
-In `$XDG_STATE_HOME/terminaal/sync/` (else `~/.local/state/terminaal/sync/`), one
+In `$XDG_STATE_HOME/terminaal/sync/` (else `~/.local/state/terminaal/sync/`; on
+Windows `%LOCALAPPDATA%\terminaal\sync`), one
 file per host login and folder pair. Delete it to start over: the next sync then
 treats both sides as new – equal files are recognized, different ones become
 conflicts.
@@ -202,7 +203,8 @@ as `code`, `gedit`, `kate` or `alacritty -e nvim`.
 
 - The local copy lives in a private folder (`$XDG_RUNTIME_DIR/terminaal/edit/`,
   mode `0700`, the file `0600`). That folder is in memory and gone when you log
-  out. Closing an edit, or the files tab, deletes it – except a copy with changes
+  out. On Windows it's `%TEMP%\terminaal\edit\`, private through your user
+  profile. Closing an edit, or the files tab, deletes it – except a copy with changes
   the server never got, which stays until you close it.
 - Before uploading, Terminaal checks that the server's file is still what it
   last synced: the server computes its SHA-256 (`sha256sum`, or `shasum` on macOS

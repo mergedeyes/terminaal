@@ -18,6 +18,9 @@
 //! marks (OSC 133) -- `A` before the prompt, `C` when a command starts,
 //! `D;status` when it's done. Other terminals never see any of it.
 //!
+//! PowerShell gets only the integration, inline (`-EncodedCommand`): a
+//! script file wouldn't run under Windows' default execution policy.
+//!
 //! The generated files live in `~/.config/terminaal/shell-integration`.
 //! Every shell still starts as an interactive non-login shell, same as
 //! alacritty_terminal's default.
@@ -45,12 +48,13 @@ impl Launch {
 /// Never fails: if the integration files can't be written, the shell
 /// just starts without Terminaal's aliases/functions.
 pub fn launch(shell: &InstalledShell) -> Launch {
-    let Some(file) = managed::path_for(shell.kind) else { return Launch::plain(shell) };
-    let result = match shell.kind {
-        ShellKind::Fish => fish(shell, &file),
-        ShellKind::Bash => bash(shell, &file),
-        ShellKind::Zsh => zsh(shell, &file),
-        ShellKind::Other => Ok(Launch::plain(shell)),
+    let result = match (shell.kind, managed::path_for(shell.kind)) {
+        (ShellKind::PowerShell, file) => Ok(powershell(shell, file.as_deref())),
+        (ShellKind::Fish, Some(file)) => fish(shell, &file),
+        (ShellKind::Bash, Some(file)) => bash(shell, &file),
+        (ShellKind::Zsh, Some(file)) => zsh(shell, &file),
+        _ if shell.name.eq_ignore_ascii_case("cmd") => Ok(cmd(shell, std::env::var("PROMPT").ok())),
+        _ => Ok(Launch::plain(shell)),
     };
     result.unwrap_or_else(|err| {
         log::warn!("{}: shell integration unavailable, starting without managed aliases: {err}", shell.name);
@@ -62,9 +66,11 @@ pub fn launch(shell: &InstalledShell) -> Launch {
 /// line, like `sh -c`. Deliberately without the managed alias file and
 /// the shell integration -- those belong to an interactive shell, and
 /// bash and zsh don't read any rc file for `-c` anyway. What the line
-/// means is exactly what `<shell> -c '<line>'` means anywhere else.
+/// means is exactly what `<shell> -c '<line>'` means anywhere else
+/// (cmd: `/C`; PowerShell takes `-c` too).
 pub fn launch_command(shell: &InstalledShell, line: &str) -> Launch {
-    Launch { args: vec!["-c".into(), line.to_string()], ..Launch::plain(shell) }
+    let flag = if shell.name.eq_ignore_ascii_case("cmd") { "/C" } else { "-c" };
+    Launch { args: vec![flag.into(), line.to_string()], ..Launch::plain(shell) }
 }
 
 /// What the tab is called while the command runs: its first word without
@@ -136,8 +142,15 @@ fi
 
 fn bash(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
     let rc = integration_dir()?.join("bashrc");
-    write_if_changed(&rc, &BASHRC.replace("@FILE@", &quote_posix(&file.to_string_lossy())))?;
-    Ok(Launch { args: vec!["--rcfile".into(), rc.to_string_lossy().into_owned()], ..Launch::plain(shell) })
+    write_if_changed(&rc, &BASHRC.replace("@FILE@", &quote_posix(&posix_path(file))))?;
+    Ok(Launch { args: vec!["--rcfile".into(), posix_path(&rc)], ..Launch::plain(shell) })
+}
+
+/// A path as bash takes it: on Windows (Git Bash, MSYS2) with `/` --
+/// `C:/Users/…` is understood everywhere, backslashes not always.
+fn posix_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    if cfg!(windows) { path.replace('\\', "/") } else { path.into_owned() }
 }
 
 const ZSHENV: &str = r##"# Von Terminaal erzeugt: gibt an deine eigene .zshenv weiter.
@@ -184,6 +197,91 @@ fn zsh(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
     launch.env.insert("ZDOTDIR".into(), dir.to_string_lossy().into_owned());
     launch.env.insert("TERMINAAL_USER_ZDOTDIR".into(), user_zdotdir.to_string_lossy().into_owned());
     Ok(launch)
+}
+
+/// Runs after the user's `$PROFILE` and wraps their `prompt`. `C` comes
+/// from Enter (PSReadLine), PowerShell has no hook before a command; the
+/// status is `$LASTEXITCODE` of a failed program, else 1 for a failed
+/// cmdlet. `ESC`/`BEL` as `[char]`: Windows PowerShell 5.1 has no `` `e ``.
+/// The user's prompt sits in a variable of its own: after `&` PowerShell
+/// reads `$table.Prompt` as text, not as the table's entry. A prompt that
+/// throws shows as a bare `PS>`.
+const POWERSHELL_INTEGRATION: &str = r#"# Terminaal: working directory (OSC 7) and prompts (OSC 133).
+if (-not $global:__terminaal_prompt) {
+    $global:__terminaal_prompt = $function:prompt
+    $global:__terminaal_ran = $false
+    function global:prompt {
+        $ok = $?
+        $code = $global:LASTEXITCODE
+        $e = [char]27; $a = [char]7
+        $out = ''
+        if ($global:__terminaal_ran) {
+            $status = if ($ok) { 0 } elseif ($code) { $code } else { 1 }
+            $out += "$e]133;D;$status$a"
+            $global:__terminaal_ran = $false
+        }
+        $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+        if ($loc.Provider.Name -eq 'FileSystem') {
+            $path = ('/' + $loc.ProviderPath.Replace('\', '/')).Replace('%', '%25').Replace(' ', '%20')
+            $out += "$e]7;file://$env:COMPUTERNAME$path$a"
+        }
+        $out += "$e]133;A$a"
+        $out + (& $global:__terminaal_prompt)
+    }
+    if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
+        Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {
+            $line = $null; $cursor = $null
+            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+            [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+            if ($line.Trim()) {
+                $global:__terminaal_ran = $true
+                [Console]::Write("$([char]27)]133;C$([char]7)")
+            }
+        }
+    }
+    # The managed aliases and functions, as a script block: a .ps1 file
+    # wouldn't run under the default execution policy. UTF-8 also for 5.1,
+    # which reads files without a BOM as ANSI.
+    if ($env:TERMINAAL_MANAGED) {
+        if (Test-Path -LiteralPath $env:TERMINAAL_MANAGED) {
+            $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $env:TERMINAAL_MANAGED
+            if ($text) { . ([ScriptBlock]::Create($text)) }
+            Remove-Variable text
+        }
+        Remove-Item Env:TERMINAAL_MANAGED
+    }
+}
+"#;
+
+/// The managed `file` comes in by environment (`TERMINAAL_MANAGED`), which
+/// the script removes again -- no quoting of a path inside the script.
+fn powershell(shell: &InstalledShell, file: Option<&Path>) -> Launch {
+    use base64::Engine;
+    // `-EncodedCommand` takes Base64 of UTF-16LE.
+    let utf16: Vec<u8> = POWERSHELL_INTEGRATION.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    let mut launch = Launch { args: vec!["-NoExit".into(), "-EncodedCommand".into(), encoded], ..Launch::plain(shell) };
+    if let Some(file) = file {
+        launch.env.insert("TERMINAAL_MANAGED".into(), file.to_string_lossy().into_owned());
+    }
+    launch
+}
+
+/// The marks cmd's prompt gets: `$E` is an escape there.
+const CMD_PROMPT_START: &str = "$E]9;9;$P$E\\$E]133;A$E\\";
+const CMD_PROMPT_END: &str = "$E]133;B$E\\";
+
+/// cmd has no hooks, only its `PROMPT`, which can print escapes: the
+/// folder (OSC 9;9) and the prompt marks around the user's own prompt
+/// (`prompt`, else cmd's `$P$G`). Nothing runs before a command, so
+/// there's no C or D: no durations, exit codes or notifications.
+fn cmd(shell: &InstalledShell, prompt: Option<String>) -> Launch {
+    let own = prompt.filter(|prompt| !prompt.trim().is_empty()).unwrap_or_else(|| "$P$G".into());
+    // Started from a cmd tab of Terminaal's: marked already.
+    let marked = if own.contains(CMD_PROMPT_START) { own } else { format!("{CMD_PROMPT_START}{own}{CMD_PROMPT_END}") };
+    let mut launch = Launch::plain(shell);
+    launch.env.insert("PROMPT".into(), marked);
+    launch
 }
 
 fn integration_dir() -> io::Result<PathBuf> {
@@ -239,5 +337,41 @@ mod tests {
                  test -f '/home/u/.config/fish/terminaal.fish'; and source '/home/u/.config/fish/terminaal.fish'"
             ]
         );
+    }
+
+    #[test]
+    fn cmd_gets_marks_around_its_prompt() {
+        let shell = InstalledShell::new("/x/cmd");
+        let prompt = |own: Option<&str>| cmd(&shell, own.map(str::to_string)).env["PROMPT"].clone();
+        assert_eq!(prompt(None), r"$E]9;9;$P$E\$E]133;A$E\$P$G$E]133;B$E\");
+        assert_eq!(prompt(Some("$T $P$G")), r"$E]9;9;$P$E\$E]133;A$E\$T $P$G$E]133;B$E\");
+        assert_eq!(prompt(Some(&prompt(None))), prompt(None), "not marked twice");
+
+        // What cmd prints for it goes through the filter as a prompt and a folder.
+        let printed = b"\x1b]9;9;C:\\Users\x1b\\\x1b]133;A\x1b\\C:\\Users>\x1b]133;B\x1b\\";
+        let mut filter = crate::terminal::integration::Filter::default();
+        let (mut out, mut events) = (Vec::new(), Vec::new());
+        filter.feed(printed, &mut out, &mut events);
+        use crate::terminal::integration::ShellEvent;
+        assert_eq!(events, [ShellEvent::Cwd { host: String::new(), path: "C:\\Users".into() }, ShellEvent::Prompt]);
+    }
+
+    #[test]
+    fn powershell_gets_the_integration_inline() {
+        use base64::Engine;
+        for path in ["/usr/bin/pwsh", "/opt/powershell"] {
+            let shell = InstalledShell::new(path);
+            assert_eq!(shell.kind, ShellKind::PowerShell, "{path}");
+            let launch = launch(&shell);
+            assert_eq!(launch.args[..2], ["-NoExit", "-EncodedCommand"]);
+            let bytes = base64::engine::general_purpose::STANDARD.decode(&launch.args[2]).unwrap();
+            let utf16: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&pair| u16::from_le_bytes(pair)).collect();
+            assert_eq!(String::from_utf16(&utf16).unwrap(), POWERSHELL_INTEGRATION);
+        }
+        // Both once threw in the prompt, which then showed as a bare `PS>`:
+        // an empty search string, and `& $table.Prompt` (text after `&`).
+        assert!(POWERSHELL_INTEGRATION.contains(r"ProviderPath.Replace('\', '/')"));
+        assert!(!POWERSHELL_INTEGRATION.contains("Replace('',"));
+        assert!(POWERSHELL_INTEGRATION.contains("(& $global:__terminaal_prompt)"));
     }
 }

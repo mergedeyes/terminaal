@@ -81,17 +81,22 @@ pub struct Attrs {
     pub atime_mtime: Option<(u32, u32)>,
 }
 
+/// The file type bits of `permissions`: POSIX's, whatever the client runs on.
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFREG: u32 = 0o100000;
+
 impl Attrs {
     pub fn is_dir(&self) -> bool {
-        self.file_type() == Some(libc::S_IFDIR)
+        self.file_type() == Some(S_IFDIR)
     }
 
     pub fn is_file(&self) -> bool {
-        self.file_type() == Some(libc::S_IFREG)
+        self.file_type() == Some(S_IFREG)
     }
 
     fn file_type(&self) -> Option<u32> {
-        self.permissions.map(|mode| mode & libc::S_IFMT)
+        self.permissions.map(|mode| mode & S_IFMT)
     }
 
     pub fn mtime(&self) -> Option<u32> {
@@ -648,6 +653,8 @@ pub mod tests {
         }
     }
 
+    /// OpenSSH's `sftp-server` where the system keeps it.
+    #[cfg(unix)]
     pub fn sftp_server() -> Option<PathBuf> {
         ["/usr/lib/ssh/sftp-server", "/usr/lib/openssh/sftp-server", "/usr/libexec/sftp-server", "/usr/libexec/openssh/sftp-server"]
             .iter()
@@ -655,8 +662,43 @@ pub mod tests {
             .find(|path| path.exists())
     }
 
+    /// On Windows the one Git for Windows ships (`usr\lib\ssh\sftp-server.exe`,
+    /// an MSYS build: it sees `C:\x` as `/c/x`, see [`remote_path`]), named by
+    /// `TERMINAAL_TEST_SFTP_SERVER` -- CI sets it (and [`super::super::session::tests::shell`]'s
+    /// `TERMINAAL_TEST_SH`); without it these tests skip, as under Wine.
+    #[cfg(windows)]
+    pub fn sftp_server() -> Option<PathBuf> {
+        std::env::var_os("TERMINAAL_TEST_SFTP_SERVER").map(PathBuf::from).filter(|path| path.exists())
+    }
+
+    /// `path` as the test server names it: as it is on Unix; `/c/Users/…`
+    /// for `C:\Users\…` on Windows (MSYS's drives).
+    pub fn remote_path(path: &Path) -> String {
+        let text = path.to_str().unwrap();
+        #[cfg(windows)]
+        {
+            let text = text.strip_prefix(r"\\?\").unwrap_or(text);
+            let (drive, rest) = text.split_at(2);
+            assert!(drive.ends_with(':'), "not a drive path: {text}");
+            format!("/{}{}", drive[..1].to_ascii_lowercase(), rest.replace('\\', "/"))
+        }
+        #[cfg(unix)]
+        text.to_string()
+    }
+
+    /// `path` with links (and on Windows short 8.3 names) resolved, as a
+    /// plain path (no `\\?\` on Windows).
+    pub fn canonical(path: &Path) -> PathBuf {
+        let path = path.canonicalize().unwrap();
+        #[cfg(windows)]
+        if let Some(plain) = path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+            return PathBuf::from(plain);
+        }
+        path
+    }
+
     /// A client connected to a fresh `sftp-server`, or `None` (test
-    /// skipped) where OpenSSH's server isn't installed.
+    /// skipped) where there's none.
     pub fn connect() -> Option<(Server, Client<ChildStdout, ChildStdin>)> {
         let Some(path) = sftp_server() else {
             eprintln!("sftp-server not installed, skipping");
@@ -672,11 +714,13 @@ pub mod tests {
         let dir = std::env::temp_dir().join(format!("terminaal-sftp-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        // Windows' temp folder may come with short names (`RUNNER~1`),
+        // which the server wouldn't give back the same.
+        canonical(&dir)
     }
 
     fn s(path: &Path) -> String {
-        path.to_str().unwrap().to_string()
+        remote_path(path)
     }
 
     #[test]
@@ -706,7 +750,7 @@ pub mod tests {
         std::fs::write(dir.join("a.txt"), "hello").unwrap();
         std::fs::create_dir(dir.join("sub")).unwrap();
 
-        assert_eq!(client.realpath(&format!("{}/sub/..", s(&dir))).unwrap(), s(&dir.canonicalize().unwrap()));
+        assert_eq!(client.realpath(&format!("{}/sub/..", s(&dir))).unwrap(), s(&canonical(&dir)));
         let mut names: Vec<(String, bool)> =
             client.list(&s(&dir)).unwrap().into_iter().map(|e| (e.name, e.attrs.is_dir())).collect();
         names.sort();
@@ -719,7 +763,10 @@ pub mod tests {
         assert_eq!(std::fs::read(dir.join("big")).unwrap(), big);
         assert_eq!(client.read_file(&s(&dir.join("big"))).unwrap(), big);
         let attrs = client.stat(&s(&dir.join("big"))).unwrap();
-        assert_eq!((attrs.size, attrs.permissions.map(|p| p & 0o777)), (Some(big.len() as u64), Some(0o640)));
+        assert_eq!(attrs.size, Some(big.len() as u64));
+        // Windows' files have no Unix modes (MSYS makes them up).
+        #[cfg(unix)]
+        assert_eq!(attrs.permissions.map(|p| p & 0o777), Some(0o640));
 
         client.rename(&s(&dir.join("big")), &s(&dir.join("b"))).unwrap();
         assert!(client.rename(&s(&dir.join("b")), &s(&dir.join("a.txt"))).is_err(), "v3 rename won't replace");
@@ -735,6 +782,7 @@ pub mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn permission_denied_is_told_apart() {
         let Some((_server, mut client)) = connect() else { return };

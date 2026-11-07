@@ -1,0 +1,83 @@
+# Keeps the Windows build working: lints Terminaal for Windows, runs its
+# tests (those that need Unix are left out by cfg) and builds a release
+# exe and the setup around it, both kept as artifacts to try out; then
+# the SFTP tests against a real sftp-server.
+name: Windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch makes a running build pointless.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      # OpenSSL for libssh2 is built from source (feature `windows-openssl`);
+      # its Configure needs a full Perl, which Git's isn't.
+      OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+
+      # The dependencies, OpenSSL among them, compiled once and kept
+      # (key: Cargo.lock and the toolchain); without it every run built
+      # all of them twice, dev and release, ~25 minutes. Kept even when a
+      # step fails, so a red run doesn't throw the work away.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminaal-x86_64-windows
+          path: target/release/terminaal.exe
+
+      # The setup around that exe (installer/terminaal.iss); Inno Setup
+      # is on the runner.
+      - name: Setup
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc /Qp "/DAppVersion=$version" "/DSourceExe=$PWD\target\release\terminaal.exe" "/DOutputDir=$PWD\dist" installer\terminaal.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminaal-x86_64-windows-setup
+          path: dist/terminaal-x86_64-windows-setup.exe
+
+      # The SFTP, edit and sync tests against a real server: Git for
+      # Windows' sftp-server (MSYS: it sees C:\x as /c/x), with its sh and
+      # sha256sum for the server's commands. Without these variables the
+      # tests skip (the step above). Last, so a red one never holds back
+      # a build to try.
+      - name: SFTP end-to-end tests
+        shell: pwsh
+        run: |
+          $git = "$env:ProgramFiles\Git"
+          $env:TERMINAAL_TEST_SFTP_SERVER = "$git\usr\lib\ssh\sftp-server.exe"
+          $env:TERMINAAL_TEST_SH = "$git\usr\bin\sh.exe"
+          foreach ($tool in $env:TERMINAAL_TEST_SFTP_SERVER, $env:TERMINAAL_TEST_SH) {
+            if (-not (Test-Path $tool)) { Write-Error "missing $tool"; exit 1 }
+          }
+          cargo test --locked sftp::

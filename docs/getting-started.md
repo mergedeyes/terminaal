@@ -2,7 +2,10 @@
 
 ## Install
 
-Terminaal runs on Linux (Wayland or X11).
+Terminaal runs on Linux (Wayland or X11) and on Windows 10 version 1809 or
+newer. **On Windows**, run `terminaal-x86_64-windows-setup.exe` from the latest
+release – the rest of this section is about Linux; see
+[Terminaal on Windows](guides/windows.md) for the setup and what differs.
 
 **From a release** (x86_64): download `terminaal-x86_64-linux.tar.gz` from the
 [latest release](https://github.com/mergedeyes/terminaal/releases/latest), then

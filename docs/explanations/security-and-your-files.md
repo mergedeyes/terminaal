@@ -10,7 +10,8 @@ deliberately doesn't – to keep them safe.
   as long as the login takes. They never reach a file, a log or the config.
 - **`hosts.toml`** holds addresses, user names, key *names* and options.
 - **`keys.toml`** holds key file *paths*, or the *public* half of agent keys.
-- **The saved session** (`~/.local/state/terminaal/session.toml`) holds shell
+- **The saved session** (`~/.local/state/terminaal/session.toml`; on Windows in
+  `%LOCALAPPDATA%\terminaal`) holds shell
   paths, working directories, and host and user names – no scrollback, nothing
   you typed. Restored SSH terminals log in again, with prompts as usual.
 - **Generating a key** is done in-process with the RustCrypto `ssh-key` library,
@@ -111,7 +112,8 @@ events are never broadcast.
 
 - The local copy of a file you edit lives in `$XDG_RUNTIME_DIR` – in memory,
   private to you (`0700`/`0600`), gone at logout – and is deleted when you close
-  it. Only a copy with changes the server never got is kept until you do.
+  it. On Windows it's in `%TEMP%\terminaal`, private through your user profile's
+  permissions, and not in memory. Only a copy with changes the server never got is kept until you do.
 - **sudo** is never run behind your back. Terminaal puts a script into
   `~/.cache/terminaal/sudo/` on the server and shows the command; it only goes
   into the terminal when you click **Run in terminal**, and sudo asks for the
@@ -127,7 +129,8 @@ target too) is kept next to the other as `name (conflict).ext`. Deletions only
 travel in a direction you switched on, only for files synced before and unchanged
 on the other side since, and never from a side whose folder is empty. Copies are
 renamed into place at the end, so an interrupted sync leaves no half-written
-files. The record of the last sync (`~/.local/state/terminaal/sync/`) holds paths,
+files. The record of the last sync (`~/.local/state/terminaal/sync/`, on Windows under
+`%LOCALAPPDATA%\terminaal`) holds paths,
 sizes and times – no contents.
 
 ## Updates

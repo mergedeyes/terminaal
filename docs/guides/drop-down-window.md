@@ -7,8 +7,9 @@ running while it's hidden.
 
 ## Set it up
 
-Terminaal can't grab a global key itself: on Wayland, programs aren't allowed
-to. Your desktop runs a command for the key instead:
+On Linux Terminaal can't grab a global key itself: on Wayland, programs aren't
+allowed to. (On Windows it can – see [below](#on-windows).) Your desktop runs a
+command for the key instead:
 
 ```sh
 terminaal --quake
@@ -74,6 +75,16 @@ after logging in, its tabs come back. See [Restoring the last session](sessions.
 | COSMIC, KDE Plasma, Sway, Hyprland and other Wayland desktops with the layer shell | A real drop-down along the top edge, above other windows |
 | X11 | A borderless, always-on-top window at the top of the screen that shows and hides |
 | GNOME on Wayland | A normal window. GNOME has no layer shell, and Wayland doesn't let a window place or hide itself, so the key can't hide it |
+| Windows | A borderless, always-on-top window at the top of the screen, not in the taskbar |
+
+## On Windows
+
+Once `terminaal --quake` runs, it registers a global shortcut itself:
+<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>, or what you set under **Settings →
+General → Drop-down window → Shortcut** (`quake_hotkey`; empty for none,
+applies from its next start). So it only has to be started once per sign-in:
+tick **Start the drop-down window when I sign in** in the setup, or put the
+command in your Startup folder (<kbd>Win</kbd>+<kbd>R</kbd>, `shell:startup`).
 
 ## Limits
 
