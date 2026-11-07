@@ -26,6 +26,10 @@ pub enum Stage {
     Installing,
     /// In place; runs from the next start.
     Installed,
+    /// The setup is downloaded and checked; it runs when Terminaal
+    /// restarts or closes (Windows, installed by the setup).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Ready,
     /// The folder of the binary isn't ours to write: whoever installed it
     /// updates it.
     NotWritable(PathBuf),
@@ -138,9 +142,31 @@ impl UpdateDialog {
                             ui.add_space(4.0);
                             ui.label(RichText::new(t!("update-restart-hint")).size(11.0).color(colors.text_weak));
                         }
+                        Stage::Ready => {
+                            ui.label(RichText::new(t!("update-ready", version = &version)).strong().size(15.0));
+                            ui.label(t!("update-ready-hint"));
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if button(ui, t!("update-restart"), true) {
+                                    choice = Some(Choice::Restart);
+                                }
+                                if button(ui, t!("update-later"), false) {
+                                    choice = Some(Choice::Later);
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(t!("update-restart-hint")).size(11.0).color(colors.text_weak));
+                        }
                         Stage::NotWritable(dir) => {
                             ui.label(RichText::new(t!("update-title", version = &version)).strong().size(15.0));
-                            ui.label(t!("update-not-writable", dir = dir.display().to_string()));
+                            // Linux: a package manager's folder. Windows: a
+                            // copy put somewhere like Program Files by hand
+                            // (the setup's own installs update through it).
+                            #[cfg(windows)]
+                            let message = t!("update-not-writable-windows", dir = dir.display().to_string());
+                            #[cfg(unix)]
+                            let message = t!("update-not-writable", dir = dir.display().to_string());
+                            ui.label(message);
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
                                 if button(ui, t!("update-open-page"), true) {
@@ -265,6 +291,7 @@ mod tests {
                 Stage::Offer,
                 Stage::Installing,
                 Stage::Installed,
+                Stage::Ready,
                 Stage::NotWritable("/usr/bin".into()),
                 Stage::Failed("checksum".into()),
             ] {

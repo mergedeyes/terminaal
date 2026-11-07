@@ -48,6 +48,13 @@ fn main() {
         }
     };
 
+    // Installed by the setup: the taskbar groups the windows with its
+    // Start menu shortcut, toasts come from Terminaal. Before any window.
+    #[cfg(windows)]
+    if let update::Installation::Setup { .. } = update::Installation::of(std::env::current_exe().ok().as_deref()) {
+        platform::use_app_id(update::APP_USER_MODEL_ID);
+    }
+
     let event_loop = EventLoop::<app::UserEvent>::with_user_event()
         .build()
         .expect("failed to create winit event loop");

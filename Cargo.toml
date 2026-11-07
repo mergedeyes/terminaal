@@ -67,7 +67,9 @@ xkbcommon = "0.8"
 # language (platform::windows, i18n), watching folders for SFTP edits and
 # live sync (sftp::watch_windows), SSH agents' named pipes
 # (ssh::agent_pipe), the program running in a tab
-# (platform::windows::process); the version the tree already has.
+# (platform::windows::process), the setup's entry under Settings → Apps
+# and the AppUserModelID (update, platform::windows); the version the tree
+# already has.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -78,6 +80,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_UI_Input_KeyboardAndMouse",
@@ -144,3 +147,8 @@ opt-level = 3
 
 [dev-dependencies]
 fluent-syntax = "0.12.0"
+
+[build-dependencies]
+# The exe's icon and version information on Windows (build.rs); llvm-rc
+# when cross-compiling with cargo xwin.
+embed-resource = "3"

@@ -150,7 +150,7 @@ pub enum UserEvent {
     /// when asked for in the settings rather than at start.
     UpdateChecked { result: Result<Option<update::Release>, String>, manual: bool },
     /// Downloading and putting a new binary in place is done.
-    UpdateInstalled(Result<(), update::InstallError>),
+    UpdateInstalled(Result<update::Installed, update::InstallError>),
 }
 
 pub struct App {
@@ -770,6 +770,10 @@ struct AppState {
     /// The running binary, as it was at start: an update replaces the
     /// file, after which `/proc/self/exe` names it "(deleted)".
     exe: Option<PathBuf>,
+    /// How `exe` got here: what an update downloads and how it goes in.
+    installation: update::Installation,
+    /// An update that waits for Terminaal to end (Windows: the setup).
+    installed_update: Option<update::Installed>,
     /// The open command palette; it has the keyboard while open.
     command_palette: Option<CommandPalette>,
     /// Background sessions of hosts with live synced folders.
@@ -898,8 +902,10 @@ impl AppState {
         // unless a test server stands in for GitHub, and not twice: the
         // drop-down window leaves it to the main one.
         let testing = std::env::var_os(update::URL_OVERRIDE).is_some();
+        let exe = std::env::current_exe().ok();
+        let installation = update::Installation::of(exe.as_deref());
         if config.update_check && (!cfg!(debug_assertions) || testing) && !quake {
-            spawn_update_check(proxy.clone(), false);
+            spawn_update_check(proxy.clone(), false, installation);
         }
 
         let ui_colors = theme.ui;
@@ -944,7 +950,9 @@ impl AppState {
             paste_warning: None,
             update: None,
             clipboard_request: None,
-            exe: std::env::current_exe().ok(),
+            exe,
+            installation,
+            installed_update: None,
             hostname: hostname(),
             focused: true,
             dropdown: quake,
@@ -2883,12 +2891,18 @@ impl AppState {
         self.window.request_redraw();
     }
 
-    fn update_installed(&mut self, result: Result<(), update::InstallError>) {
+    fn update_installed(&mut self, result: Result<update::Installed, update::InstallError>) {
         let Some(dialog) = &mut self.update else { return };
         dialog.stage = match result {
-            Ok(()) => {
+            Ok(update::Installed::Replaced) => {
                 log::info!("updated to {}", dialog.release.version);
                 update_dialog::Stage::Installed
+            }
+            #[cfg(windows)]
+            Ok(installed @ update::Installed::Setup { .. }) => {
+                log::info!("setup for {} ready", dialog.release.version);
+                self.installed_update = Some(installed);
+                update_dialog::Stage::Ready
             }
             Err(update::InstallError::NotWritable(dir)) => update_dialog::Stage::NotWritable(dir),
             Err(update::InstallError::Failed(err)) => {
@@ -2906,8 +2920,9 @@ impl AppState {
                 let (Some(binary), Some(exe)) = (dialog.release.binary.clone(), self.exe.clone()) else { return };
                 dialog.stage = update_dialog::Stage::Installing;
                 let proxy = self.proxy.clone();
+                let installation = self.installation;
                 let spawned = std::thread::Builder::new().name("update".into()).spawn(move || {
-                    let result = update::install(&update::Http::new(), &binary, &exe);
+                    let result = update::install(&update::Http::new(), &binary, &exe, installation);
                     let _ = proxy.send_event(UserEvent::UpdateInstalled(result));
                 });
                 if let Err(err) = spawned {
@@ -2924,11 +2939,13 @@ impl AppState {
             }
             update_dialog::Choice::OpenPage => open_link(&links::Target::Uri(dialog.release.page.clone())),
             // The new binary takes over once this one is gone, session
-            // and all.
+            // and all; a waiting setup runs before it starts.
             update_dialog::Choice::Restart => {
                 let Some(exe) = self.exe.clone() else { return };
-                match update::restart(&exe) {
+                let installed = self.installed_update.clone().unwrap_or(update::Installed::Replaced);
+                match update::restart(&exe, &installed) {
                     Ok(()) => {
+                        self.installed_update = None;
                         self.save_session();
                         self.exiting = true;
                     }
@@ -4326,7 +4343,7 @@ impl AppState {
             SidebarAction::OpenSettings => self.open_settings(),
             SidebarAction::CheckForUpdates => {
                 self.settings.report(Ok(t!("update-checking")));
-                spawn_update_check(self.proxy.clone(), true);
+                spawn_update_check(self.proxy.clone(), true, self.installation);
             }
             SidebarAction::SetShortcut(action, combos) => self.set_shortcut(action, combos, origin),
             SidebarAction::SetTheme(name) => {
@@ -5233,9 +5250,9 @@ fn duration_text(elapsed: Duration) -> String {
 
 /// Ask GitHub for a newer release on a thread of its own; the answer
 /// comes as `UserEvent::UpdateChecked`.
-fn spawn_update_check(proxy: EventLoopProxy<UserEvent>, manual: bool) {
+fn spawn_update_check(proxy: EventLoopProxy<UserEvent>, manual: bool, installation: update::Installation) {
     let spawned = std::thread::Builder::new().name("update-check".into()).spawn(move || {
-        let result = update::check(&update::Http::new(), update::current());
+        let result = update::check(&update::Http::new(), update::current(), installation);
         let _ = proxy.send_event(UserEvent::UpdateChecked { result, manual });
     });
     if let Err(err) = spawned {
@@ -5365,6 +5382,15 @@ fn wheel_lines(delta: MouseScrollDelta, lines_per_step: f32, cell_height: f32, r
 }
 
 impl ApplicationHandler<UserEvent> for App {
+    /// However the loop ends: an update still waiting (Windows: its setup)
+    /// goes in now, so the next start is the new version.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        let Some(state) = &mut self.state else { return };
+        if let (Some(installed), Some(exe)) = (state.installed_update.take(), &state.exe) {
+            update::apply_at_exit(exe, &installed);
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;

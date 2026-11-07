@@ -1,6 +1,6 @@
 # Keeps the Windows port building: lints Terminaal for Windows, runs its
 # tests (those that need Unix are left out by cfg) and builds a release
-# exe, kept as an artifact to try out.
+# exe and the setup around it, both kept as artifacts to try out.
 name: Windows
 
 on:
@@ -48,3 +48,19 @@ jobs:
         with:
           name: terminaal-x86_64-windows
           path: target/release/terminaal.exe
+
+      # The setup around that exe (installer/terminaal.iss); Inno Setup
+      # is on the runner.
+      - name: Setup
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc /Qp "/DAppVersion=$version" "/DSourceExe=$PWD\target\release\terminaal.exe" "/DOutputDir=$PWD\dist" installer\terminaal.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminaal-x86_64-windows-setup
+          path: dist/terminaal-x86_64-windows-setup.exe

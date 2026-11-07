@@ -358,17 +358,70 @@ pub fn trash(paths: &[PathBuf]) -> Result<(), TrashError> {
     }
 }
 
+/// Windows PowerShell's app ID, which toasts go out under when Terminaal
+/// has none of its own.
+const POWERSHELL_APP_ID: &str = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
+
+/// Set once [`use_app_id`] gave this process Terminaal's own app ID.
+static OWN_APP_ID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Gives this process `id` as its AppUserModelID, before any window is
+/// made: the taskbar then groups its windows with the Start menu shortcut
+/// that carries the same ID (the setup's), and toasts go out under it --
+/// named and drawn as Terminaal rather than Windows PowerShell. Only for a
+/// copy the setup installed: without that shortcut Windows doesn't know
+/// the ID, and toasts under it wouldn't show at all.
+pub fn use_app_id(id: &str) {
+    let wide: Vec<u16> = OsStr::new(id).encode_wide().chain(Some(0)).collect();
+    // SAFETY: `wide` is NUL-terminated and lives through the call.
+    let result = unsafe { windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(wide.as_ptr()) };
+    if result < 0 {
+        log::warn!("can't set the AppUserModelID: 0x{result:08X}");
+        return;
+    }
+    OWN_APP_ID.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Where Terminaal's setup installed it, from its entry under Settings →
+/// Apps (`…\Uninstall\<id>_is1`, written by Inno Setup): per user first,
+/// then for all users. Each with whether it's the all-users one.
+pub fn setup_folders(app_id: &str) -> Vec<(PathBuf, bool)> {
+    use windows_sys::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+    let wide = |text: &str| -> Vec<u16> { OsStr::new(text).encode_wide().chain(Some(0)).collect() };
+    let key = wide(&format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{app_id}_is1"));
+    let value = wide("InstallLocation");
+    let read = |root: HKEY| -> Option<PathBuf> {
+        let mut buf = vec![0u16; 1024];
+        let mut size = (buf.len() * 2) as u32;
+        // SAFETY: key and value names are NUL-terminated, `buf` holds
+        // `size` bytes; REG_SZ comes back NUL-terminated.
+        let status = unsafe {
+            RegGetValueW(root, key.as_ptr(), value.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size)
+        };
+        if status != 0 {
+            return None;
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        use std::os::windows::ffi::OsStringExt;
+        let path = std::ffi::OsString::from_wide(&buf[..len]);
+        (!path.is_empty()).then(|| PathBuf::from(path))
+    };
+    [(HKEY_CURRENT_USER, false), (HKEY_LOCAL_MACHINE, true)]
+        .into_iter()
+        .filter_map(|(root, all_users)| Some((read(root)?, all_users)))
+        .collect()
+}
+
 /// Shows the toast in [`notify_command`]: Windows PowerShell's WinRT
-/// projection, under its app ID -- an app of our own would need one
-/// registered through a Start menu shortcut. Title and text come in by
-/// environment, never as code; `Escape` makes them XML.
+/// projection, under Terminaal's app ID ([`use_app_id`]) or else
+/// PowerShell's own. Title, text and app ID come in by environment, never
+/// as code; `Escape` makes them XML.
 const TOAST: &str = r#"$notifications = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
 $xml = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]::new()
 $title = [Security.SecurityElement]::Escape($env:TERMINAAL_TITLE)
 $body = [Security.SecurityElement]::Escape($env:TERMINAAL_BODY)
 $xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$title</text><text>$body</text></binding></visual></toast>")
-$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
-$notifications::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+$notifications::CreateToastNotifier($env:TERMINAAL_APP_ID).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
 "#;
 
 /// A desktop notification: a toast, through a hidden Windows PowerShell
@@ -382,6 +435,7 @@ pub fn notify_command(title: String, body: String) -> Option<Command> {
         .arg(base64::engine::general_purpose::STANDARD.encode(utf16))
         .env("TERMINAAL_TITLE", title)
         .env("TERMINAAL_BODY", body)
+        .env("TERMINAAL_APP_ID", if OWN_APP_ID.load(std::sync::atomic::Ordering::Relaxed) { crate::update::APP_USER_MODEL_ID } else { POWERSHELL_APP_ID })
         .creation_flags(CREATE_NO_WINDOW);
     Some(command)
 }
