@@ -139,6 +139,9 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(state.join("terminaal"))
 }
 
+/// Nothing to do: stdout and stderr are the terminal's anyway.
+pub fn attach_console() {}
+
 /// Whether there's an SSH agent to ask: `$SSH_AUTH_SOCK` is set.
 pub fn agent_available() -> bool {
     std::env::var_os("SSH_AUTH_SOCK").is_some()

@@ -195,26 +195,30 @@ fn zsh(shell: &InstalledShell, file: &Path) -> io::Result<Launch> {
 /// from Enter (PSReadLine), PowerShell has no hook before a command; the
 /// status is `$LASTEXITCODE` of a failed program, else 1 for a failed
 /// cmdlet. `ESC`/`BEL` as `[char]`: Windows PowerShell 5.1 has no `` `e ``.
+/// The user's prompt sits in a variable of its own: after `&` PowerShell
+/// reads `$table.Prompt` as text, not as the table's entry. A prompt that
+/// throws shows as a bare `PS>`.
 const POWERSHELL_INTEGRATION: &str = r#"# Terminaal: working directory (OSC 7) and prompts (OSC 133).
-if (-not $global:__terminaal) {
-    $global:__terminaal = @{ Prompt = $function:prompt; Ran = $false }
+if (-not $global:__terminaal_prompt) {
+    $global:__terminaal_prompt = $function:prompt
+    $global:__terminaal_ran = $false
     function global:prompt {
         $ok = $?
         $code = $global:LASTEXITCODE
         $e = [char]27; $a = [char]7
         $out = ''
-        if ($global:__terminaal.Ran) {
+        if ($global:__terminaal_ran) {
             $status = if ($ok) { 0 } elseif ($code) { $code } else { 1 }
             $out += "$e]133;D;$status$a"
-            $global:__terminaal.Ran = $false
+            $global:__terminaal_ran = $false
         }
         $loc = $ExecutionContext.SessionState.Path.CurrentLocation
         if ($loc.Provider.Name -eq 'FileSystem') {
-            $path = ('/' + $loc.ProviderPath.Replace('', '/')).Replace('%', '%25').Replace(' ', '%20')
+            $path = ('/' + $loc.ProviderPath.Replace('\', '/')).Replace('%', '%25').Replace(' ', '%20')
             $out += "$e]7;file://$env:COMPUTERNAME$path$a"
         }
         $out += "$e]133;A$a"
-        $out + (& $global:__terminaal.Prompt)
+        $out + (& $global:__terminaal_prompt)
     }
     if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
         Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {
@@ -222,7 +226,7 @@ if (-not $global:__terminaal) {
             [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
             [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
             if ($line.Trim()) {
-                $global:__terminaal.Ran = $true
+                $global:__terminaal_ran = $true
                 [Console]::Write("$([char]27)]133;C$([char]7)")
             }
         }
@@ -305,5 +309,10 @@ mod tests {
             let utf16: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&pair| u16::from_le_bytes(pair)).collect();
             assert_eq!(String::from_utf16(&utf16).unwrap(), POWERSHELL_INTEGRATION);
         }
+        // Both once threw in the prompt, which then showed as a bare `PS>`:
+        // an empty search string, and `& $table.Prompt` (text after `&`).
+        assert!(POWERSHELL_INTEGRATION.contains(r"ProviderPath.Replace('\', '/')"));
+        assert!(!POWERSHELL_INTEGRATION.contains("Replace('',"));
+        assert!(POWERSHELL_INTEGRATION.contains("(& $global:__terminaal_prompt)"));
     }
 }

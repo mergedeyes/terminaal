@@ -1434,9 +1434,11 @@ fn proxy_command(command: &str, socket: LocalStream) -> io::Result<Child> {
 /// and a thread each way between them and `socket`.
 #[cfg(windows)]
 fn proxy_command(command: &str, socket: LocalStream) -> io::Result<Child> {
+    use std::os::windows::process::CommandExt;
     let mut child = Command::new("cmd")
         .arg("/C")
         .arg(command)
+        .creation_flags(platform::CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

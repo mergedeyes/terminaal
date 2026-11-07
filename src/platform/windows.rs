@@ -17,6 +17,10 @@ use windows_sys::Win32::UI::Shell::{
     FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, SHFILEOPSTRUCTW, SHFileOperationW,
 };
 
+/// For helper programs (`cmd`, `powershell`) started from a window
+/// program: without it each one opens a console window.
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// One end of a connected local byte stream, from [`pair`]. Windows has
 /// no socketpair; a loopback TCP connection is what `WSAPoll` and
 /// libssh2 (`set_tcp_stream` wants a socket) both accept.
@@ -174,6 +178,15 @@ pub fn state_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").filter(|dir| !dir.is_empty()).map(|dir| PathBuf::from(dir).join("terminaal"))
 }
 
+/// Terminaal is a window program on Windows (no console of its own);
+/// started from one, `--help`, `--version`, errors and `RUST_LOG` output
+/// go to that console.
+pub fn attach_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // SAFETY: no pointers; fails harmlessly without a parent console.
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
 /// Always worth asking: without `SSH_AUTH_SOCK` libssh2 looks for
 /// Pageant and Windows' OpenSSH agent (`\\.\pipe\openssh-ssh-agent`)
 /// itself.
@@ -225,7 +238,7 @@ pub fn open_command(target: &OsStr) -> Command {
 /// `code` finds `code.cmd`. Paths can't hold `"`; `%` would still expand.
 pub fn editor_command(editor: &str, path: &Path) -> Command {
     let mut command = Command::new("cmd");
-    command.arg("/C").raw_arg(format!("{editor} \"{}\"", path.display()));
+    command.arg("/C").raw_arg(format!("{editor} \"{}\"", path.display())).creation_flags(CREATE_NO_WINDOW);
     command
 }
 
@@ -298,7 +311,6 @@ $notifications::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNo
 /// (pwsh has no WinRT types).
 pub fn notify_command(title: String, body: String) -> Option<Command> {
     use base64::Engine;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let utf16: Vec<u8> = TOAST.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut command = Command::new("powershell.exe");
     command

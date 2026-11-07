@@ -1,3 +1,7 @@
+// A window, not a console program: started from Explorer or the Start
+// menu, Windows would open a console beside it. Tests keep theirs.
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 mod app;
 #[cfg_attr(windows, path = "blur_windows.rs")]
 mod blur;
@@ -29,6 +33,7 @@ use crate::i18n::t;
 use crate::shells::InstalledShell;
 
 fn main() {
+    platform::attach_console();
     env_logger::Builder::from_default_env().format_timestamp_millis().init();
 
     let config = config::Config::load();

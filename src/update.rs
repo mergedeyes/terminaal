@@ -322,7 +322,6 @@ pub fn restart(exe: &Path) -> std::io::Result<()> {
 pub fn restart(exe: &Path) -> std::io::Result<()> {
     use base64::Engine;
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let script = "Wait-Process -Id $env:TERMINAAL_PID -Timeout 10 -ErrorAction SilentlyContinue; Start-Process -FilePath $env:TERMINAAL_EXE";
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     std::process::Command::new("powershell.exe")
@@ -333,7 +332,7 @@ pub fn restart(exe: &Path) -> std::io::Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
+        .creation_flags(crate::platform::CREATE_NO_WINDOW)
         .spawn()
         .map(drop)
 }
