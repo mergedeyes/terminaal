@@ -13,7 +13,9 @@ update at its next start ([Updates](docs/guides/updates.md)).
 2. **Bump it** in `Cargo.toml` (`version = "0.2.0"`), then `cargo build` so
    `Cargo.lock` follows, and run `cargo test` and `cargo clippy --all-targets`.
    The workflow doesn't run the tests (some need tools only your machine has,
-   like `/usr/lib/ssh/sftp-server`).
+   like `/usr/lib/ssh/sftp-server`). The Windows tests run on GitHub only when
+   started by hand: *Actions → Windows → Run workflow* on the release branch
+   (about 5 minutes, half an hour with a cold cache).
 3. **Commit and merge** that into `main` as usual (a PR "Release 0.2.0").
 4. **Tag and push the tag** from an up-to-date `main`:
 

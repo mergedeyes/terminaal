@@ -1,16 +1,15 @@
-# Keeps the Windows build working: lints Terminaal for Windows, runs its
-# tests (those that need Unix are left out by cfg) and builds a release
-# exe and the setup around it, both kept as artifacts to try out; then
-# the SFTP tests against a real sftp-server.
+# Checks Terminaal on real Windows: lints it, runs its tests (those that
+# need Unix are left out by cfg), builds a release exe and the setup
+# around it as artifacts to try out, then the SFTP tests against a real
+# sftp-server. Only when started by hand (Actions → Windows → Run
+# workflow): released Windows builds come from release.yml on a tag, and
+# merges and PRs build nothing for Windows.
 name: Windows
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# A newer push to the same branch makes a running build pointless.
+# A newer run for the same branch makes a running one pointless.
 concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: true
