@@ -521,6 +521,9 @@ impl Sidebar {
                     ui.label(weak(t!("shells-body")));
                     let (hint, args) = match shell.kind {
                         ShellKind::Fish => ("mkdir -p $argv[1]; and cd $argv[1]", t!("shells-args-fish")),
+                        ShellKind::PowerShell => {
+                            ("New-Item -ItemType Directory $args[0]; Set-Location $args[0]", t!("shells-args-powershell"))
+                        }
                         _ => ("mkdir -p \"$1\" && cd \"$1\"", t!("shells-args-posix")),
                     };
                     ui.add(
@@ -536,6 +539,7 @@ impl Sidebar {
                     ui.label(weak(t!("shells-lines-label")));
                     let hint = match shell.kind {
                         ShellKind::Fish => "set -gx EDITOR vim",
+                        ShellKind::PowerShell => "$env:EDITOR = 'code'",
                         _ => "export EDITOR=vim",
                     };
                     ui.add(

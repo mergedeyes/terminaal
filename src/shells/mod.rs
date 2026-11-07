@@ -183,6 +183,18 @@ fn xdg_config_home() -> Option<PathBuf> {
 }
 
 /// Where zsh looks for its dotfiles.
+/// Where PowerShell keeps its profile: `~/.config/powershell` (pwsh on
+/// Linux), `Documents\PowerShell` on Windows.
+#[cfg(unix)]
+fn powershell_dir() -> Option<PathBuf> {
+    Some(xdg_config_home()?.join("powershell"))
+}
+
+#[cfg(windows)]
+fn powershell_dir() -> Option<PathBuf> {
+    Some(crate::platform::documents_dir()?.join("PowerShell"))
+}
+
 fn zdotdir() -> Option<PathBuf> {
     std::env::var_os("ZDOTDIR").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(home)
 }

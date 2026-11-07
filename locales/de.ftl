@@ -397,6 +397,7 @@ shells-command = Befehl
 shells-body = Rumpf
 shells-args-fish = Argumente stehen in $argv.
 shells-args-posix = Argumente: $1, $2, … bzw. "$@".
+shells-args-powershell = Argumente stehen in $args ($args[0], …).
 shells-no-entry-open = Kein Eintrag geöffnet.
 shells-command-missing = Der Befehl fehlt.
 shells-body-missing = Der Rumpf fehlt.

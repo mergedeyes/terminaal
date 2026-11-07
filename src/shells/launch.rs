@@ -49,7 +49,7 @@ impl Launch {
 /// just starts without Terminaal's aliases/functions.
 pub fn launch(shell: &InstalledShell) -> Launch {
     let result = match (shell.kind, managed::path_for(shell.kind)) {
-        (ShellKind::PowerShell, _) => Ok(powershell(shell)),
+        (ShellKind::PowerShell, file) => Ok(powershell(shell, file.as_deref())),
         (ShellKind::Fish, Some(file)) => fish(shell, &file),
         (ShellKind::Bash, Some(file)) => bash(shell, &file),
         (ShellKind::Zsh, Some(file)) => zsh(shell, &file),
@@ -231,15 +231,32 @@ if (-not $global:__terminaal_prompt) {
             }
         }
     }
+    # The managed aliases and functions, as a script block: a .ps1 file
+    # wouldn't run under the default execution policy. UTF-8 also for 5.1,
+    # which reads files without a BOM as ANSI.
+    if ($env:TERMINAAL_MANAGED) {
+        if (Test-Path -LiteralPath $env:TERMINAAL_MANAGED) {
+            $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $env:TERMINAAL_MANAGED
+            if ($text) { . ([ScriptBlock]::Create($text)) }
+            Remove-Variable text
+        }
+        Remove-Item Env:TERMINAAL_MANAGED
+    }
 }
 "#;
 
-fn powershell(shell: &InstalledShell) -> Launch {
+/// The managed `file` comes in by environment (`TERMINAAL_MANAGED`), which
+/// the script removes again -- no quoting of a path inside the script.
+fn powershell(shell: &InstalledShell, file: Option<&Path>) -> Launch {
     use base64::Engine;
     // `-EncodedCommand` takes Base64 of UTF-16LE.
     let utf16: Vec<u8> = POWERSHELL_INTEGRATION.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
-    Launch { args: vec!["-NoExit".into(), "-EncodedCommand".into(), encoded], ..Launch::plain(shell) }
+    let mut launch = Launch { args: vec!["-NoExit".into(), "-EncodedCommand".into(), encoded], ..Launch::plain(shell) };
+    if let Some(file) = file {
+        launch.env.insert("TERMINAAL_MANAGED".into(), file.to_string_lossy().into_owned());
+    }
+    launch
 }
 
 fn integration_dir() -> io::Result<PathBuf> {

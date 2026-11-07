@@ -45,6 +45,9 @@ const MARK_ALIAS: &str = "# terminaal:alias ";
 const MARK_FUNCTION: &str = "# terminaal:function ";
 const MARK_BLOCK: &str = "# terminaal:block ";
 const MARK_END: &str = "# terminaal:end";
+/// PowerShell: the line before an alias or function that removes an
+/// alias of the same name.
+const UNALIAS: &str = "Remove-Item -Path Alias:";
 
 /// `None` for shells Terminaal can't manage.
 pub fn path_for(kind: ShellKind) -> Option<PathBuf> {
@@ -52,7 +55,8 @@ pub fn path_for(kind: ShellKind) -> Option<PathBuf> {
         ShellKind::Fish => Some(super::xdg_config_home()?.join("fish/terminaal.fish")),
         ShellKind::Bash => Some(super::home()?.join(".bash_terminaal")),
         ShellKind::Zsh => Some(super::zdotdir()?.join(".zsh_terminaal")),
-        ShellKind::PowerShell | ShellKind::Other => None,
+        ShellKind::PowerShell => Some(super::powershell_dir()?.join("terminaal.ps1")),
+        ShellKind::Other => None,
     }
 }
 
@@ -122,10 +126,18 @@ pub fn render(kind: ShellKind, entries: &[Entry]) -> String {
         });
         out.push_str(&entry.name);
         out.push('\n');
+        // PowerShell looks up aliases before functions: one of the same
+        // name (`ls`) would hide ours.
+        if kind == ShellKind::PowerShell && entry.kind != EntryKind::Block {
+            out.push_str(&format!("{UNALIAS}{} -Force -ErrorAction SilentlyContinue\n", entry.name));
+        }
         match entry.kind {
             EntryKind::Alias => {
                 let line = match kind {
                     ShellKind::Fish => format!("alias {} {}", entry.name, quote_fish(&entry.value)),
+                    // Its aliases take no arguments: a function that
+                    // passes them on.
+                    ShellKind::PowerShell => format!("function {} {{ {} @args }}", entry.name, entry.value),
                     _ => format!("alias {}={}", entry.name, quote_posix(&entry.value)),
                 };
                 out.push_str(&line);
@@ -134,6 +146,7 @@ pub fn render(kind: ShellKind, entries: &[Entry]) -> String {
             EntryKind::Function => {
                 let (open, close) = match kind {
                     ShellKind::Fish => (format!("function {}", entry.name), "end"),
+                    ShellKind::PowerShell => (format!("function {} {{", entry.name), "}"),
                     _ => (format!("{}() {{", entry.name), "}"),
                 };
                 out.push_str(&open);
@@ -177,7 +190,10 @@ pub fn parse(kind: ShellKind, text: &str) -> Vec<Entry> {
             continue;
         };
         let name = name.trim().to_string();
-        let block: Vec<&str> = lines.by_ref().take_while(|l| l.trim_end() != MARK_END).collect();
+        let mut block: Vec<&str> = lines.by_ref().take_while(|l| l.trim_end() != MARK_END).collect();
+        if kind == ShellKind::PowerShell && entry_kind != EntryKind::Block {
+            block.retain(|line| !line.trim_start().starts_with(UNALIAS));
+        }
         let value = match entry_kind {
             EntryKind::Alias => parse_alias(kind, &name, &block),
             EntryKind::Function => parse_function(kind, &block),
@@ -192,6 +208,11 @@ pub fn parse(kind: ShellKind, text: &str) -> Vec<Entry> {
 /// so a hand edit is shown (and kept) rather than lost.
 fn parse_alias(kind: ShellKind, name: &str, block: &[&str]) -> String {
     let line = block.iter().map(|l| l.trim()).find(|l| !l.is_empty()).unwrap_or("");
+    if kind == ShellKind::PowerShell {
+        let value = line.strip_prefix("function ").and_then(|rest| rest.strip_prefix(name));
+        let value = value.and_then(|rest| rest.trim().strip_prefix('{')?.strip_suffix('}')?.trim().strip_suffix("@args"));
+        return value.map_or_else(|| line.to_string(), |value| value.trim().to_string());
+    }
     let Some(rest) = line.strip_prefix("alias ").map(str::trim_start).and_then(|r| r.strip_prefix(name)) else {
         return line.to_string();
     };
@@ -317,7 +338,7 @@ mod tests {
 
     #[test]
     fn round_trips_through_the_file_format() {
-        for kind in [ShellKind::Fish, ShellKind::Bash, ShellKind::Zsh] {
+        for kind in [ShellKind::Fish, ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell] {
             assert_eq!(parse(kind, &render(kind, &sample())), sample(), "{kind:?}");
         }
     }
@@ -330,6 +351,12 @@ mod tests {
         let bash = render(ShellKind::Bash, &sample());
         assert!(bash.contains(r#"alias q='echo '\''it'\'''\''s'\'' "x" \ $HOME'"#));
         assert!(bash.contains("mkcd() {\n"));
+        let powershell = render(ShellKind::PowerShell, &sample());
+        assert!(powershell.contains(
+            "# terminaal:alias ll\nRemove-Item -Path Alias:ll -Force -ErrorAction SilentlyContinue\nfunction ll { ls -la @args }\n"
+        ));
+        assert!(powershell.contains("function mkcd {\n    mkdir -p \"$1\"\n"));
+        assert!(powershell.contains("# terminaal:block editor\nexport EDITOR=vim\n"), "blocks stay verbatim");
     }
 
     #[test]

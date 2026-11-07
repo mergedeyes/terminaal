@@ -150,6 +150,24 @@ pub fn write_all_at(file: &File, mut data: &[u8], mut offset: u64) -> io::Result
     Ok(())
 }
 
+/// The user's Documents folder, wherever it is (often OneDrive's).
+pub fn documents_dir() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Documents, SHGetKnownFolderPath};
+    let mut path = std::ptr::null_mut();
+    // SAFETY: a valid GUID and out-pointer; the string is ours to free.
+    let result = unsafe { SHGetKnownFolderPath(&FOLDERID_Documents, 0, std::ptr::null_mut(), &mut path) };
+    let dir = (result == 0 && !path.is_null()).then(|| {
+        // SAFETY: a NUL-terminated wide string from the call above.
+        let len = (0..).take_while(|&i| unsafe { *path.add(i) } != 0).count();
+        PathBuf::from(std::ffi::OsString::from_wide(unsafe { std::slice::from_raw_parts(path, len) }))
+    });
+    // SAFETY: allocated by SHGetKnownFolderPath, even when it failed.
+    unsafe { CoTaskMemFree(path.cast()) };
+    dir
+}
+
 /// Never root: an elevated process isn't what `sudo`-less commands mean.
 pub fn is_root() -> bool {
     false
