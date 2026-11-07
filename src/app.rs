@@ -524,6 +524,27 @@ fn pane_title(
     }
 }
 
+/// The part of a title a local shell's terminal got that a tab can
+/// show; `None` if it says nothing. Empty is xterm's way of clearing
+/// it. A Windows console's default title is the path of the shell it
+/// runs (`Administrator: ` maybe in front), which programs such as winget
+/// set back when they're done -- PowerShell sets no title at its prompt,
+/// so the path stood in for the folder until the next program. cmd puts
+/// that path before a running command (`…\cmd.exe - winget upgrade`):
+/// the command is what's left.
+fn console_title(title: &str, shell_path: &str) -> Option<String> {
+    let trimmed = title.trim();
+    let find = trimmed.to_ascii_lowercase().find(&shell_path.to_ascii_lowercase());
+    let after_path = find
+        .filter(|&at| at == 0 || trimmed.get(..at).is_some_and(|before| before.ends_with(": ")))
+        .and_then(|at| trimmed.get(at + shell_path.len()..));
+    let shown = match after_path {
+        Some(rest) => rest.strip_prefix(" - ").unwrap_or(rest).trim(),
+        None => trimmed,
+    };
+    (!shown.is_empty()).then(|| shown.to_string())
+}
+
 /// A fingerprint of what `term` shows at the bottom of its scrollback,
 /// cheap enough to take on every output of a background terminal.
 fn screen_fingerprint<T>(term: &Term<T>) -> u64 {
@@ -5598,7 +5619,10 @@ impl ApplicationHandler<UserEvent> for App {
             // Every tab's title is visible in the tab bar, so unlike most
             // events these redraw even when they come from a background tab.
             TermEvent::Title(title) => {
-                pane.program_title = Some(title);
+                pane.program_title = match &pane.origin {
+                    PaneOrigin::Shell(shell) => console_title(&title, &shell.path.to_string_lossy()),
+                    _ => (!title.trim().is_empty()).then_some(title),
+                };
                 pane.refresh_title(&hostname);
                 if focused {
                     state.update_window_title();
@@ -5831,6 +5855,24 @@ mod tests {
         term.set_options(term_config(TermOptions { clipboard_write: false, ..options }));
         parser.advance(&mut term, b"\x1b]52;c;Y29waWVk\x07\x1b]52;c;?\x07");
         assert_eq!(events.0.lock().unwrap().drain(..).collect::<Vec<_>>(), ["load \x1b]52;c;aGk=\x07"]);
+    }
+
+    #[test]
+    fn a_consoles_default_title_is_no_title() {
+        use super::console_title;
+        let shell = r"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe";
+        // What winget left behind, also elevated and in other casing.
+        assert_eq!(console_title(shell, shell), None);
+        assert_eq!(console_title(r"Administrator: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", shell), None);
+        assert_eq!(console_title("  ", shell), None, "empty clears it");
+        // cmd's title while a command runs: the command.
+        let cmd = r"C:\WINDOWS\system32\cmd.exe";
+        assert_eq!(console_title(r"C:\WINDOWS\system32\cmd.exe - winget  upgrade", cmd).as_deref(), Some("winget  upgrade"));
+        assert_eq!(console_title(r"Administrator: C:\WINDOWS\system32\cmd.exe - ping x", cmd).as_deref(), Some("ping x"));
+        // Titles of their own stay as they are.
+        assert_eq!(console_title("nvim", shell).as_deref(), Some("nvim"));
+        assert_eq!(console_title("~/src: fish", "/usr/bin/fish").as_deref(), Some("~/src: fish"));
+        assert_eq!(console_title("my/usr/bin/fish", "/usr/bin/fish").as_deref(), Some("my/usr/bin/fish"));
     }
 
     #[test]
