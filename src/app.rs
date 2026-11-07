@@ -890,6 +890,10 @@ impl AppState {
 
         let next_blink = Instant::now() + Duration::from_millis(config.cursor_blink_interval_ms);
         let blur = layer_blur(&window).or_else(|| window.winit().and_then(|window| Blur::new(window)));
+        // Without graphics acceleration DWM draws Acrylic as a solid
+        // colour: blur on would make the window opaque.
+        #[cfg(windows)]
+        let blur = blur.filter(|_| !gpu.software);
         let x11 = window.winit().is_some_and(|window| {
             matches!(
                 window.display_handle().map(|handle| handle.as_raw()),
@@ -4194,6 +4198,7 @@ impl AppState {
                             blur: self.blur.is_some(),
                             x11: self.x11,
                             effects_off: self.blur.as_ref().is_some_and(|blur| blur.effects_off()),
+                            software: self.gpu.software,
                         },
                     };
                     self.settings.show_tab(ui, &view, &mut settings_actions);

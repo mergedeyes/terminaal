@@ -31,6 +31,9 @@ pub struct GpuState {
     alpha_modes: Vec<wgpu::CompositeAlphaMode>,
     /// The frames are see-through (`set_translucent`).
     see_through: bool,
+    /// Drawn in software (no graphics acceleration, e.g. a VM without
+    /// one; Windows' WARP). Windows' compositor then draws no blur either.
+    pub software: bool,
 }
 
 /// Windows: whether frames go through DirectComposition (a swapchain on a
@@ -99,7 +102,8 @@ impl GpuState {
         };
         surface.configure(&device, &surface_config);
 
-        Self { instance, adapter, device, queue, surface: Some(surface), surface_config, format, alpha_modes, see_through: false }
+        let software = info.device_type == wgpu::DeviceType::Cpu;
+        Self { instance, adapter, device, queue, surface: Some(surface), surface_config, format, alpha_modes, see_through: false, software }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

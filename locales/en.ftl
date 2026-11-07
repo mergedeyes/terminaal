@@ -282,6 +282,7 @@ settings-ui-opacity-reset = Theme default ({ $value } %)
 settings-blur = Blur what's behind (frosted)
 settings-blur-unsupported = Blur needs a compositor with ext-background-effect (such as COSMIC); on KDE it works anyway.
 settings-blur-unsupported-windows = Blur needs Windows 11 22H2 or newer.
+settings-blur-software-windows = Blur needs graphics hardware acceleration; without it (as in many virtual machines) Windows draws it as a solid colour.
 settings-blur-effects-off = Windows' transparency effects are off (Settings → Personalization → Colors), so the window is see-through without blur.
 settings-transparency-unsupported = The graphics driver or compositor offers no see-through windows.
 settings-transparency-x11 = On X11 the window stays opaque; see-through needs Wayland.
