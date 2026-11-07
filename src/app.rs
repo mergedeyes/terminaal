@@ -54,6 +54,14 @@ fn window_icon() -> Option<Icon> {
     decode().inspect_err(|e| log::warn!("window icon: {e}")).ok()
 }
 
+/// The drop-down window without a layer shell: the monitor's width,
+/// `percent` of its height.
+fn dropdown_size(monitor: &winit::monitor::MonitorHandle, percent: f32) -> PhysicalSize<u32> {
+    let size = monitor.size();
+    let height = (f64::from(size.height) * f64::from(percent) / 100.0).round() as u32;
+    PhysicalSize::new(size.width, height.max(1))
+}
+
 use crate::Cli;
 use crate::commands::{System, Target};
 use crate::config::{self, ClipboardRead, Config, FontSlot, Setting};
@@ -751,6 +759,8 @@ struct AppState {
     hostname: String,
     /// The window has the keyboard focus.
     focused: bool,
+    /// This is the drop-down Terminaal (`--quake`).
+    dropdown: bool,
     /// Keys held down whose press went to terminals: the key and where it
     /// is, and the panes that got it (see `release_key`).
     pressed_keys: Vec<((Key, KeyLocation), Vec<usize>)>,
@@ -914,6 +924,7 @@ impl AppState {
             exe: std::env::current_exe().ok(),
             hostname: hostname(),
             focused: true,
+            dropdown: quake,
             pressed_keys: Vec::new(),
             prompt_labels: Labels::default(),
             links: links::Finder::default(),
@@ -1670,11 +1681,14 @@ impl AppState {
                     self.show_quake();
                 }
             }
-            // No layer shell: a plain window that shows and hides.
+            // No layer shell: a plain window that shows and hides --
+            // shown but behind another, it comes to the front instead.
             AppWindow::Winit(window) => {
-                let show = !window.is_visible().unwrap_or(true);
-                window.set_visible(show);
-                if show {
+                let visible = window.is_visible().unwrap_or(false);
+                if visible && self.focused {
+                    window.set_visible(false);
+                } else {
+                    window.set_visible(true);
                     window.focus_window();
                 }
             }
@@ -4299,6 +4313,11 @@ impl AppState {
                     self.report(origin, Err(err));
                 }
             }
+            SidebarAction::SetQuakeHotkey(text) => {
+                if let Err(err) = self.config.save_quake_hotkey(&text) {
+                    self.report(origin, Err(err));
+                }
+            }
             SidebarAction::SetFont(slot, family) => {
                 if let Err(err) = self.config.save_font(slot, family.as_deref()) {
                     self.report(origin, Err(err));
@@ -4441,11 +4460,15 @@ impl AppState {
             Setting::SidebarWidth(_) => {}
             Setting::CursorBlink(_) | Setting::CursorBlinkInterval(_) => self.reset_cursor_blink(),
             Setting::NotifyAfter(_) | Setting::Notifications(_) => {}
-            Setting::QuakeHeight(percent) => {
-                if let AppWindow::Layer(window) = &self.window {
-                    window.layer.borrow_mut().set_height(percent);
+            Setting::QuakeHeight(percent) => match &self.window {
+                AppWindow::Layer(window) => window.layer.borrow_mut().set_height(percent),
+                AppWindow::Winit(window) if self.dropdown => {
+                    if let Some(monitor) = window.current_monitor() {
+                        let _ = window.request_inner_size(dropdown_size(&monitor, percent));
+                    }
                 }
-            }
+                AppWindow::Winit(_) => {}
+            },
             Setting::QuakeHideOnUnfocus(_) => {}
             // Off: the next start opens a fresh tab, so there's nothing to
             // keep. On: saved from now.
@@ -5302,6 +5325,14 @@ impl ApplicationHandler<UserEvent> for App {
         let quake = self.quake.take().map(|toggle| {
             let proxy = self.proxy.clone();
             toggle.listen(move || drop(proxy.send_event(UserEvent::QuakeToggle)));
+            // Windows lets a program have a global shortcut of its own.
+            #[cfg(windows)]
+            if let Some(combo) = self.config.quake_hotkey() {
+                let proxy = self.proxy.clone();
+                if let Err(err) = crate::quake::hotkey::listen(combo, move || drop(proxy.send_event(UserEvent::QuakeToggle))) {
+                    log::warn!("no global shortcut {combo} for the drop-down window: {err}");
+                }
+            }
         });
         if quake.is_some() {
             if let Some(window) = quake_layer(event_loop, self.config.quake_height()) {
@@ -5329,16 +5360,19 @@ impl ApplicationHandler<UserEvent> for App {
         // Without a layer shell the drop-down window can only ask: on top,
         // along the top edge (X11 takes that, Wayland places it itself).
         let attrs = match quake.and_then(|()| event_loop.primary_monitor()) {
-            Some(monitor) => {
-                let size = monitor.size();
-                let height = (f64::from(size.height) * f64::from(self.config.quake_height()) / 100.0).round();
-                attrs
-                    .with_decorations(false)
-                    .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
-                    .with_position(monitor.position())
-                    .with_inner_size(PhysicalSize::new(f64::from(size.width), height))
-            }
+            Some(monitor) => attrs
+                .with_decorations(false)
+                .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
+                .with_position(monitor.position())
+                .with_inner_size(dropdown_size(&monitor, self.config.quake_height())),
             None => attrs,
+        };
+        // Shown and hidden by its shortcut, not from the taskbar.
+        #[cfg(windows)]
+        let attrs = if quake.is_some() {
+            winit::platform::windows::WindowAttributesExtWindows::with_skip_taskbar(attrs, true)
+        } else {
+            attrs
         };
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
         let window = AppWindow::Winit(window);
@@ -5473,6 +5507,14 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::Focused(focused) => {
                 state.focused = focused;
+                // The drop-down window as a plain window (no layer shell).
+                if !focused
+                    && state.dropdown
+                    && state.config.quake_hide_on_unfocus
+                    && let Some(window) = state.window.winit()
+                {
+                    window.set_visible(false);
+                }
                 // Releases of what's held now go to whichever window
                 // gets the keyboard.
                 if !focused {

@@ -34,6 +34,9 @@ pub const DEFAULT_UI_OPACITY: f32 = 0.85;
 pub const SELECT_FACTORS: RangeInclusive<f32> = 1.0..=10.0;
 /// Heights of the drop-down window the settings allow, in percent.
 pub const QUAKE_HEIGHTS: RangeInclusive<f32> = 20.0..=100.0;
+/// The drop-down window's global shortcut on Windows, unless set: free
+/// there by default (it's Ubuntu's terminal key).
+pub const DEFAULT_QUAKE_HOTKEY: &str = "Ctrl+Alt+T";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -98,6 +101,10 @@ pub struct Config {
     pub quake_height: f32,
     /// Hide the drop-down window when another window gets the keyboard.
     pub quake_hide_on_unfocus: bool,
+    /// Windows: the global shortcut the drop-down Terminaal registers,
+    /// written like those in `[shortcuts]`; empty for none. Unset:
+    /// [`DEFAULT_QUAKE_HOTKEY`]. See [`Config::quake_hotkey`].
+    pub quake_hotkey: Option<String>,
     /// UI language, `de` or `en`. Unset (or `auto`): German for a German
     /// locale, English otherwise. See [`Config::language`].
     pub language: Option<String>,
@@ -217,6 +224,7 @@ impl Default for Config {
             update_skipped: None,
             quake_height: 50.0,
             quake_hide_on_unfocus: true,
+            quake_hotkey: None,
             language: None,
             commands_run: true,
             commands_assume_yes: false,
@@ -324,6 +332,33 @@ impl Config {
         let key = family.map(Family::key);
         Self::edit(|doc| write_text(doc, "system", key))?;
         self.system = key.map(str::to_string);
+        Ok(())
+    }
+
+    /// The drop-down window's global shortcut (Windows); `None` if it's
+    /// switched off (empty) or unreadable -- the latter with a warning.
+    /// Only Windows lets a program have one.
+    #[cfg_attr(unix, allow(dead_code))]
+    pub fn quake_hotkey(&self) -> Option<KeyCombo> {
+        let text = self.quake_hotkey.as_deref().unwrap_or(DEFAULT_QUAKE_HOTKEY).trim();
+        if text.is_empty() {
+            return None;
+        }
+        KeyCombo::parse(text)
+            .inspect_err(|err| log::warn!("quake_hotkey = {text:?} in config.toml: {err}"))
+            .ok()
+    }
+
+    /// Set the drop-down window's shortcut and persist it: empty switches
+    /// it off, the default removes the key. Refused if it doesn't parse.
+    pub fn save_quake_hotkey(&mut self, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if !text.is_empty() {
+            KeyCombo::parse(text)?;
+        }
+        let value = (text != DEFAULT_QUAKE_HOTKEY).then_some(text);
+        Self::edit(|doc| write_text(doc, "quake_hotkey", value))?;
+        self.quake_hotkey = value.map(str::to_string);
         Ok(())
     }
 
@@ -794,6 +829,10 @@ mod tests {
         assert!(!config.clipboard_write);
         assert_eq!(config.clipboard_read(), ClipboardRead::Always);
         assert_eq!(toml::from_str::<Config>("quake_height = 5").unwrap().quake_height(), 20.0);
+        assert_eq!(Config::default().quake_hotkey(), crate::shortcuts::KeyCombo::parse("Ctrl+Alt+T").ok());
+        assert_eq!(toml::from_str::<Config>("quake_hotkey = \"\"").unwrap().quake_hotkey(), None, "switched off");
+        assert_eq!(toml::from_str::<Config>("quake_hotkey = \"Ctrl+F12\"").unwrap().quake_hotkey(), crate::shortcuts::KeyCombo::parse("Ctrl+F12").ok());
+        assert_eq!(toml::from_str::<Config>("quake_hotkey = \"Ctrl+Nope\"").unwrap().quake_hotkey(), None, "unreadable");
     }
 
     /// The `[shortcuts]` example of the configuration reference reads,

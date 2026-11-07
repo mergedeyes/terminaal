@@ -73,6 +73,9 @@ pub enum SidebarAction {
     /// The command files from the server are edited with (persisted);
     /// empty for the desktop's default.
     SetEditor(String),
+    /// The drop-down window's global shortcut on Windows (persisted);
+    /// empty for none.
+    SetQuakeHotkey(String),
 }
 
 /// The active SSH tab's port forwards.
