@@ -4193,6 +4193,7 @@ impl AppState {
                             supported: self.gpu.supports_translucency(),
                             blur: self.blur.is_some(),
                             x11: self.x11,
+                            effects_off: self.blur.as_ref().is_some_and(|blur| blur.effects_off()),
                         },
                     };
                     self.settings.show_tab(ui, &view, &mut settings_actions);
@@ -5655,6 +5656,9 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::DesktopThemeChanged => {
                 state.reload_themes();
+                // Windows' transparency effects may have changed with it.
+                #[cfg(windows)]
+                state.update_blur();
                 return;
             }
             UserEvent::Shell(pane_id, event) => {

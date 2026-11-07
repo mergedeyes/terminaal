@@ -6,7 +6,11 @@
 //! 22H2 and newer) behind the whole window: the frame extended into the
 //! client area, so DWM draws the backdrop under it, and the frames come
 //! premultiplied through DirectComposition (`gpu::composition`) on top.
-//! Like every Acrylic window, it turns solid while the window is inactive.
+//! Windows draws Acrylic as a solid colour while its "Transparency
+//! effects" are off (Settings → Personalization → Colors; often so in a VM
+//! without graphics acceleration) -- the window would turn opaque, not
+//! blurred. So the backdrop is only asked for while they're on, and set
+//! again when they change (`theme::windows::watch` sees that key).
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -30,7 +34,10 @@ const BACKDROP_BUILD: u32 = 22621;
 /// The window's Acrylic backdrop, where Windows has one.
 pub struct Blur {
     hwnd: HWND,
+    /// The backdrop as it's set now.
     on: bool,
+    /// Windows' transparency effects, as last read.
+    effects: bool,
 }
 
 impl Blur {
@@ -44,7 +51,7 @@ impl Blur {
         if !crate::gpu::composition() {
             return None;
         }
-        Some(Self { hwnd: hwnd(window)?, on: false })
+        Some(Self { hwnd: hwnd(window)?, on: false, effects: crate::theme::windows::transparency_effects() })
     }
 
     /// # Safety
@@ -54,9 +61,17 @@ impl Blur {
         None
     }
 
-    /// Acrylic behind the whole window, or back to Windows' default. The
-    /// size is the Wayland region's; DWM covers the window by itself.
+    /// Windows' transparency effects are off: no blur, see-through only.
+    pub fn effects_off(&self) -> bool {
+        !self.effects
+    }
+
+    /// Acrylic behind the whole window (while Windows' transparency
+    /// effects are on), or back to Windows' default. The size is the
+    /// Wayland region's; DWM covers the window by itself.
     pub fn set(&mut self, on: bool, _size: (i32, i32)) {
+        self.effects = crate::theme::windows::transparency_effects();
+        let on = on && self.effects;
         if on == self.on {
             return;
         }

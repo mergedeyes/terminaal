@@ -104,7 +104,15 @@ impl Desktop {
     }
 }
 
-/// Call `changed` whenever Windows' mode or accent colour changes. Runs a
+/// Windows' "Transparency effects" (Settings → Personalization → Colors):
+/// without them Acrylic is a solid colour. On when unset, as in Windows.
+#[cfg(windows)]
+pub fn transparency_effects() -> bool {
+    registry::dword(PERSONALIZE, "EnableTransparency") != Some(0)
+}
+
+/// Call `changed` whenever Windows' mode or accent colour changes -- or
+/// its transparency effects, which live under the same key. Runs a
 /// thread blocked on registry notifications, so a quiet system costs
 /// nothing; `changed` comes once a change has settled ([`SETTLE_MS`]).
 #[cfg(windows)]

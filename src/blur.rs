@@ -73,6 +73,12 @@ impl Blur {
         Some(Self { conn, queue, state, surface, compositor, manager, effect: None })
     }
 
+    /// The desktop has blur switched off for everyone (Windows' setting;
+    /// there's no such thing here).
+    pub fn effects_off(&self) -> bool {
+        false
+    }
+
     /// Blur behind the whole window -- `size` in logical pixels -- or stop.
     pub fn set(&mut self, on: bool, (width, height): (i32, i32)) {
         let qh = self.queue.handle();

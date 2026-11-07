@@ -61,6 +61,8 @@ pub struct Transparency {
     pub blur: bool,
     /// X11: see-through only from the next start.
     pub x11: bool,
+    /// Windows' transparency effects are off: no blur.
+    pub effects_off: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -737,6 +739,8 @@ fn transparency(ui: &mut Ui, view: &SettingsView, actions: &mut Vec<SidebarActio
         note(ui, t!("settings-transparency-unsupported"));
     } else if !support.blur {
         note(ui, if cfg!(windows) { t!("settings-blur-unsupported-windows") } else { t!("settings-blur-unsupported") });
+    } else if support.effects_off && config.blur && config.opacity() < 1.0 {
+        note(ui, t!("settings-blur-effects-off"));
     }
     if support.x11 {
         note(ui, t!("settings-transparency-x11"));
