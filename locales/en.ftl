@@ -454,12 +454,13 @@ snip-category-use = Use this category
 snip-name-taken = There is already a command “{ $name }”.
 cmd-system = System: { $system }
 cmd-system-local-hint = Detected from /etc/os-release. If that's wrong, set it in the settings under “Shell”.
+cmd-system-windows-hint = From the tab's shell: PowerShell or cmd. A setting under “Shell” overrides it.
 cmd-system-remote-hint = Detected on { $host } while connecting. If that's wrong, set it in the host form under “Advanced”.
 cmd-system-detect = The system is detected automatically again.
 cmd-system-probing = Detecting the system…
 cmd-system-unknown = System not recognized – the package commands stay hidden. You can set it in the settings under “Shell”.
 cmd-no-tab = No terminal tab open – commands need a shell.
-cmd-windows-local = On Windows the built-in commands are only there in SSH tabs – locally they'd be Unix commands that PowerShell and cmd don't know.
+cmd-windows-local = The built-in commands are there for PowerShell and cmd here, and in SSH tabs – not yet for WSL or Git Bash.
 cmd-run-hint = Runs right away: { $line }
 cmd-type-hint = Types into the prompt: { $line }
 cmd-new-tab-hint = Middle-click: in a new tab
@@ -495,6 +496,8 @@ cmd-family-gentoo = Gentoo (emerge)
 cmd-family-nixos = NixOS (nixos-rebuild)
 cmd-family-macos = macOS (brew)
 cmd-family-freebsd = FreeBSD (pkg)
+cmd-family-windows = Windows (PowerShell, winget)
+cmd-family-windows-cmd = Windows (cmd, winget)
 cmd-family-unknown = Detect automatically
 
 ## Managed alias/function files (shells/managed.rs)

@@ -37,6 +37,11 @@ pub enum Family {
     NixOs,
     MacOs,
     FreeBsd,
+    /// Windows, its commands in PowerShell.
+    Windows,
+    /// Windows with cmd as the shell (local cmd tabs, Windows' OpenSSH
+    /// server by default): the same, through `powershell -Command`.
+    WindowsCmd,
     /// Not recognized (or not looked at yet): only the commands every
     /// system has.
     #[default]
@@ -44,7 +49,7 @@ pub enum Family {
 }
 
 impl Family {
-    pub const ALL: [Family; 11] = [
+    pub const ALL: [Family; 13] = [
         Family::Arch,
         Family::Debian,
         Family::Fedora,
@@ -55,6 +60,8 @@ impl Family {
         Family::NixOs,
         Family::MacOs,
         Family::FreeBsd,
+        Family::Windows,
+        Family::WindowsCmd,
         Family::Unknown,
     ];
 
@@ -71,6 +78,8 @@ impl Family {
             Self::NixOs => "nixos",
             Self::MacOs => "macos",
             Self::FreeBsd => "freebsd",
+            Self::Windows => "windows",
+            Self::WindowsCmd => "windows-cmd",
             Self::Unknown => "auto",
         }
     }
@@ -94,6 +103,8 @@ impl Family {
             Self::NixOs => t!("cmd-family-nixos"),
             Self::MacOs => t!("cmd-family-macos"),
             Self::FreeBsd => t!("cmd-family-freebsd"),
+            Self::Windows => t!("cmd-family-windows"),
+            Self::WindowsCmd => t!("cmd-family-windows-cmd"),
             Self::Unknown => t!("cmd-family-unknown"),
         }
     }
@@ -109,11 +120,18 @@ impl Family {
         !matches!(self, Self::MacOs | Self::FreeBsd)
     }
 
+    /// Either Windows: the lines are PowerShell ([`windows_line`]).
+    pub fn is_windows(self) -> bool {
+        matches!(self, Self::Windows | Self::WindowsCmd)
+    }
+
     /// What `{yes}` becomes once the user allowed running without being
     /// asked.
     fn yes(self) -> &'static str {
         match self {
             Self::Arch => " --noconfirm",
+            // winget asks for the source's and each package's terms.
+            Self::Windows | Self::WindowsCmd => " --accept-source-agreements --accept-package-agreements",
             Self::Debian | Self::Fedora | Self::Suse | Self::Void | Self::FreeBsd => " -y",
             // apk, nix and brew don't ask in the first place, and Portage
             // only asks when told to (see `ask`).
@@ -134,6 +152,9 @@ impl Family {
     /// where this system has nothing for it. Flatpak and the AUR depend on
     /// what's installed rather than the family (see [`catalog`]).
     fn line(self, command: Builtin) -> Option<&'static str> {
+        if self.is_windows() {
+            return windows_line(command);
+        }
         let line = match command {
             Builtin::FlatpakUpdate | Builtin::AurUpdate => return None,
             Builtin::Update => match self {
@@ -147,7 +168,7 @@ impl Family {
                 Self::NixOs => "sudo nixos-rebuild switch --upgrade",
                 Self::MacOs => "brew update && brew upgrade",
                 Self::FreeBsd => "sudo pkg update && sudo pkg upgrade{yes}",
-                Self::Unknown => return None,
+                Self::Windows | Self::WindowsCmd | Self::Unknown => return None,
             },
             Builtin::Outdated => match self {
                 Self::Arch => "pacman -Qu",
@@ -160,7 +181,7 @@ impl Family {
                 Self::NixOs => return None,
                 Self::MacOs => "brew outdated",
                 Self::FreeBsd => "pkg version -vRL=",
-                Self::Unknown => return None,
+                Self::Windows | Self::WindowsCmd | Self::Unknown => return None,
             },
             Builtin::DiskFree => {
                 if self.gnu() {
@@ -222,6 +243,38 @@ impl Family {
         };
         Some(line)
     }
+}
+
+/// The PowerShell line for `command` (Windows PowerShell 5.1 too). For
+/// cmd they go inside `powershell -Command "…"` ([`catalog`]), so none
+/// has a `"` or a `%` (cmd's variables).
+fn windows_line(command: Builtin) -> Option<&'static str> {
+    Some(match command {
+        Builtin::FlatpakUpdate | Builtin::AurUpdate => return None,
+        Builtin::Update => "winget upgrade --all{yes}",
+        Builtin::Outdated => "winget upgrade",
+        Builtin::DiskFree => "Get-PSDrive -PSProvider FileSystem",
+        // Folders the user can't read would otherwise bury the sizes in
+        // errors.
+        Builtin::DiskUsage => {
+            "Get-ChildItem -Directory -Force | ForEach-Object { [pscustomobject]@{ MB = [math]::Round(\
+             (Get-ChildItem -LiteralPath $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue \
+             | Measure-Object Length -Sum).Sum / 1MB, 1); Name = $_.Name } } | Sort-Object MB"
+        }
+        Builtin::Memory => {
+            "Get-CimInstance Win32_OperatingSystem | Select-Object \
+             @{ n = 'TotalGB'; e = { [math]::Round($_.TotalVisibleMemorySize / 1MB, 1) } }, \
+             @{ n = 'FreeGB'; e = { [math]::Round($_.FreePhysicalMemory / 1MB, 1) } }"
+        }
+        Builtin::Processes => "Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Id, ProcessName, CPU, WS",
+        Builtin::Uptime => "(Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime",
+        Builtin::FailedServices => {
+            "Get-Service | Where-Object { $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running' }"
+        }
+        Builtin::LogErrors => "Get-WinEvent -FilterHashtable @{ LogName = 'System'; Level = 2 } -MaxEvents 50",
+        Builtin::Ports => "Get-NetTCPConnection -State Listen | Sort-Object LocalPort",
+        Builtin::Addresses => "Get-NetIPAddress | Format-Table InterfaceAlias, IPAddress, PrefixLength",
+    })
 }
 
 /// The commands themselves. Their order here is the order of the buttons.
@@ -413,7 +466,11 @@ pub fn catalog(system: System, assume_yes: bool) -> Vec<Command> {
                 Builtin::FlatpakUpdate | Builtin::AurUpdate => return None,
                 _ => {
                     let line = system.family.line(builtin)?.replace("{yes}", confirm);
-                    if system.root { line.replace("sudo ", "") } else { line }
+                    match system.family {
+                        Family::WindowsCmd => format!("powershell -NoProfile -Command \"{line}\""),
+                        _ if system.root => line.replace("sudo ", ""),
+                        _ => line,
+                    }
                 }
             };
             let changes = matches!(builtin, Builtin::Update | Builtin::FlatpakUpdate | Builtin::AurUpdate);
@@ -567,6 +624,22 @@ mod tests {
         // Flatpak works on systems we don't otherwise know.
         let unknown = System { flatpak: true, ..System::default() };
         assert!(line(unknown, false, Builtin::FlatpakUpdate).is_some());
+    }
+
+    #[test]
+    fn windows_has_powershell_lines_that_survive_cmd() {
+        let windows = catalog(System { family: Family::Windows, ..System::default() }, false);
+        assert_eq!(windows.len(), Builtin::ALL.len() - 2, "all but Flatpak and the AUR");
+        for command in &windows {
+            assert!(!command.line.contains(['"', '%']), "cmd would read it: {}", command.line);
+        }
+        assert_eq!(line(System { family: Family::Windows, ..System::default() }, false, Builtin::Update).unwrap(), "winget upgrade --all");
+        let cmd = System { family: Family::WindowsCmd, ..System::default() };
+        assert_eq!(
+            line(cmd, false, Builtin::DiskFree).unwrap(),
+            "powershell -NoProfile -Command \"Get-PSDrive -PSProvider FileSystem\""
+        );
+        assert!(line(cmd, true, Builtin::Update).unwrap().contains("--accept-package-agreements"));
     }
 
     #[test]

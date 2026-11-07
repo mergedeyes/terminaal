@@ -2170,16 +2170,25 @@ impl AppState {
     /// `None` while the settings tab is showing -- no shell to send to.
     fn command_target(&self) -> Option<Target> {
         // An IBM i screen has no shell to type commands into.
-        let terminal = self.current_terminal().filter(|terminal| !terminal.is_tn5250())?;
-        let mut target = self.target_of(terminal);
+        let pane = self.current_pane().filter(|pane| !pane.terminal.is_tn5250())?;
+        let mut target = self.target_of(pane);
         target.terminals = self.input_panes().len();
         Some(target)
     }
 
-    /// The system and host of `terminal`, with the configured system
-    /// winning for a local shell.
-    fn target_of(&self, terminal: &TerminalSession) -> Target {
-        let mut target = terminal.command_target();
+    /// The system and host of `pane`, with the configured system winning
+    /// for a local shell. On Windows a local shell's commands depend on
+    /// the shell: PowerShell's or cmd's.
+    fn target_of(&self, pane: &Pane) -> Target {
+        let mut target = pane.terminal.command_target();
+        #[cfg(windows)]
+        if let (PaneOrigin::Shell(shell), Some(system)) = (&pane.origin, &mut target.system) {
+            system.family = match shell.kind {
+                ShellKind::PowerShell => crate::commands::Family::Windows,
+                _ if shell.name.eq_ignore_ascii_case("cmd") => crate::commands::Family::WindowsCmd,
+                _ => crate::commands::Family::Unknown,
+            };
+        }
         if target.host.is_none() && let Some(family) = self.config.system() {
             target.system = Some(System { family, ..target.system.unwrap_or_default() });
             target.configured = true;
@@ -2277,7 +2286,7 @@ impl AppState {
         let queued = pane.queued.take();
         let pane = &self.tabs[tab].panes().expect("found above").panes[idx];
         let ssh = matches!(pane.origin, PaneOrigin::Ssh(_));
-        let target = self.target_of(&pane.terminal);
+        let target = self.target_of(pane);
         let mut lines: Vec<(&str, bool)> = self
             .sidebar
             .snippets()

@@ -454,12 +454,13 @@ snip-category-use = Diese Kategorie übernehmen
 snip-name-taken = Einen Befehl „{ $name }“ gibt es schon.
 cmd-system = System: { $system }
 cmd-system-local-hint = Aus /etc/os-release erkannt. Stimmt das nicht, lässt es sich in den Einstellungen unter „Shell“ festlegen.
+cmd-system-windows-hint = Nach der Shell des Tabs: PowerShell oder cmd. Eine Einstellung unter „Shell“ geht vor.
 cmd-system-remote-hint = Beim Verbinden auf { $host } ermittelt. Stimmt das nicht, lässt es sich im Host-Formular unter „Erweitert“ festlegen.
 cmd-system-detect = System wird wieder automatisch erkannt.
 cmd-system-probing = System wird ermittelt …
 cmd-system-unknown = System nicht erkannt – die Paketbefehle bleiben aus. In den Einstellungen unter „Shell“ lässt es sich festlegen.
 cmd-no-tab = Kein Terminal-Tab offen – Befehle brauchen eine Shell.
-cmd-windows-local = Die eingebauten Befehle gibt es unter Windows nur in SSH-Tabs – lokal sind es Unix-Befehle, die PowerShell und cmd nicht kennen.
+cmd-windows-local = Die eingebauten Befehle gibt es hier für PowerShell und cmd sowie in SSH-Tabs – noch nicht für WSL oder Git Bash.
 cmd-run-hint = Führt sofort aus: { $line }
 cmd-type-hint = Schreibt in die Eingabezeile: { $line }
 cmd-new-tab-hint = Mittelklick: in einem neuen Tab
@@ -495,6 +496,8 @@ cmd-family-gentoo = Gentoo (emerge)
 cmd-family-nixos = NixOS (nixos-rebuild)
 cmd-family-macos = macOS (brew)
 cmd-family-freebsd = FreeBSD (pkg)
+cmd-family-windows = Windows (PowerShell, winget)
+cmd-family-windows-cmd = Windows (cmd, winget)
 cmd-family-unknown = Automatisch erkennen
 
 ## Verwaltete Alias-/Funktionsdateien (shells/managed.rs)
