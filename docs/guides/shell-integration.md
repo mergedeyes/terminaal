@@ -94,8 +94,11 @@ What each sequence means:
   typing at has no block yet.
 - **Notifications**: **Settings → Terminal → Shell integration → Notify after**
   (default 10 seconds, 0 turns it off). You're notified only when the window
-  isn't focused or the command's tab isn't the active one. Needs `notify-send`;
-  the taskbar entry is also marked as needing attention. **Settings → Terminal →
+  isn't focused or the command's tab isn't the active one. Needs `notify-send`.
+  Under X11 the window is also marked as needing attention, on Windows its
+  taskbar button flashes; under Wayland there's only the notification –
+  asking for attention there brings the window to the front on some desktops
+  (COSMIC), right over what you're working in. **Settings → Terminal →
   Notifications → Desktop notifications** turns all of Terminaal's notifications
   off at once (`notifications = false`).
 - **Tab titles**: while a program runs in a local tab, the tab is named after
