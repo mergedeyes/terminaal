@@ -9,6 +9,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use winit::dpi::PhysicalSize;
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{CursorIcon, UserAttentionType, Window};
 
 use crate::gpu::Target;
@@ -65,8 +66,15 @@ impl AppWindow {
         }
     }
 
+    /// Mark the window as wanting the user: the urgency hint under X11, a
+    /// flashing taskbar button on Windows. Not under Wayland: winit asks
+    /// through `xdg_activation_v1::activate`, and compositors like COSMIC
+    /// take that as "bring it to the front" -- a finished command or a bell
+    /// pulled Terminaal over whatever the user was working in.
     pub fn request_user_attention(&self, kind: Option<UserAttentionType>) {
-        if let Self::Winit(window) = self {
+        if let Self::Winit(window) = self
+            && !is_wayland(window)
+        {
             window.request_user_attention(kind);
         }
     }
@@ -108,4 +116,9 @@ impl AppWindow {
             Self::Layer(_) => None,
         }
     }
+}
+
+/// Whether the window lives on a Wayland compositor (not X11/Xwayland).
+fn is_wayland(window: &Window) -> bool {
+    window.window_handle().is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)))
 }
